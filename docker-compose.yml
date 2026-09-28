@@ -1,0 +1,24 @@
+# Dev environment only (dev-plan §16A-E). Production deployment is a separate
+# M7 concern; credentials here are throwaway dev values.
+services:
+  db:
+    image: postgres:18
+    container_name: ebook-db
+    environment:
+      # Bootstrap superuser — app roles are created by the init script below.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: dev-only-superuser
+      POSTGRES_DB: ebook_dev
+    command:
+      - postgres
+      - -c
+      - max_connections=50
+      - -c
+      - shared_buffers=512MB
+    ports:
+      - "127.0.0.1:5432:5432" # never expose past loopback (16A-E)
+    volumes:
+      - pgdata:/var/lib/postgresql # PG18 image default PGDATA=/var/lib/postgresql/18/docker
+      - ./server/db/init-dev.sql:/docker-entrypoint-initdb.d/10-roles.sql:ro
+volumes:
+  pgdata:

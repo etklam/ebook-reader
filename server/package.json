@@ -1,0 +1,28 @@
+{
+  "name": "server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file=.env --watch src/index.ts",
+    "dev:worker": "node --env-file=.env --watch src/worker.ts",
+    "start": "node --env-file=.env src/index.ts",
+    "start:worker": "node --env-file=.env src/worker.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/**/*.test.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate && node --env-file=.env scripts/apply-grants.mjs",
+    "db:verify": "node --env-file=.env scripts/db-verify.mjs"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.0",
+    "drizzle-orm": "0.45.3",
+    "hono": "4.13.10",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "@types/pg": "8.23.1",
+    "drizzle-kit": "0.31.11",
+    "typescript": "7.0.2"
+  }
+}

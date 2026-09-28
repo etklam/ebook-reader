@@ -1,0 +1,61 @@
+# L1 (every push): typecheck + unit tests + web build (dev-plan §22A).
+# L2 (stage gate): DB-01..03 against a real PostgreSQL 18 service container.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  l1:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  l2-db:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ebook_dev
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MIGRATOR_DATABASE_URL: postgres://ebook_migrator:ci-migrator@localhost:5432/ebook_dev
+      DATABASE_URL: postgres://ebook_api:ci-api@localhost:5432/ebook_dev
+      WORKER_DATABASE_URL: postgres://ebook_worker:ci-worker@localhost:5432/ebook_dev
+      DB_TLS: disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bootstrap roles and schemas
+        working-directory: server
+        run: psql postgres://postgres:ci@localhost:5432/ebook_dev -f db/init-ci.sql
+      - name: Migrate + grants + verify (DB-01..03)
+        working-directory: server
+        run: |
+          pnpm db:migrate
+          pnpm db:verify

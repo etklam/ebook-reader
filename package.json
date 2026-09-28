@@ -1,0 +1,17 @@
+{
+  "name": "ebook-reader",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:migrate": "pnpm --filter server db:migrate",
+    "db:verify": "pnpm --filter server db:verify",
+    "dev:api": "pnpm --filter server dev",
+    "dev:worker": "pnpm --filter server dev:worker",
+    "dev:web": "pnpm --filter web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  }
+}

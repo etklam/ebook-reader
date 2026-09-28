@@ -1,0 +1,4 @@
+packages:
+  - server
+  - apps/web
+  - m0
