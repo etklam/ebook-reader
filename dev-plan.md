@@ -1,4 +1,4 @@
-**文件日期：2026-09-28｜狀態：Planning｜專案暫稱：Ebook／小說閱讀平台。**
+**文件日期：2026-09-28｜規格版本：v1.3｜狀態：Planning｜專案暫稱：Ebook／小說閱讀平台。**
 
 本文件整合本次對話的完整需求，作為新專案的產品規格、工程設計、開發路線及驗收基線。「閱間」只屬命名提案，並未定名。本次僅完成計劃整理，沒有建立 repository、實作程式、執行測試或部署；以下開發項目全部視為待做。
 
@@ -47,7 +47,9 @@
 
 ## 03A｜分類、標籤與多選篩選（MVP 必做）
 
-**新增日期：2026-09-28｜規格版本：v1.1｜狀態：Todo，未實作。**
+**新增日期：2026-09-28｜規格版本：v1.1（v1.3 調整見下）｜狀態：Todo，未實作。**
+
+v1.3 調整（2026-09-28 review 後採納）：分類／標籤合併機制與 alias 表延後為 backlog；篩選面板內 debounce 即時總數延後。初版後台詞庫管理只做新增、改名、描述、排序及停用。
 
 使用者已確認需要分類、標籤及多標籤 filter。以下多分類、預設全部符合、分類任一符合、數量限制及後台行為是本計劃的可調整實作預設，不冒充已逐項確認的需求。此模組補齊書庫發現功能，不改變「匯入優先」的核心順序。
 
@@ -95,7 +97,7 @@
 
 面板區分 draft filters 與 applied filters：按套用才更新正式列表及 URL；取消／關閉還原已套用狀態。底部固定「重設篩選」和「顯示 N 本」；重設在面板內只重設 draft，並保留目前短篇／連載入口與搜尋字串，UI 要說明範圍。總數未取得時顯示「套用篩選」或載入狀態，不編造數字。
 
-在面板內調整時可以 debounce 查詢符合總數，較舊請求的結果不得覆蓋新條件。失敗保留選擇並可重試；第一版不為每一個 tag 預測點選後數量，避免複雜 facet count 語義與多餘請求。
+符合總數只在按「套用」後取得（v1.3）；面板內的 debounce 即時總數查詢屬 backlog。第一版不為每一個 tag 預測點選後數量，避免複雜 facet count 語義與多餘請求；詞庫搜尋等非同步請求仍須防止較舊結果覆蓋新條件。
 
 套用後列表顯示條件摘要及可移除 chips，例如「都市／科幻、全部符合：重生＋系統、已完結」，可單獨移除 tag，並顯示有效選中數量。零結果時同樣保留 chips。
 
@@ -105,17 +107,17 @@
 
 ### D｜Admin 分類／標籤管理
 
-後台新增分類及標籤管理頁，提供新增、改名、描述、顯示排序、別名、停用及合併；公開詞庫由 Admin 管理，會員不能自行建立全站 tag。
+後台新增分類及標籤管理頁，提供新增、改名、描述、顯示排序及停用；公開詞庫由 Admin 管理，會員不能自行建立全站 tag。別名表與合併機制延後為 backlog，不在 MVP。
 
 作品編輯頁提供分類多選、標籤搜尋／多選與移除；手機保存按鈕置底。批量操作先顯示受影響作品及「加入／移除／取代」模式：預設加入，不把所有作品原有標籤意外換走。已被他人修改的作品需版本衝突處理，不用舊選擇覆蓋新資料。
 
-名稱與 ID 分離；改名不換 ID，不破壞收藏、URL 或匯入對應。繁簡名稱及同義別名用於查找候選，例如「重生」「重生文」經 Admin 確認後可指向同一標籤；不能只因自動繁簡轉換或相似字串就合併不同概念。
+名稱與 ID 分離；改名不換 ID，不破壞收藏、URL 或匯入對應。查找候選先以繁簡正規化比對；同義別名指向同一標籤的 alias 機制屬 backlog，初版不能只因自動繁簡轉換或相似字串就合併不同概念。
 
 停用詞彙禁止新指派，保留歷史關聯供管理；需要維持至少一個有效分類的已發布作品須先補分類。前台不繼續提供停用項作新篩選；舊 URL 明確提示失效 filter，不能靜默移除後擴大結果。
 
-合併要先預覽來源、目標、影響作品數及重複關聯，確認後用交易遷移／去重，保留舊 ID 到正式 ID 的 mapping 並防止循環。舊篩選引用被合併詞時回傳 canonical filters 與提示；去重後重算 all 的需求數，不能把兩個舊別名當成必須同時存在的兩個 tag。
+合併（來源／目標預覽、交易遷移、舊 ID mapping、循環防護）整體延後為 backlog；初版以停用取代合併，歷史關聯保留。
 
-已被使用的詞彙不提供無提示硬刪除；一律優先停用或合併，保留 audit log。分類／標籤變更不建立新章事件、不改閱讀進度，也不令「最近連載更新」被誤刷新。
+已被使用的詞彙不提供無提示硬刪除；一律優先停用，保留 audit log。分類／標籤變更不建立新章事件、不改閱讀進度，也不令「最近連載更新」被誤刷新。
 
 ### E｜與 TXT／EPUB 匯入的整合及保護
 
@@ -129,7 +131,7 @@ Admin 要採用來源候選時，另行打開 metadata 變更預覽，明確選�
 
 ### F｜資料、查詢與 API 契約
 
-建議新增 categories、tags、category_aliases、tag_aliases、work_categories、work_tags。分類／標籤有穩定 id、display_name、description、sort_order、is_active、version；別名引用 canonical id。合併 mapping 保留歷史 ID，但不得出現循環或跨種類合併。
+建議新增 categories、tags、work_categories、work_tags。分類／標籤有穩定 id、display_name、description、sort_order、is_active、version。category_aliases／tag_aliases 及合併 mapping 隨合併機制一併延後，不在初版 schema。
 
 work_categories 與 work_tags 使用唯一（work_id, taxonomy_id）關聯，並建立反向（taxonomy_id, work_id）查詢索引。關聯表是資料真相，不用逗號分隔字串或逐頁讀取後再篩選。對名稱做 trim／必要字元驗證及重複候選檢查；搜尋正規化不取代原始名稱或穩定 ID。
 
@@ -153,16 +155,14 @@ GET /api/tags?q=<keyword>         # Searchable, paginated active tag vocabulary
 GET /api/me/library              # Same filters within the authenticated user's shelf
 POST /api/admin/categories
 PATCH /api/admin/categories/:id
-POST /api/admin/categories/:id/merge
 POST /api/admin/tags
 PATCH /api/admin/tags/:id
-POST /api/admin/tags/:id/merge
 PATCH /api/admin/works/:workId/taxonomy
 ```
 
 上例的 id 與 cursor 皆為示意值；不得直接當成實際 UUID 測試資料。taxonomy 寫入提交明確的最終 category_ids／tag_ids 集合、預期版本與操作來源，於交易內驗證並保存；不接受任意原始 SQL 或未授權的來源 ID。
 
-所有清單先去重、解析合併 mapping、驗證有效 ID 再計算模式；初始 filter 上限建議 10 個分類、20 個標籤，limit 預設 20、最多 50，文字 q 亦有限長。無效 enum、未知／停用 ID、超限或與 type 不相容的狀態回傳明確的 invalid_filter，不忽略條件後返回較寬結果。
+所有清單先去重、驗證有效 ID 再計算模式；初始 filter 上限建議 10 個分類、20 個標籤，limit 預設 20、最多 50，文字 q 亦有限長。無效 enum、未知／停用 ID、超限或與 type 不相容的狀態回傳明確的 invalid_filter，不忽略條件後返回較寬結果。
 
 全部符合的查詢可按每個 tag 使用 EXISTS，或在所選 tag 集合內分組並要求命中不同 tag 數等於所選數；任一符合只需命中其中一個。分類也是存在至少一個命中，維度之間用 AND。不能把未選 tag 也算入命中數，亦不能以重複 join 行湊足 all 條件。
 
@@ -170,15 +170,15 @@ PATCH /api/admin/works/:workId/taxonomy
 
 排序只允許定義好的 enum；預設最近上架或最近章節公開更新，最後用 work_id 作穩定次排序。最近更新只根據章節正式發布／作品首次發布，不以分類或標籤編輯時間排序。cursor 綁定正規化 filters＋sort，不能帶去另一組條件。
 
-列表、總數與詞庫 cache key 包括查詢條件、模式、作用域及相關版本；收藏查詢不可使用跨使用者共用的結果快取。發布／下架、taxonomy 指派、改名、合併或停用時失效對應 cache。書庫 counts、書架 counts 及任何 facets 都不得洩露草稿、下架或他人的私人資料。
+列表、總數與詞庫 cache key 包括查詢條件、模式、作用域及相關版本；收藏查詢不可使用跨使用者共用的結果快取。發布／下架、taxonomy 指派、改名或停用時失效對應 cache。書庫 counts、書架 counts 及任何 facets 都不得洩露草稿、下架或他人的私人資料。
 
 ### G｜工程任務與階段對應
 
-- [ ]  CAT-T1／M1：分類、標籤、別名及關聯 schema、索引、共享 filter 型別、合法資料與邊界 fixtures。
+- [ ]  CAT-T1／M1：分類、標籤及關聯 schema、索引、共享 filter 型別、合法資料與邊界 fixtures。
 - [ ]  CAT-T2／M2：Admin 詞庫管理、作品多選編輯、匯入 metadata 保護及版本檢查。
 - [ ]  CAT-T3／M6：全庫／書架後端複合篩選、all／any、count、去重分頁、URL 正規化及 cache 失效。
 - [ ]  CAT-T4／M6：底部篩選面板、搜尋 chips、draft／applied 狀態、零結果、返回恢復及無障礙操作。
-- [ ]  CAT-T5／M7：查詢效能量測、權限回歸、併發合併／匯入、手機真機與所有 CAT 驗收案例。
+- [ ]  CAT-T5／M7：查詢效能量測、權限回歸、併發編輯／匯入、手機真機與所有 CAT 驗收案例。
 
 不新增額外微服務或搜尋引擎作為此模組的前置條件；先以資料庫查詢滿足語義並量測，不能用多標籤功能延後核心匯入驗收。
 
@@ -192,11 +192,11 @@ PATCH /api/admin/works/:workId/taxonomy
 | CAT-04 | 零結果、空選擇、重複參數、非法 enum、超限 | 不暗中放寬；空選不限制；重複 ID 去重；非法／超限明確報錯 |
 | CAT-05 | 手機開面板、連選、取消、套用、重設及鍵盤彈出 | draft／applied 分開；底部操作可見；可多選而不自動關閉；選中提示不只靠顏色 |
 | CAT-06 | 刷新、分享 URL、返回／前進、從詳情回列表、切作品類型 | 恢復正確條件及位置；新條件重設 cursor；短篇沒有隱藏連載狀態 |
-| CAT-07 | 改名、繁簡／別名查找、合併兩個已選 tag、停用 | ID 與查找一致；合併後去重並提示；停用／未知條件不靜默忽略 |
+| CAT-07 | 改名、繁簡正規化查找、停用 | ID 與查找一致；停用／未知條件不靜默忽略，不靜默放寬結果 |
 | CAT-08 | 已設分類標籤，1–180 再匯入 1–190＋87.5，兩種模式 | 原 taxonomy 原樣保留；只有另行確認的 metadata 變更可更新 |
 | CAT-09 | 匯入來源沒有標籤或含未確認新詞，另有 Admin 同時修改 | 不清空、不自動建詞；過期 plan／taxonomy save 被版本檢查阻止 |
 | CAT-10 | 會員寫管理 API、嘗試他人書架、公開 count 含草稿 | 後端拒絕越權；列表與總數均不洩露不可見作品 |
-| CAT-11 | 變更指派、合併、發布／下架、慢請求晚返回 | 列表與 count cache 正確失效；舊條件結果不覆蓋新條件；taxonomy 變更不觸發追更 |
+| CAT-11 | 變更指派、發布／下架、慢請求晚返回 | 列表與 count cache 正確失效；舊條件結果不覆蓋新條件；taxonomy 變更不觸發追更 |
 | CAT-12 | 批量加入／移除／取代、重試，以及大書庫查詢 | 有預覽、保留非目標關聯、無重複寫入；記錄代表性資料量下查詢計劃、耗時及手機結果 |
 
 以上是本次新增規格與待做工作，不代表 schema、API、UI 或測試已在 repository 實作。
@@ -378,7 +378,7 @@ PostgreSQL 提供 row-level 與 advisory lock 等鎖機制；具體實作優先�
 
 本次套用失敗時正式內容不應半新半舊。已提交後 worker 崩潰，重試從持久化結果恢復，不重複套用。
 
-第一版提供匯入歷史與受保護的回復操作：只有作品仍在該次變更版本且沒有後續衝突時可直接回復；否則產生新的補償計劃供確認，不撤銷其他 Admin 後來的修改。回復不刪會員書籤；被移出的章節保留墓碑／歷史引用及可理解提示。
+第一版提供匯入歷史與受保護的回復操作：只有作品仍在該次變更版本且沒有後續衝突時可直接回復；否則明確提示版本已變，由 Admin 手動處理，補償計劃自動化屬 backlog（v1.3 延後），且不撤銷其他 Admin 後來的修改。回復不刪會員書籤；被移出的章節保留墓碑／歷史引用及可理解提示。
 
 ## 13｜發布、版本一致性與追更
 
@@ -398,9 +398,9 @@ PostgreSQL 提供 row-level 與 advisory lock 等鎖機制；具體實作優先�
 
 匯入時分析的是邏輯章節及段落；瀏覽器按畫面尺寸、字號及行距動態分頁，不以固定 1,000 字作一頁。EPUB 的 reflowable 與 pre-paginated 是不同版面模型，本專案聚焦前者。官方來源：EPUB Reading Systems 3.3
 
-持久化定位至少含 work_id、chapter_id、revision_id、paragraph_id／穩定內容錨點、段落內偏移、文字顯示模式及必要的版本資訊。畫面頁碼及整本 CFI 只能作特定版本／渲染情境的補充，不能成為唯一的跨版本主鍵。
+持久化定位收斂為 work_id＋chapter_id＋revision_id＋paragraph_index（v1.3），另存文字顯示模式及必要版本資訊。畫面頁碼及整本 CFI 只能作特定版本／渲染情境的補充，不能成為唯一的跨版本主鍵；文字 fingerprint／字元級跨修訂映射屬 backlog，不阻塞 MVP。
 
-插章會改變全書順序；繁簡轉換也可能改變字元位置。因此回復先找穩定章節，再找段落，最後才使用同版本有效的精確位置。跨修訂依內容與鄰接段落嘗試映射；信心不足回到同章適當位置或章首並提示更新，不假裝精確。
+插章會改變全書順序；繁簡轉換也可能改變字元位置。回復先找穩定章節，再找段落；跨修訂只做近似回復（同章同 paragraph_index 或章首）並明確提示版本已更新，不假裝精確。手動書籤永久保留建立當時的原始定位數據（chapter_id、revision_id、paragraph_index），版本更新後只用於近似回復，不改寫歷史數據，供日後升級映射時使用。
 
 初版驗收：改字號、橫直屏、繁簡切換及換裝置後，至少回到同一邏輯段落；段落已被刪除時有明確 fallback。讀取進度以最近閱讀位置為準，不以讀得最遠取代最近位置。
 
@@ -433,13 +433,13 @@ worker 只為新增／被更新章節產生繁簡衍生內容，或按明確策�
 | 資料 | PostgreSQL 18＋Drizzle ORM＋node-postgres（pg.Pool） | metadata、章節修訂引用、工作狀態及會員資料；Drizzle Kit 管理 SQL migration，連線與部署規範見 16A |
 | 匯入 worker | 同 repo 獨立 process，PostgreSQL-backed queue | 初版單 worker／低併發；具 retry、lease／heartbeat 與取消 |
 | 內容儲存 | private volume 起步，Storage adapter | 原檔、章節內容、圖片及衍生檔；之後可接 S3-compatible storage |
-| 閱讀引擎候選 | epub.js 外包自己的 ReaderAdapter | 只處理渲染與定位，不管理章節身分、匯入或會員 |
+| 閱讀引擎候選 | epub.js 與 foliate-js 雙候選 POC，外包自己的 ReaderAdapter | 只處理渲染與定位，不管理章節身分、匯入或會員；同環境同真機比較後只整合一個 |
 | 繁簡／編碼 | OpenCC 或 opencc-js；iconv-lite | 規則及版本可追溯，不能把轉換當來源正規化 |
 | 部署 | Docker Compose 起步 | Web／API、worker、PostgreSQL、reverse proxy；既有 k3s 可後續適配 |
 
-epub.js 文件提供分頁、捲動、內容 hooks 及載入解壓 EPUB 的方式，可作 POC 候選；這些功能不等於已滿足本專案的增量／版本與手機要求。官方來源：epub.js
+epub.js 與 foliate-js 均提供分頁、捲動、定位等能力，作為 M0 的雙候選 POC：同環境、同測試樣本、同真機比較，選定後只整合一個。foliate-js 同樣基於 iframe＋CSS multi-column，且 API 尚未穩定，不是免驗證的替代品；epub.js 需記錄 npm 發布版本與 upstream commit 的差異。這些功能不等於已滿足本專案的增量／版本與手機要求。官方來源：epub.js、foliate-js
 
-**M0 必須驗證的閱讀 gate：**按章資源載入、穩定定位、繁簡後重排、底部控制與 iframe 事件、安全清理相容性，以及 iOS／Android 實機。若候選未通過，在不改章節模型的前提下替換 adapter；不為遷就 library 而犧牲匯入契約。
+**M0 必須驗證的閱讀 gate：**按章資源載入、穩定定位、繁簡後重排、底部控制與 iframe 事件、安全清理相容性，以及 iOS／Android 實機。兩個候選均未通過 gate 時，在不改章節模型的前提下另尋 adapter；不為遷就 library 而犧牲匯入契約。
 
 初版不引入 Kafka、Elasticsearch、微服務或必需 Redis；日後有實際瓶頸才加入。Redis 不是 DDoS 的完整解法，流量控制從邊緣、proxy、API 限額及 worker 資源隔離設計。
 
@@ -695,7 +695,7 @@ pg_dump 可產生單 database 一致快照，但不包含 cluster-wide roles 等
 | --- | --- | --- |
 | users、sessions | 帳戶、角色、session、撤銷狀態 | 一般會員不能升權；session 可失效 |
 | works、volumes | 作品 metadata、類型、連載狀態、edit_version、active_release_id | 編輯版本與公開版本分開 |
-| categories、tags、category_aliases、tag_aliases | Admin 維護的題材分類、特徵標籤、名稱與別名、停用及合併對應 | 穩定 ID；不以繁簡字串直接當身分；分類與作品類型分開 |
+| categories、tags | Admin 維護的題材分類、特徵標籤及停用狀態 | 穩定 ID；不以繁簡字串直接當身分；分類與作品類型分開；alias 表與合併對應延後 |
 | work_categories、work_tags | 作品與多個分類／標籤的多對多關聯 | 關聯唯一且有反向索引；支持 all／any 全庫篩選；兩種章節匯入均預設保留 |
 | chapters | 固定 id、work_id、volume_id、label_raw、editorial_position、head_revision_id | 不以章號作 PK 或唯一鍵；身分不能跨作品錯配 |
 | chapter_revisions、chapter_sections | 不可變內容、章名、段落錨點、資源引用、hash、處理版本 | 同一邏輯章可由多個 section 組成 |
@@ -783,6 +783,8 @@ worker 初版全域併發 1，同作品套用串行化；後續依實測增加�
 
 以下全部為待執行驗收，不代表已通過。
 
+v1.3 起驗收依 §22A 分三層執行：每次 CI 跑快速自動驗證；階段 gate 跑真 PG／交易／E2E；真機只在 M0／M5／M7。Playwright WebKit 通過不等於 iPhone Safari 真機通過。
+
 v1.2 額外必須執行 16A-K 的 DB-01–DB-08：migration、權限、資料約束、匯入交易、pool／TLS、備份還原及查詢效能，與既有測試共同構成 MVP 驗收。
 
 v1.1 額外必須執行 03A-H 的 CAT-01–CAT-12：分類、標籤、多選 all／any、複合條件、URL、手機操作、匯入保護、權限及 cache。這些與下表共同構成完整 MVP 驗收，不可只驗收舊案例。
@@ -807,8 +809,8 @@ v1.1 額外必須執行 03A-H 的 CAT-01–CAT-12：分類、標籤、多選 all
 | IMP-16 | EPUB 檔案順序與 spine 不同 | 按正確閱讀順序，目錄不重複正文 |
 | IMP-17 | 同正文但圖片／註腳目標有改 | 辨識內容修訂並帶齊資源 |
 | IMP-18 | 重編號、改名、拆章／合章、繁簡不同來源 | 有候選與衝突，不靜默誤覆蓋 |
-| VER-01 | 修訂前已有進度及書籤 | 章節 ID 保留；段落映射或明確 fallback |
-| VER-02 | 回復舊匯入但已有後續修改 | 不撤銷後來改動，需新補償計劃 |
+| VER-01 | 修訂前已有進度及書籤 | 章節 ID 保留；同章近似回復至 paragraph_index 或章首並提示 |
+| VER-02 | 回復舊匯入但已有後續修改 | 不撤銷後來改動；明確提示版本已變，Admin 手動處理 |
 | PUB-01 | 匯入草稿、修正錯字、新章發布 | 只有新章首次公開觸發追更 |
 | PUB-02 | 讀到 180 後發布 87.5 | 顯示未讀新章，繼續閱讀仍回 180 原位置 |
 | READ-01 | 字號、繁簡、橫直屏切換 | 回到同段落，正文不被底部工具列遮住 |
@@ -826,9 +828,21 @@ v1.2 資料庫工作分配：M1 完成 DB-T1／DB-T2 的環境、權限、schema
 
 各階段以可驗證成果作 gate，不在沒有估算依據時承諾日程。所有階段初始狀態為 Todo。
 
+## 22A｜分層驗收（v1.3 新增）
+
+**新增日期：2026-09-28｜狀態：Todo。**
+
+| 層 | 內容 | 執行時機 |
+| --- | --- | --- |
+| L1｜快速自動驗證 | 單元測試、型別檢查、lint，及純邏輯驗收（章號解析、matching 規則、filter predicate、排序計算） | 每次 CI／每次 push |
+| L2｜階段 gate 驗證 | 真 PostgreSQL、交易與冪等／故障注入、API E2E、匯入全流程 | 每階段（M1–M7）出口 |
+| L3｜真機驗證 | iOS Safari、Android Chrome 實機閱讀與匯入預覽流程 | 僅 M0、M5、M7 |
+
+Playwright WebKit 通過不等於 iPhone Safari 真機通過；桌面模擬器縮窄也不替代 L3。各驗收 ID 按 §21 說明歸層：READ-01／02、READ-03 的實機部分及 M0 閱讀 gate 屬 L3，其餘優先以 L1／L2 自動化覆蓋；無法自動化的案例在各階段 gate 以手動清單執行並記錄。
+
 | 階段 | 交付 | 完成標準／依賴 |
 | --- | --- | --- |
-| M0｜規格及高風險 POC | 固定匯入契約、樣本 fixtures、不規則章號測試；閱讀 adapter／繁簡／安全隔離小型驗證 | 確認來源到內部模型可行，12.10 不被數值化；手機能按章閱讀並回段落 |
+| M0｜規格及高風險 POC | 固定匯入契約、樣本 fixtures、不規則章號測試；epub.js 與 foliate-js 雙候選閱讀 POC（同環境同真機比較，選後只整合一個）／繁簡／安全隔離小型驗證 | 確認來源到內部模型可行，12.10 不被數值化；手機能按章閱讀並回段落；閱讀引擎擇一並記錄比較結果 |
 | M1｜基礎工程 | repo、CI、環境設定、PostgreSQL 18／Drizzle／pg.Pool、低權限 roles、migration、核心 schema 與約束、Admin 身分與授權、private storage、worker 骨架；執行 DB-T1／DB-T2 | 非 Admin 無法上傳；本機可啟動；失敗日誌可追溯；DB-01／DB-02／DB-03 基礎案例通過，runtime 不跑 DDL |
 | M2｜首次匯入 | TXT／EPUB parser、安全檢查、編碼預覽、分章修正、staging、草稿內容瀏覽 | IMP-01、14–16 與核心安全樣本通過，不跳過 EPUB |
 | M3｜增量與中間插章 | 匹配規則、diff preview、人工解歧義、完整／局部追加、排序預覽 | IMP-02、04–08、18 通過，不重複建章、不以最大章號判新章 |
@@ -857,14 +871,16 @@ v1.2 資料庫工作分配：M1 完成 DB-T1／DB-T2 的環境、權限、schema
 
 主要風險：來源編碼／格式不一致、章節拆合、相同標籤、第三方閱讀器安全與手機兼容、大型 EPUB 資源消耗、內容授權。對策分別為預覽覆核、結構衝突、穩定 ID、adapter POC、安全配額與上架前來源確認。
 
-未決但不阻擋開工：正式名稱與網域、公開或邀請 Beta、寄信服務、初始書籍數量／最大檔案、是否需要台灣字形、最終閱讀 adapter。未有明確決策前使用本文件預設，不能偷偷擴大範圍。
+未決但不阻擋開工：正式名稱與網域、公開或邀請 Beta、寄信服務（目前傾向以邀請碼註冊取代電郵驗證）、初始書籍數量／最大檔案、是否需要台灣字形、最終閱讀 adapter（由 M0 雙候選 POC 決定）。未有明確決策前使用本文件預設，不能偷偷擴大範圍。
+
+v1.3 已明確延後的 backlog 項目：分類／標籤合併機制與 alias 表、回復補償計劃自動化、篩選面板 debounce 即時總數、文字 fingerprint／字元級跨修訂映射。
 
 ## 24｜開工清單與交付要求
 
 - [ ]  建立新 repository 與 README，記錄本文件為需求基線；不假設已有程式。
 - [ ]  建立 1–180、1–190、1–190＋87.5、有四章修訂、局部檔案與奇怪章號的合成 fixtures。
 - [ ]  先為 matching／ordering／idempotency 定義可重複的預期結果，再鋪管理 UI。
-- [ ]  M0 驗證閱讀 adapter、繁簡及手機段落定位，鎖定依賴與測試範圍。
+- [ ]  M0 以 epub.js＋foliate-js 雙候選驗證閱讀 adapter（同環境、同真機比較後擇一）、繁簡及手機段落定位，鎖定依賴與測試範圍。
 - [ ]  依 M1–M7 推進，每階段附實際執行命令、測試結果、失敗項及未驗證限制。
 - [ ]  Beta 前完成一輪完整匯入、更新、發布、回復與備份還原演練。
 
@@ -883,6 +899,8 @@ Agent 實作時使用繁中 UI／文件、English code comments；採小步可�
 v1.1／2026-09-28：根據使用者新增需求，納入作品分類、標籤、可多標籤 filter；補齊多分類、all／any 契約、手機底部篩選、後台管理、匯入 metadata 保護、schema／API、CAT-T1–T5 工作與 CAT-01–CAT-12 驗收。只更新規格，工程狀態仍為 Planning／Todo。
 
 v1.2／2026-09-28：按使用者要求把資料庫方案納入計劃，定下 PostgreSQL 18＋Drizzle ORM＋pg.Pool／Drizzle Kit，新增 16A 的 database／schema、章節型別與完整性約束、內容儲存分工、Docker 初始設定、低權限帳戶、TLS、連線模組參考、migration、DBeaver SSH、備份還原、DB-T1–T4 及 DB-01–DB-08；同步更新架構、M1／M4／M7 與驗收入口。未建立 DB、執行 migration 或部署。
+
+v1.3／2026-09-28：review 後採納三項調整：一、M0 閱讀引擎改為 epub.js＋foliate-js 雙候選 POC，同環境同真機比較後只整合一個；foliate-js 同樣基於 iframe＋CSS multi-column 且 API 未穩定，epub.js 需記錄 npm 版本與 upstream commit 差異。二、閱讀定位收斂為 chapter_id＋revision_id＋paragraph_index，跨修訂只做近似回復＋提示，文字 fingerprint／字元級映射移入 backlog，書籤永久保留原始定位數據。三、新增 §22A 分層驗收（CI 快速驗證／階段 gate 真 PG 交易 E2E／真機僅 M0、M5、M7）。同時延後：分類標籤合併機制與 alias 表、回復補償計劃自動化、篩選面板 debounce 即時總數；相應修訂 03A、14、16、17、18、21、23、24 及 CAT／VER 案例。仍屬 Planning／Todo，未開始實作。
 
 後續需求變更先更新行為契約及測試，再更新實作任務。
 
