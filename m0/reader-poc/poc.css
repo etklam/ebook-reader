@@ -1,0 +1,62 @@
+/* Shared chrome for both M0 reader POC pages (mobile-first, bottom controls). */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
+  background: #f7f3ea;
+  color: #222;
+}
+#status {
+  padding: calc(env(safe-area-inset-top) + 6px) 12px 6px;
+  font-size: 13px;
+  background: #222;
+  color: #eee;
+  min-height: 28px;
+}
+#viewer { flex: 1; min-height: 0; position: relative; }
+
+#toolbar, #subtoolbar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px calc(env(safe-area-inset-bottom) + 6px);
+  background: #fff;
+  border-top: 1px solid #ddd;
+}
+#toolbar button, #subtoolbar button {
+  flex: 1;
+  min-height: 44px;          /* 44×44 touch target (dev-plan §04) */
+  font-size: 15px;
+  border: 1px solid #bbb;
+  border-radius: 8px;
+  background: #fafafa;
+}
+#subtoolbar { padding-top: 0; border-top: 0; }
+#subtoolbar button { flex: 0 1 64px; }
+#pos-display {
+  flex: 1;
+  align-self: center;
+  text-align: center;
+  font-size: 12px;
+  color: #666;
+}
+#toc-panel {
+  position: fixed;
+  inset: auto 0 0 0;
+  max-height: 60vh;
+  overflow: auto;
+  background: #fff;
+  border-top: 2px solid #222;
+  padding: 8px 12px calc(env(safe-area-inset-bottom) + 12px);
+}
+#toc-panel button {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid #eee;
+  font-size: 15px;
+}

@@ -1,0 +1,21 @@
+{
+  "name": "ebook-m0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fixtures": "node fixtures/gen.mjs",
+    "test": "node --test label-parser/parse-label.test.ts",
+    "poc": "node poc/opencc-poc.mjs && node poc/sanitize-poc.mjs",
+    "serve": "node serve.mjs",
+    "smoke": "node reader-poc/smoke.mjs"
+  },
+  "dependencies": {
+    "epub.js": "0.2.15",
+    "opencc-js": "1.4.2"
+  },
+  "devDependencies": {
+    "dompurify": "^3.2.4",
+    "jsdom": "^26.0.0",
+    "playwright": "1.55.1"
+  }
+}
