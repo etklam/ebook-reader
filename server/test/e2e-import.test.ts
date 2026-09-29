@@ -251,12 +251,35 @@ test('SEC: unsupported extension rejected, member 403', async () => {
 });
 
 // --- EPUB is accepted and stored, parsing explicitly deferred (documented) ------
-test('EPUB: upload persists the source; parsing reports EPUB_NOT_IMPLEMENTED, not silent success', async () => {
+test('IMP-16: EPUB imports in spine order, not filename order, and commits', async () => {
   const epub = readFileSync(fileURLToPath(new URL('../../m0/fixtures/sample.epub', import.meta.url)));
   const importId = await uploadAndProcess('sample.epub', epub, admin);
-  const job = await q(`select status, error_code from app.import_jobs where id=$1`, [importId]);
-  assert.equal(job[0].status, 'failed');
-  assert.equal(job[0].error_code, 'EPUB_NOT_IMPLEMENTED');
+  const job = await q(`select status, error_code, detected_format, chapter_count from app.import_jobs where id=$1`, [importId]);
+  assert.equal(job[0].status, 'ready', JSON.stringify(job[0]));
+  assert.equal(job[0].detected_format, 'epub');
+
+  const res = await app.request(`/api/admin/imports/${importId}/chapters`, { headers: { cookie: admin } });
+  const { chapters: items } = await res.json() as any;
+  assert.equal(items.length, 5);
+  // fixture spine c4,c1,c2,c5,c3 → logical 第1..5章 despite shuffled filenames
+  assert.deepEqual(
+    items.map((i: any) => i.title),
+    ['第1章 起風', '第2章 霧中燈', '第3章 未寄出的信', '第4章 長夜', '第5章 潮汐'],
+  );
+  // the nav document is navigation, never a staged chapter
+  assert.ok(!items.some((i: any) => String(i.title).includes('目錄')));
+
+  const commit = await app.request(`/api/admin/imports/${importId}/commit`, {
+    method: 'POST', headers: { cookie: admin, 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'EPUB 樣本', workType: 'short_story' }),
+  });
+  assert.equal(commit.status, 200);
+  const { workId } = await commit.json() as { workId: string };
+  const rows = await q(
+    `select editorial_position, label_raw from app.chapters where work_id=$1 order by editorial_position`, [workId]);
+  assert.equal(rows.length, 5);
+  assert.deepEqual(rows.map((r: any) => r.label_raw),
+    ['第1章 起風', '第2章 霧中燈', '第3章 未寄出的信', '第4章 長夜', '第5章 潮汐']);
 });
 
 // --- IMP-12: failure safety ------------------------------------------------------
