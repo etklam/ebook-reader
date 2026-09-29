@@ -48,8 +48,10 @@ const migrator = new Pool({ connectionString: process.env.MIGRATOR_DATABASE_URL,
   check('DB-02 api cannot become migrator', await expectError(api, 'SET ROLE ebook_migrator', [], '42501'));
   const superuser = await api.query('select rolsuper from pg_roles where rolname = current_user');
   check('DB-02 api not superuser', superuser.rows[0].rolsuper === false);
+  // any prior e2e runs may have left draft works in dev — the point is that
+  // the worker role can read app tables, not that the table is empty
   const wr = await worker.query('select count(*)::int as n from app.works');
-  check('DB-02 worker DML works', wr.rows[0].n === 0);
+  check('DB-02 worker DML works', typeof wr.rows[0].n === 'number');
 }
 
 // --- DB-03: irregular labels, duplicates, cross-chapter revision ------------

@@ -245,12 +245,33 @@ test('IMP-05: weird labels commit verbatim', async () => {
 });
 
 // --- upload guard rails ----------------------------------------------------------
-test('SEC: unsupported extension rejected, member 403', async () => {
+test('SEC: unsupported extension rejected; member/anonymous blocked on every import op', async () => {
   const bad = await upload(new File([Buffer.from('x')], 'virus.exe'), admin);
   assert.equal(bad.status, 415);
+
+  // §13-18..21: member cannot upload, inspect, preview or commit
+  const importId = await uploadAndProcess('sec.txt', Buffer.from('第1章 測試\n\n正文一段。\n'), admin);
+  assert.equal((await upload(new File([Buffer.from('第1章 A\n\nx')], 'm.txt'), member)).status, 403);
+  assert.equal((await app.request(`/api/admin/imports/${importId}`, { headers: { cookie: member } })).status, 403);
+  assert.equal((await app.request(`/api/admin/imports/${importId}/chapters`, { headers: { cookie: member } })).status, 403);
+  assert.equal((await app.request(`/api/admin/imports/${importId}/commit`, {
+    method: 'POST', headers: { cookie: member, 'content-type': 'application/json' }, body: '{}',
+  })).status, 403);
+
+  // anonymous: no cookie at all — every admin op is 403 before any parsing
+  const anonOps: Array<[string, string]> = [
+    ['POST', '/api/admin/imports'],
+    ['GET', `/api/admin/imports/${importId}`],
+    ['GET', `/api/admin/imports/${importId}/chapters`],
+    ['POST', `/api/admin/imports/${importId}/commit`],
+  ];
+  for (const [method, path] of anonOps) {
+    const res = await app.request(path, { method });
+    assert.equal(res.status, 403, `anonymous ${method} ${path}`);
+  }
 });
 
-// --- EPUB is accepted and stored, parsing explicitly deferred (documented) ------
+// --- IMP-16: same pipeline, spine as the reading order ---------------------------
 test('IMP-16: EPUB imports in spine order, not filename order, and commits', async () => {
   const epub = readFileSync(fileURLToPath(new URL('../../m0/fixtures/sample.epub', import.meta.url)));
   const importId = await uploadAndProcess('sample.epub', epub, admin);
