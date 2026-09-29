@@ -915,6 +915,5 @@ v1.3／2026-09-28：review 後採納三項調整：一、M0 閱讀引擎改為 e
 | M0（規格及高風險 POC） | 程式／POC 完成 | 雙引擎 POC、不規則章號解析器、合成 fixtures 均在 `m0/`；**L3 iOS Safari／Android Chrome 真機驗證仍未做** |
 | M0 閱讀引擎最終擇一 | 待定 | 未有真機比較證據前，不得宣稱 epub.js 或 foliate-js 勝出；兩者尚未整合進 production reader |
 | M1（基礎工程） | 完成，本機已驗證 | DB-01／02／03、非 Admin 403、本機啟動、CI L1＋L2（詳見 README） |
-| M2（首次匯入） | TXT 垂直切片完成（2026-09-29） | 上傳→PG 佇列→worker（SKIP LOCKED lease）→編碼偵測→分章→staging→Admin 預覽→冪等 commit 為草稿；L2 自動驗收通過（base-180 全流程、IMP-05/12/14、非 Admin 403、CI 含 lint）。**EPUB 僅上傳保存原檔，解析明確回報 `EPUB_NOT_IMPLEMENTED`**，屬 M2 未完成項 |
-| M2 EPUB 子階段 | 未開始 | 已知工作項：安全 ZIP（zip-slip／炸彈防護）、OPF/spine 解析、nav 去重、XHTML sanitize、資源映射；fixture 已有 `m0/fixtures/sample.epub`（IMP-16） |
+| M2（首次匯入） | 完成（2026-09-29） | TXT 全流程＋**EPUB 解析完成**：container→OPF→spine 閱讀順序（非檔名順序）、nav/NCX 標籤、DOMPurify allowlist 清理、zip bomb（壓縮比/總量/條目上限）與路徑穿越防護、spine 重複去重、非文字節 needsReview。L2 e2e 7/7（含 IMP-16 上傳→解析→預覽→commit spine 順序 5 章）；單元 8/8。已知限制：一個 XHTML 多章錨點不拆分（標記 backlog）、list 內容暫不萃取、圖片資源暫不映射（M5 閱讀器前處理） |
 | M3–M7 | 未開始 | — |

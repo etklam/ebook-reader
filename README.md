@@ -2,7 +2,7 @@
 
 管理員維護內容的中文小說閱讀網站。需求與工程基線見 [`dev-plan.md`](dev-plan.md)（規格版本 v1.3，2026-09-28）——那是唯一規格真相，實作前先讀它。
 
-目前進度：M0（規格及高風險 POC）程式完成，待真機驗收，見 [`m0/README.md`](m0/README.md)；M1（基礎工程）完成，gate 已過（DB-01／02／03、非 Admin 403、本機可啟動、CI L1＋L2）；M2（首次匯入）TXT 垂直切片完成——上傳→佇列→編碼偵測→分章→staging→Admin 預覽→commit 為草稿，全流程有自動化 L2 驗收（base-180：180 章、180 個初始修訂、commit 冪等、失敗回滾、非 Admin 403）。EPUB 上傳已受支援並保存原檔，解析明確回報 `EPUB_NOT_IMPLEMENTED`，排程於 M2 下一子階段。
+目前進度：M0（規格及高風險 POC）程式完成，待真機驗收，見 [`m0/README.md`](m0/README.md)；M1（基礎工程）完成，gate 已過（DB-01／02／03、非 Admin 403、本機可啟動、CI L1＋L2）；**M2（首次匯入）完成**——上傳→佇列→編碼偵測（TXT）／spine 解析（EPUB）→分章→staging→Admin 預覽→commit 為草稿。M2 gate（IMP-01、05、12、14–16）以真 PG e2e 驗收：base-180 建 180 章 180 修訂、commit 冪等、失敗回滾、EPUB 按 spine 順序（非檔名順序）、zip bomb／惡意 XHTML 防護。
 
 ## 本機啟動（M1+M2）
 
