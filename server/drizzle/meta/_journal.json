@@ -8,6 +8,13 @@
       "when": 1790617219105,
       "tag": "0000_broad_serpent_society",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790622823286,
+      "tag": "0001_round_shard",
+      "breakpoints": true
     }
   ]
 }

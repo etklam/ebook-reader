@@ -20,6 +20,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+      - run: pnpm lint
       - run: pnpm test
       - run: pnpm build
 
@@ -59,3 +60,9 @@ jobs:
         run: |
           pnpm db:migrate
           pnpm db:verify
+      - name: M2 import E2E (IMP acceptance)
+        working-directory: server
+        # URLs come from job env; node --env-file just needs the file present
+        run: |
+          touch .env
+          pnpm test:e2e

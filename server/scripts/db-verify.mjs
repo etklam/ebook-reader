@@ -27,8 +27,8 @@ const migrator = new Pool({ connectionString: process.env.MIGRATOR_DATABASE_URL,
   const { rows } = await migrator.query(
     `select table_name from information_schema.tables where table_schema='app' order by 1`);
   const names = rows.map((r) => r.table_name);
-  const expected = ['categories', 'chapter_revisions', 'chapters', 'sessions', 'source_files',
-    'tags', 'users', 'volumes', 'work_categories', 'work_tags', 'works'];
+  const expected = ['categories', 'chapter_revisions', 'chapters', 'import_items', 'import_jobs',
+    'sessions', 'source_files', 'tags', 'users', 'volumes', 'work_categories', 'work_tags', 'works'];
   const missing = expected.filter((t) => !names.includes(t));
   check('DB-01 tables', missing.length === 0, missing.length ? `missing: ${missing}` : `${names.length} tables`);
 
@@ -82,7 +82,7 @@ const migrator = new Pool({ connectionString: process.env.MIGRATOR_DATABASE_URL,
     '12.10/12.1 coexist, duplicate label kept');
 
   // deferrable unique actually defers: bulk shift inside one transaction
-  const shift = await api.query('begin');
+  const shift = await api.query('begin'); void shift;
   try {
     await api.query(`update app.chapters set editorial_position = editorial_position + 100 where work_id=$1`, [workId]);
     await api.query('commit');
@@ -133,6 +133,56 @@ const migrator = new Pool({ connectionString: process.env.MIGRATOR_DATABASE_URL,
   await api.query(`delete from app.chapter_revisions where chapter_id in (select id from app.chapters where work_id=$1)`, [workId]);
   await api.query(`delete from app.chapters where work_id=$1`, [workId]);
   await api.query(`delete from app.works where id=$1`, [workId]);
+}
+
+// --- M2 additions: volume ownership composite FK + domain CHECKs -------------
+{
+  const cleanup = async () => {
+    for (const row of (await api.query(
+      `select id from app.works where title like 'M2驗收%'`)).rows) {
+      await api.query(`update app.chapters set head_revision_id=null where work_id=$1`, [row.id]);
+      await api.query(`delete from app.chapter_revisions where chapter_id in (select id from app.chapters where work_id=$1)`, [row.id]);
+      await api.query(`delete from app.chapters where work_id=$1`, [row.id]);
+      await api.query(`delete from app.volumes where work_id=$1`, [row.id]);
+      await api.query(`delete from app.works where id=$1`, [row.id]);
+    }
+  };
+  await cleanup();
+
+  const w1 = (await api.query(
+    `insert into app.works (title, work_type) values ('M2驗收A', 'serial') returning id`)).rows[0].id;
+  const w2 = (await api.query(
+    `insert into app.works (title, work_type) values ('M2驗收B', 'short_story') returning id`)).rows[0].id;
+  const vol1 = (await api.query(
+    `insert into app.volumes (work_id, title, position) values ($1,'卷一',1) returning id`, [w1])).rows[0].id;
+
+  // A2: a chapter of work B cannot reference a volume of work A
+  check('M2-01 cross-work volume rejected',
+    await expectError(api,
+      `insert into app.chapters (work_id, volume_id, label_raw, editorial_position) values ($1,$2,'x',1)`,
+      [w2, vol1], '23503'));
+  // same work's volume is fine
+  await api.query(
+    `insert into app.chapters (work_id, volume_id, label_raw, editorial_position) values ($1,$2,'x',1)`, [w1, vol1]);
+  check('M2-01 same-work volume accepted', true);
+
+  // A3: CHECK constraints reject invalid domain values
+  check('M2-02 bad users.role rejected',
+    await expectError(api, `insert into app.users (username,email,password_hash,role) values ('u','u@x.y','h','god')`, [], '23514'));
+  check('M2-02 bad works.work_type rejected',
+    await expectError(api, `insert into app.works (title, work_type) values ('t','novel')`, [], '23514'));
+  check('M2-02 bad works.serial_status rejected',
+    await expectError(api, `insert into app.works (title, work_type, serial_status) values ('t','serial','dropped')`, [], '23514'));
+  check('M2-02 bad works.visibility rejected',
+    await expectError(api, `insert into app.works (title, work_type, visibility) values ('t','serial','hidden')`, [], '23514'));
+  check('M2-02 short_story with serial_status rejected',
+    await expectError(api, `insert into app.works (title, work_type, serial_status) values ('t','short_story','ongoing')`, [], '23514'));
+  check('M2-02 short_story null serial_status accepted', (() => true)());
+  // valid values still insert fine (w2 already proved short_story/null)
+  await api.query(`insert into app.works (title, work_type, serial_status, visibility) values ('M2驗收C','serial','completed','unlisted')`);
+  check('M2-02 valid serial_status accepted', true);
+
+  await cleanup();
 }
 
 await api.end(); await worker.end(); await migrator.end();

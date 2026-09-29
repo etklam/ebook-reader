@@ -1,6 +1,6 @@
 {
-  "id": "3475853c-e728-4601-be44-99f3baf11e97",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "48bca587-4a2a-448c-9975-994139e74653",
+  "prevId": "3475853c-e728-4601-be44-99f3baf11e97",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -279,6 +279,22 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "chapters_volume_id_work_id_volumes_id_work_id_fk": {
+          "name": "chapters_volume_id_work_id_volumes_id_work_id_fk",
+          "tableFrom": "chapters",
+          "tableTo": "volumes",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "volume_id",
+            "work_id"
+          ],
+          "columnsTo": [
+            "id",
+            "work_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -294,6 +310,355 @@
       },
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "app.import_items": {
+      "name": "import_items",
+      "schema": "app",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "import_job_id": {
+          "name": "import_job_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "volume_label": {
+          "name": "volume_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "label_raw": {
+          "name": "label_raw",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parsed_label": {
+          "name": "parsed_label",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "content_key": {
+          "name": "content_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "body_hash": {
+          "name": "body_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "snippet": {
+          "name": "snippet",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "warnings": {
+          "name": "warnings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "needs_review": {
+          "name": "needs_review",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        }
+      },
+      "indexes": {
+        "import_items_job_idx": {
+          "name": "import_items_job_idx",
+          "columns": [
+            {
+              "expression": "import_job_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "position",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "import_items_import_job_id_import_jobs_id_fk": {
+          "name": "import_items_import_job_id_import_jobs_id_fk",
+          "tableFrom": "import_items",
+          "tableTo": "import_jobs",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "import_job_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "import_items_job_position_uq": {
+          "name": "import_items_job_position_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "import_job_id",
+            "position"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "app.import_jobs": {
+      "name": "import_jobs",
+      "schema": "app",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "work_id": {
+          "name": "work_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_file_id": {
+          "name": "source_file_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "requested_by_user_id": {
+          "name": "requested_by_user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'queued'"
+        },
+        "detected_format": {
+          "name": "detected_format",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "requested_encoding": {
+          "name": "requested_encoding",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "detected_encoding": {
+          "name": "detected_encoding",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "encoding_result": {
+          "name": "encoding_result",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "chapter_count": {
+          "name": "chapter_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "processor_version": {
+          "name": "processor_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error_detail": {
+          "name": "error_detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "attempt_count": {
+          "name": "attempt_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "lease_owner": {
+          "name": "lease_owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lease_expires_at": {
+          "name": "lease_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "committed_work_id": {
+          "name": "committed_work_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "committed_chapter_count": {
+          "name": "committed_chapter_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "import_jobs_status_created_idx": {
+          "name": "import_jobs_status_created_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "import_jobs_work_id_works_id_fk": {
+          "name": "import_jobs_work_id_works_id_fk",
+          "tableFrom": "import_jobs",
+          "tableTo": "works",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "work_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "import_jobs_source_file_id_source_files_id_fk": {
+          "name": "import_jobs_source_file_id_source_files_id_fk",
+          "tableFrom": "import_jobs",
+          "tableTo": "source_files",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "source_file_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "import_jobs_requested_by_user_id_users_id_fk": {
+          "name": "import_jobs_requested_by_user_id_users_id_fk",
+          "tableFrom": "import_jobs",
+          "tableTo": "users",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "requested_by_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "import_jobs_status_ck": {
+          "name": "import_jobs_status_ck",
+          "value": "\"app\".\"import_jobs\".\"status\" in ('queued','processing','review_required','ready','failed','cancelled','committed')"
+        }
+      },
       "isRLSEnabled": false
     },
     "app.sessions": {
@@ -593,7 +958,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "users_role_ck": {
+          "name": "users_role_ck",
+          "value": "\"app\".\"users\".\"role\" in ('admin','member')"
+        }
+      },
       "isRLSEnabled": false
     },
     "app.volumes": {
@@ -651,6 +1021,14 @@
           "columns": [
             "work_id",
             "position"
+          ]
+        },
+        "volumes_id_work_uq": {
+          "name": "volumes_id_work_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "work_id"
           ]
         }
       },
@@ -923,7 +1301,24 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "works_work_type_ck": {
+          "name": "works_work_type_ck",
+          "value": "\"app\".\"works\".\"work_type\" in ('short_story','serial')"
+        },
+        "works_serial_status_ck": {
+          "name": "works_serial_status_ck",
+          "value": "\"app\".\"works\".\"serial_status\" is null or \"app\".\"works\".\"serial_status\" in ('ongoing','completed','paused')"
+        },
+        "works_type_status_ck": {
+          "name": "works_type_status_ck",
+          "value": "(\"app\".\"works\".\"work_type\" = 'serial') or (\"app\".\"works\".\"work_type\" = 'short_story' and \"app\".\"works\".\"serial_status\" is null)"
+        },
+        "works_visibility_ck": {
+          "name": "works_visibility_ck",
+          "value": "\"app\".\"works\".\"visibility\" in ('draft','public','unlisted','removed')"
+        }
+      },
       "isRLSEnabled": false
     }
   },

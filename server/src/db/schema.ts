@@ -1,7 +1,8 @@
 // Core schema, M1 subset of dev-plan §17 (imports/reading/publishing tables
 // arrive with M2/M4/M6). Canonical column names per §16A-C — chapters use
 // label_raw / editorial_position / head_revision_id; do not invent duplicates.
-import { pgSchema, uuid, text, integer, timestamp, boolean, index, unique, primaryKey, foreignKey } from 'drizzle-orm/pg-core';
+import { pgSchema, uuid, text, integer, timestamp, boolean, jsonb, index, unique, primaryKey, foreignKey, check } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 export const app = pgSchema('app');
 
@@ -16,7 +17,10 @@ export const users = app.table('users', {
   passwordHash: text('password_hash').notNull(),
   role: text('role', { enum: ['admin', 'member'] }).notNull().default('member'),
   createdAt: createdAt(),
-});
+}, (t) => [
+  // DB-level domain checks (§16A-C): TS enums alone do not constrain the DB
+  check('users_role_ck', sql`${t.role} in ('admin','member')`),
+]);
 
 export const sessions = app.table('sessions', {
   // id = sha256 of the session token; the raw token only exists in the cookie
@@ -43,7 +47,13 @@ export const works = app.table('works', {
   visibility: text('visibility', { enum: ['draft', 'public', 'unlisted', 'removed'] }).notNull().default('draft'),
   createdAt: createdAt(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  check('works_work_type_ck', sql`${t.workType} in ('short_story','serial')`),
+  check('works_serial_status_ck', sql`${t.serialStatus} is null or ${t.serialStatus} in ('ongoing','completed','paused')`),
+  // short_story carries no serial state; serial may leave it NULL while unknown
+  check('works_type_status_ck', sql`(${t.workType} = 'serial') or (${t.workType} = 'short_story' and ${t.serialStatus} is null)`),
+  check('works_visibility_ck', sql`${t.visibility} in ('draft','public','unlisted','removed')`),
+]);
 
 export const volumes = app.table('volumes', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -52,6 +62,9 @@ export const volumes = app.table('volumes', {
   position: integer('position').notNull(),
 }, (t) => [
   unique('volumes_work_position_uq').on(t.workId, t.position),
+  // candidate key so chapters can reference (volume_id, work_id) as a
+  // composite FK — a chapter can never point at another work's volume (§16A-C)
+  unique('volumes_id_work_uq').on(t.id, t.workId),
 ]);
 
 const taxonomyColumns = {
@@ -113,6 +126,9 @@ export const chapters = app.table('chapters', {
   // migration SQL (§16A-C) — mid-sequence insertions shift a range in one tx
   unique('chapters_work_position_uq').on(t.workId, t.editorialPosition),
   index('chapters_work_position_idx').on(t.workId, t.editorialPosition),
+  // composite FK: (volume_id, work_id) → volumes(id, work_id). NULL volume_id
+  // passes (MATCH SIMPLE); a non-null volume must belong to the same work.
+  foreignKey({ columns: [t.volumeId, t.workId], foreignColumns: [volumes.id, volumes.workId] }),
 ]);
 
 export const chapterRevisions = app.table('chapter_revisions', {
@@ -141,4 +157,66 @@ export const sourceFiles = app.table('source_files', {
   createdAt: createdAt(),
 }, (t) => [
   index('source_files_hash_idx').on(t.fileHash),
+]);
+
+// --- import domain (M2, §17 import_jobs/import_items) --------------------------
+// Transitions are explicit: queued → processing → (review_required | ready |
+// failed | cancelled); ready|review_required → committed only via the commit
+// transaction. Staging rows are disposable import state — canonical truth stays
+// works/chapters/chapter_revisions; staged items never reuse chapter ids.
+export const importJobs = app.table('import_jobs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // target work: NULL when importing a new work (commit creates or takes it)
+  workId: uuid('work_id').references(() => works.id),
+  sourceFileId: uuid('source_file_id').notNull().references(() => sourceFiles.id),
+  requestedByUserId: uuid('requested_by_user_id').notNull().references(() => users.id),
+  status: text('status').notNull().default('queued'),
+  detectedFormat: text('detected_format', { enum: ['txt', 'epub'] }),
+  requestedEncoding: text('requested_encoding'),
+  detectedEncoding: text('detected_encoding'),
+  // { confidence, reason, warnings, candidates } — why we picked the encoding
+  encodingResult: jsonb('encoding_result'),
+  chapterCount: integer('chapter_count'),
+  processorVersion: text('processor_version').notNull(),
+  errorCode: text('error_code'),
+  // sanitized operator-facing detail; never contains file content or paths
+  errorDetail: text('error_detail'),
+  // queue bookkeeping (lease/reclaim, §16 queue column)
+  attemptCount: integer('attempt_count').notNull().default(0),
+  leaseOwner: text('lease_owner'),
+  leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+  // idempotent commit result: first successful commit persists these; a retry
+  // returns the same result without creating chapters/revisions again
+  committedWorkId: uuid('committed_work_id'),
+  committedChapterCount: integer('committed_chapter_count'),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [
+  check('import_jobs_status_ck', sql`${t.status} in ('queued','processing','review_required','ready','failed','cancelled','committed')`),
+  index('import_jobs_status_created_idx').on(t.status, t.createdAt),
+]);
+
+export const importItems = app.table('import_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  importJobId: uuid('import_job_id').notNull().references(() => importJobs.id),
+  // position within this source document (0-based source sequence)
+  position: integer('position').notNull(),
+  // volume label / staging volume identity if the source had one
+  volumeLabel: text('volume_label'),
+  // raw chapter label preserved exactly ('' when the source had none)
+  labelRaw: text('label_raw').notNull(),
+  // parsed-label metadata from the shared parser (kind/parts/subPart/key)
+  parsedLabel: jsonb('parsed_label'),
+  title: text('title').notNull().default(''),
+  // immutable staged body already in private storage (worker writes before tx)
+  contentKey: text('content_key').notNull(),
+  bodyHash: text('body_hash').notNull(),
+  // short headless preview snippet for admin listing (not full body)
+  snippet: text('snippet').notNull().default(''),
+  warnings: jsonb('warnings').notNull().default(sql`'[]'::jsonb`),
+  needsReview: boolean('needs_review').notNull().default(false),
+}, (t) => [
+  unique('import_items_job_position_uq').on(t.importJobId, t.position),
+  index('import_items_job_idx').on(t.importJobId, t.position),
 ]);

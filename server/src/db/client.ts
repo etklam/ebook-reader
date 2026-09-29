@@ -8,6 +8,8 @@ export interface PoolOptions {
   connectionString: string;
   max: number;
   applicationName: string;
+  /** API keeps the 5s default (§16A-G); worker raises it for staging writes */
+  statementTimeoutMillis?: number;
 }
 
 function parseDatabaseUrl(value: string): URL {
@@ -40,7 +42,7 @@ export function makePool(opts: PoolOptions): Pool {
     max: opts.max,
     connectionTimeoutMillis: 5_000,
     idleTimeoutMillis: 30_000,
-    statement_timeout: 5_000,
+    statement_timeout: opts.statementTimeoutMillis ?? 5_000,
     idle_in_transaction_session_timeout: 15_000,
     application_name: opts.applicationName,
     // DB_TLS=disable is only acceptable for documented loopback dev (§16A-G)
