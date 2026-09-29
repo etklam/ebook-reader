@@ -15,6 +15,13 @@
       "when": 1790622823286,
       "tag": "0001_round_shard",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790645117368,
+      "tag": "0002_freezing_wasp",
+      "breakpoints": true
     }
   ]
 }

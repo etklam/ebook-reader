@@ -189,11 +189,14 @@ export const importJobs = app.table('import_jobs', {
   // returns the same result without creating chapters/revisions again
   committedWorkId: uuid('committed_work_id'),
   committedChapterCount: integer('committed_chapter_count'),
+  // M3 incremental apply: mode + persisted summary for idempotent replay
+  applyMode: text('apply_mode', { enum: ['incremental', 'overwrite'] }),
+  appliedResult: jsonb('applied_result'),
   startedAt: timestamp('started_at', { withTimezone: true }),
   completedAt: timestamp('completed_at', { withTimezone: true }),
   createdAt: createdAt(),
 }, (t) => [
-  check('import_jobs_status_ck', sql`${t.status} in ('queued','processing','review_required','ready','failed','cancelled','committed')`),
+  check('import_jobs_status_ck', sql`${t.status} in ('queued','processing','review_required','ready','failed','cancelled','committed','applied')`),
   index('import_jobs_status_created_idx').on(t.status, t.createdAt),
 ]);
 
