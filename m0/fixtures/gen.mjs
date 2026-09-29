@@ -72,7 +72,7 @@ const REVISED = new Set([101, 102, 103, 104]);
 const files = {
   'base-180.txt': buildTxt(range(1, 180)),
   'full-190.txt': buildTxt([
-    ...range(1, 86),
+    ...range(1, 87), // §24 shape: 1–190 INCLUDING 87, plus 87.5 inserted
     { num: 87.5, label: '第87.5章', title: '插章' },
     ...Array.from({ length: 190 - 88 + 1 }, (_, i) => {
       const num = 88 + i;

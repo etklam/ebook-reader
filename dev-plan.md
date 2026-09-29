@@ -916,4 +916,5 @@ v1.3／2026-09-28：review 後採納三項調整：一、M0 閱讀引擎改為 e
 | M0 閱讀引擎最終擇一 | 待定 | 未有真機比較證據前，不得宣稱 epub.js 或 foliate-js 勝出；兩者尚未整合進 production reader |
 | M1（基礎工程） | 完成，本機已驗證 | DB-01／02／03、非 Admin 403、本機啟動、CI L1＋L2（詳見 README） |
 | M2（首次匯入） | 完成（2026-09-29） | TXT 全流程＋**EPUB 解析完成**：container→OPF→spine 閱讀順序（非檔名順序）、nav/NCX 標籤、DOMPurify allowlist 清理、zip bomb（壓縮比/總量/條目上限）與路徑穿越防護、spine 重複去重、非文字節 needsReview。L2 e2e 7/7（含 IMP-16 上傳→解析→預覽→commit spine 順序 5 章）；單元 8/8。已知限制：一個 XHTML 多章錨點不拆分（標記 backlog）、list 內容暫不萃取、圖片資源暫不映射（M5 閱讀器前處理） |
-| M3–M7 | 未開始 | — |
+| M3（增量與中間插章） | 完成（2026-09-29） | 匹配引擎（`match.ts`：label key 唯一→自動匹配；重複/改名→ambiguous；重編號/拆合章→structural_conflict；錨點插入；無錨點→需確認，ADR-02）＋增量套用（交易內 job 鎖→作品鎖→`base_edit_version` 檢查→錨點插入＋DEFERRABLE 位移→`edit_version` 遞增；modified 保留站方版本 §05；冪等重放；`resolutions`/`confirmAppend` 人工決策）。API：`GET /:id/diff`、`POST /:id/apply`；UI 加目標作品＋比對＋套用。Gate 全過：單元 10/10（IMP-02/04/06/07/08/18 形狀）、e2e 13/13（IMP-02+04：+11 含 87.5 中插、ID 不變；IMP-07 confirmAppend；IMP-08 保留 171–180；IMP-18 重編號擋截＋Admin 解決；冪等；版本衝突 409）。過程修復：full-190 fixture 原本漏第 87 章（引擎正確地報衝突，fixture 錯） |
+| M4–M7 | 未開始 | — |

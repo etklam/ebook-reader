@@ -103,7 +103,7 @@ after(async () => {
     await q(`delete from app.import_items where import_job_id=$1`, [j.id]);
     await q(`delete from app.import_jobs where id=$1`, [j.id]);
   }
-  await q(`delete from app.source_files where work_id is null and created_at > now() - interval '1 hour'`);
+  await q(`delete from app.source_files s where not exists (select 1 from app.import_jobs j where j.source_file_id = s.id) and s.created_at > now() - interval '1 hour'`);
   await q(`delete from app.sessions where user_id in (select id from app.users where email like '%'||$1||'%')`, [SUFFIX]);
   await q(`delete from app.users where email like '%'||$1||'%'`, [SUFFIX]);
   await q(`drop trigger if exists e2e_fail_on_ch100 on app.chapters`);

@@ -11,7 +11,7 @@ async function api(path: string, init?: RequestInit): Promise<{ status: number; 
 
 const STATUS_TEXT: Record<string, string> = {
   queued: '排隊中', processing: '解析中', review_required: '需要人工覆核',
-  ready: '可提交', failed: '失敗', cancelled: '已取消', committed: '已提交',
+  ready: '可提交', failed: '失敗', cancelled: '已取消', committed: '已提交', applied: '已套用增量',
 };
 
 // --- app ------------------------------------------------------------------------
@@ -69,7 +69,7 @@ function App() {
 }
 
 type Job = {
-  id: string; status: string; detected_encoding: string | null;
+  id: string; status: string; workId: string | null; detected_encoding: string | null;
   detectedEncoding?: string | null; chapter_count: number | null;
   encodingResult: any; errorCode: string | null; errorDetail: string | null;
   stagedChapters: number; stagedNeedsReview: number; sourceFile: any;
@@ -80,7 +80,10 @@ function ImportPanel() {
   const [title, setTitle] = useState('');
   const [workType, setWorkType] = useState('serial');
   const [encoding, setEncoding] = useState('');
+  const [workId, setWorkId] = useState('');
   const [job, setJob] = useState<Job | null>(null);
+  const [diff, setDiff] = useState<any>(null);
+  const [applyResult, setApplyResult] = useState<any>(null);
   const [importId, setImportId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -105,11 +108,12 @@ function ImportPanel() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!file) return;
-    setBusy(true); setError(''); setCommitResult(null); setJob(null);
+    setBusy(true); setError(''); setCommitResult(null); setJob(null); setDiff(null); setApplyResult(null);
     const form = new FormData();
     form.append('file', file);
     if (title) form.append('title', title); // display hint only; real title goes to commit
     if (encoding) form.append('encoding', encoding);
+    if (workId) form.append('workId', workId);
     const { status, body } = await api('/api/admin/imports', { method: 'POST', body: form });
     setBusy(false);
     if (status !== 201) { setError(body.error ?? '上傳失敗'); return; }
@@ -143,6 +147,29 @@ function ImportPanel() {
     if (refreshed.status === 200) setJob(refreshed.body);
   }
 
+  async function loadDiff() {
+    if (!importId) return;
+    setBusy(true); setError('');
+    const { status, body } = await api(`/api/admin/imports/${importId}/diff`);
+    setBusy(false);
+    if (status !== 200) { setError(body.error ?? '比對失敗'); return; }
+    setDiff(body);
+  }
+
+  async function applyIncremental(confirmAppend = false) {
+    if (!importId || !diff) return;
+    setBusy(true); setError('');
+    const { status, body } = await api(`/api/admin/imports/${importId}/apply`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseEditVersion: diff.editVersion, confirmAppend }),
+    });
+    setBusy(false);
+    if (status !== 200) { setError(`${body.error ?? '套用失敗'}${body.unresolved?.length ? `（${body.unresolved.length} 項待決：${body.unresolved.map((u: any) => u.labelRaw).join('、')}）` : ''}`); return; }
+    setApplyResult(body);
+    const refreshed = await api(`/api/admin/imports/${importId}`);
+    if (refreshed.status === 200) setJob(refreshed.body);
+  }
+
   const enc = job?.encodingResult;
   const detected = job?.detectedEncoding ?? job?.detected_encoding;
 
@@ -158,6 +185,8 @@ function ImportPanel() {
           <option value="serial">長篇連載</option>
           <option value="short_story">短篇小說</option>
         </select>
+        <label style={s.label}>目標作品 ID（增量匯入時填；留空＝新作品）</label>
+        <input style={s.input} value={workId} onChange={(e) => setWorkId(e.target.value)} placeholder="work UUID" />
         <label style={s.label}>指定編碼（可留空自動偵測）</label>
         <select style={s.input} value={encoding} onChange={(e) => setEncoding(e.target.value)}>
           <option value="">自動偵測</option>
@@ -189,13 +218,42 @@ function ImportPanel() {
               <button style={{ ...s.button, marginLeft: 8 }} onClick={() => reanalyze()} disabled={busy}>重新解析</button>
             </p>
           )}
+          {(job.status === 'ready' || job.status === 'review_required' || job.status === 'applied') && job.workId && (
+            <>
+              <button style={s.button} onClick={loadDiff} disabled={busy}>與現有章節比對</button>
+              {diff && (
+                <div style={{ marginTop: 8 }}>
+                  <p>相同 <b>{diff.match.items.filter((i: any) => i.itemClass === 'unchanged').length}</b>｜
+                     有修訂（增量保留站方）<b>{diff.match.items.filter((i: any) => i.itemClass === 'modified').length}</b>｜
+                     新章 <b>{diff.match.items.filter((i: any) => i.itemClass === 'new').length}</b>｜
+                     待決 <b>{diff.match.items.filter((i: any) => ['ambiguous', 'structural_conflict'].includes(i.itemClass)).length}</b>｜
+                     來源缺失（保留）<b>{diff.match.missingFromSource.length}</b></p>
+                  <p style={s.muted}>基準版本 edit_version = {diff.editVersion}</p>
+                  {diff.match.needsReview && <p style={s.warn}>有項目需要決策（待決清單會顯示在套用錯誤訊息）；無錨點的新章可用「確認全部追加到結尾」。</p>}
+                  <button style={s.button} onClick={() => applyIncremental()} disabled={busy || job.status === 'applied'}>
+                    套用增量
+                  </button>{' '}
+                  <button style={s.button} onClick={() => applyIncremental(true)} disabled={busy || job.status === 'applied'}>
+                    確認全部追加到結尾
+                  </button>
+                </div>
+              )}
+              {applyResult && (
+                <p style={s.ok}>已套用（增量）：新增 {applyResult.summary.added}、相同 {applyResult.summary.unchanged}、
+                  保留站方修訂 {applyResult.summary.modifiedKept}、略過 {applyResult.summary.skipped}、
+                  保留缺失 {applyResult.summary.missingKept}；edit_version → {applyResult.newEditVersion}。</p>
+              )}
+            </>
+          )}
           {(job.status === 'ready' || job.status === 'review_required') && (
             <>
               <p>偵測章節數：<b>{job.stagedChapters}</b>{job.stagedNeedsReview > 0 && <span style={s.warn}>（{job.stagedNeedsReview} 章需要覆核）</span>}</p>
               <ChapterList importId={importId!} />
-              <button style={s.button} onClick={commit} disabled={busy}>
-                {job.status === 'review_required' ? '覆核後提交為草稿' : '提交為草稿'}
-              </button>
+              {!job.workId && (
+                <button style={s.button} onClick={commit} disabled={busy}>
+                  {job.status === 'review_required' ? '覆核後提交為草稿' : '提交為草稿'}
+                </button>
+              )}
             </>
           )}
           {job.status === 'committed' && commitResult && (

@@ -16,6 +16,7 @@ import { SESSION_COOKIE, tokenId, newSession, cookieOpts } from './auth/session.
 import { localStorage } from './storage.ts';
 import { PROCESSOR_VERSION, MAX_ATTEMPTS } from './import/queue.ts';
 import { commitImport } from './import/commit.ts';
+import { applyIncremental, diffImport } from './import/apply-incremental.ts';
 
 const pool = makePool({
   connectionString: process.env.DATABASE_URL ?? '',
@@ -223,6 +224,30 @@ app.post('/api/admin/imports/:id/commit', requireAdmin, async (c) => {
     chapterCount: result.chapterCount,
     alreadyCommitted: result.alreadyCommitted,
   });
+});
+
+// M3: live match preview against the target work — classifications, anchor
+// evidence, missing chapters. Nothing is applied.
+app.get('/api/admin/imports/:id/diff', requireAdmin, async (c) => {
+  const r = await diffImport(db, routeId(c));
+  if (!r.ok) return c.json({ error: r.error, detail: (r as { detail?: string }).detail }, r.status);
+  return c.json(r);
+});
+
+// M3: incremental apply. baseEditVersion is the optimistic concurrency check
+// (§12); unresolved items need resolutions or confirmAppend.
+app.post('/api/admin/imports/:id/apply', requireAdmin, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  if (!Number.isInteger(body?.baseEditVersion)) {
+    return c.json({ error: 'base_edit_version_required' }, 400);
+  }
+  const result = await applyIncremental(db, routeId(c), {
+    baseEditVersion: body.baseEditVersion as number,
+    confirmAppend: body.confirmAppend === true,
+    resolutions: body.resolutions && typeof body.resolutions === 'object' ? body.resolutions : undefined,
+  });
+  if (!result.ok) return c.json(result, result.status);
+  return c.json(result);
 });
 
 // re-run parsing, optionally with an explicit encoding override (encoding

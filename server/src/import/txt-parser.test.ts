@@ -93,11 +93,12 @@ test('volume lines set volume label and do not become chapters', () => {
 test('87.5 insertion chapter parses with multi-part number', () => {
   const text = readFileSync(join(FIXTURES, 'full-190.txt'), 'utf8');
   const { chapters } = parseTxt(text);
-  // fixture layout: 1–86, 87.5, 88–190 → 190 items total (87.5 sits mid-file)
-  assert.equal(chapters.length, 190);
+  // fixture layout: 1–87, 87.5, 88–190 → 191 items (87.5 sits between 87/88)
+  assert.equal(chapters.length, 191);
   const ins = chapters.find((c) => c.labelRaw === '第87.5章')!;
   assert.equal(ins.parsed?.parts?.join('.'), '87.5');
   assert.equal(chapters[85].labelRaw, '第86章');
-  assert.equal(chapters[86].labelRaw, '第87.5章');
-  assert.equal(chapters[87].labelRaw, '第88章');
+  assert.equal(chapters[86].labelRaw, '第87章');
+  assert.equal(chapters[87].labelRaw, '第87.5章');
+  assert.equal(chapters[88].labelRaw, '第88章');
 });
