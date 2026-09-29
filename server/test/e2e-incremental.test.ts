@@ -52,7 +52,7 @@ async function importInto(workId: string, name: string, bytes: Buffer): Promise<
   });
   assert.equal(res.status, 201, `upload ${name}`);
   const { importId } = await res.json() as { importId: string };
-  const processed = await runOnce(workerDb, storage, `m3-${SUFFIX}`);
+  const processed = await runOnce(workerDb, storage, { owner: `m3-${SUFFIX}`, leaseMs: 300_000, heartbeatMs: 100_000, maxAttempts: 3, storageConcurrency: 6 });
   assert.equal(processed, importId, 'worker claims exactly this job');
   return importId;
 }
@@ -78,7 +78,7 @@ async function createBaseWork(): Promise<string> {
     body: (() => { const f = new FormData(); f.append('file', new File([BASE], 'base-180.txt')); return f; })(),
   });
   const { importId } = await res.json() as { importId: string };
-  await runOnce(workerDb, storage, `m3-${SUFFIX}`);
+  await runOnce(workerDb, storage, { owner: `m3-${SUFFIX}`, leaseMs: 300_000, heartbeatMs: 100_000, maxAttempts: 3, storageConcurrency: 6 });
   const commit = await app.request(`/api/admin/imports/${importId}/commit`, {
     method: 'POST', headers: { cookie: admin, 'content-type': 'application/json' },
     body: JSON.stringify({ title: `m3-base-${SUFFIX}`, workType: 'serial' }),
@@ -221,7 +221,7 @@ test('IMP-18: renumbered source is blocked with an unresolved list; Admin can re
     body: (() => { const f = new FormData(); f.append('file', new File([Buffer.from(tiny)], 't.txt')); return f; })(),
   });
   const { importId: firstId } = await res.json() as { importId: string };
-  await runOnce(workerDb, storage, `m3-${SUFFIX}`);
+  await runOnce(workerDb, storage, { owner: `m3-${SUFFIX}`, leaseMs: 300_000, heartbeatMs: 100_000, maxAttempts: 3, storageConcurrency: 6 });
   const commit = await app.request(`/api/admin/imports/${firstId}/commit`, {
     method: 'POST', headers: { cookie: admin, 'content-type': 'application/json' },
     body: JSON.stringify({ title: `m3-tiny-${SUFFIX}`, workType: 'serial' }),

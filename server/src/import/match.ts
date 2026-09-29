@@ -3,6 +3,8 @@
 // adjacency evidence auto-match; anything else surfaces as ambiguous or
 // structural_conflict for the Admin, never a silent overwrite. Reason codes
 // are engineering evidence (ADR-05), not calibrated probabilities.
+// Stabilization §10: all lookups are map/binary-search based — O(n log n)
+// total for multi-thousand-chapter novels.
 import { parseLabel, sameNumberCandidate } from './parse-label.ts';
 
 export interface ExistingChapter {
@@ -54,28 +56,27 @@ interface ParsedExisting {
   key: string | null;
 }
 
+function pushTo<K>(map: Map<K, ParsedExisting[]>, key: K, val: ParsedExisting): void {
+  const list = map.get(key);
+  if (list) list.push(val);
+  else map.set(key, [val]);
+}
+
 export function matchChapters(existing: ExistingChapter[], source: SourceItemRef[]): MatchResult {
   const warnings: string[] = [];
 
-  // --- index existing by normalized label key ----------------------------------
+  // --- index existing by normalized label key / body hash ----------------------
   const parsedExisting: ParsedExisting[] = existing.map((ch) => ({
     ch,
     key: ch.labelRaw ? parseLabel(ch.labelRaw).key : null,
   }));
   const byKey = new Map<string, ParsedExisting[]>();
-  for (const pe of parsedExisting) {
-    if (pe.key === null) continue;
-    const list = byKey.get(pe.key) ?? [];
-    list.push(pe);
-    byKey.set(pe.key, list);
-  }
   const byBody = new Map<string, ParsedExisting[]>();
   for (const pe of parsedExisting) {
-    if (!pe.ch.bodyCompareHash) continue;
-    const list = byBody.get(pe.ch.bodyCompareHash) ?? [];
-    list.push(pe);
-    byBody.set(pe.ch.bodyCompareHash, list);
+    if (pe.key !== null) pushTo(byKey, pe.key, pe);
+    if (pe.ch.bodyCompareHash) pushTo(byBody, pe.ch.bodyCompareHash, pe);
   }
+  const existingById = new Map(existing.map((e) => [e.id, e]));
 
   // --- pass 1: label-key matching ---------------------------------------------
   const claimedBy = new Map<string, string>(); // existing chapter id → source itemId
@@ -89,24 +90,25 @@ export function matchChapters(existing: ExistingChapter[], source: SourceItemRef
     positionConfident: false,
     reason: [],
   }));
+  const outById = new Map(out.map((o) => [o.itemId, o]));
 
-  const keyed = source.filter((s) => s.labelRaw && parseLabel(s.labelRaw).key !== null);
+  // parse each source label exactly once, up front
+  const srcKeys = source.map((s) => (s.labelRaw ? parseLabel(s.labelRaw).key : null));
   const keyUseCount = new Map<string, number>();
-  for (const s of keyed) {
-    const k = parseLabel(s.labelRaw).key!;
-    keyUseCount.set(k, (keyUseCount.get(k) ?? 0) + 1);
-  }
+  for (const k of srcKeys) if (k !== null) keyUseCount.set(k, (keyUseCount.get(k) ?? 0) + 1);
 
-  for (const s of keyed) {
-    const res = out.find((o) => o.itemId === s.itemId)!;
-    const k = parseLabel(s.labelRaw).key!;
+  for (let i = 0; i < source.length; i++) {
+    const k = srcKeys[i];
+    if (k === null) continue;
+    const res = out[i];
     const candidates = byKey.get(k) ?? [];
-    if (candidates.length === 1 && keyUseCount.get(k) === 1 && !claimedBy.has(candidates[0].ch.id)) {
+    const uniqueUse = keyUseCount.get(k) === 1;
+    if (candidates.length === 1 && uniqueUse && !claimedBy.has(candidates[0].ch.id)) {
       // unique label key on both sides → matched candidate; verify body below
       res.matchedChapterId = candidates[0].ch.id;
       res.reason.push('label_key_unique');
-      claimedBy.set(candidates[0].ch.id, s.itemId);
-    } else if (candidates.length > 1 || keyUseCount.get(k)! > 1) {
+      claimedBy.set(candidates[0].ch.id, source[i].itemId);
+    } else if (candidates.length > 1 || !uniqueUse) {
       res.itemClass = 'ambiguous';
       res.reason.push('duplicate_label_key');
     }
@@ -115,7 +117,7 @@ export function matchChapters(existing: ExistingChapter[], source: SourceItemRef
 
   // --- pass 2: body-hash fallback for label-unmatched items -------------------
   for (const s of source) {
-    const res = out.find((o) => o.itemId === s.itemId)!;
+    const res = outById.get(s.itemId)!;
     if (res.matchedChapterId || res.itemClass !== 'new') continue;
     const hits = byBody.get(s.bodyHash) ?? [];
     const unclaimed = hits.filter((h) => !claimedBy.has(h.ch.id));
@@ -128,9 +130,9 @@ export function matchChapters(existing: ExistingChapter[], source: SourceItemRef
 
   // --- pass 3: classify matched pairs; detect renumbering ---------------------
   for (const s of source) {
-    const res = out.find((o) => o.itemId === s.itemId)!;
+    const res = outById.get(s.itemId)!;
     if (!res.matchedChapterId) continue;
-    const ex = existing.find((e) => e.id === res.matchedChapterId)!;
+    const ex = existingById.get(res.matchedChapterId)!;
     if (ex.bodyCompareHash === s.bodyHash) {
       res.itemClass = 'unchanged';
       res.reason.push('body_hash_equal');
@@ -148,10 +150,10 @@ export function matchChapters(existing: ExistingChapter[], source: SourceItemRef
   }
 
   // --- pass 4: order consistency + gap analysis for insert positions ----------
-  const matchedSeq = out.filter((o) => o.matchedChapterId);
   let prevPos: number | null = null;
-  for (const o of matchedSeq) {
-    const ex = existing.find((e) => e.id === o.matchedChapterId)!;
+  for (const o of out) {
+    if (!o.matchedChapterId) continue;
+    const ex = existingById.get(o.matchedChapterId)!;
     if (prevPos !== null && ex.editorialPosition < prevPos) {
       o.itemClass = 'structural_conflict';
       o.reason.push('match_order_inconsistent');
@@ -159,41 +161,80 @@ export function matchChapters(existing: ExistingChapter[], source: SourceItemRef
     prevPos = ex.editorialPosition;
   }
 
-  const matchedIds = new Set(matchedSeq.map((o) => o.matchedChapterId));
+  const matchedIds = new Set<string>();
+  for (const o of out) if (o.matchedChapterId) matchedIds.add(o.matchedChapterId);
   const missing = existing
     .filter((e) => !matchedIds.has(e.id))
     .map((e) => ({ chapterId: e.id, labelRaw: e.labelRaw, editorialPosition: e.editorialPosition }));
 
-  // walk gaps between consecutive matched anchors to place 'new' items
-  const anchors = out
-    .filter((o) => o.matchedChapterId)
-    .map((o) => ({
-      srcIdx: source.findIndex((s) => s.itemId === o.itemId),
-      exPos: existing.find((e) => e.id === o.matchedChapterId)!.editorialPosition,
-      chapterId: o.matchedChapterId!,
-    }));
+  // anchors are matched items in source order (out follows source order, so
+  // srcIdx is simply the running index — no per-anchor findIndex)
+  const anchors: { srcIdx: number; exPos: number; chapterId: string }[] = [];
+  for (let i = 0; i < out.length; i++) {
+    const mid = out[i].matchedChapterId;
+    if (!mid) continue;
+    anchors.push({
+      srcIdx: i,
+      exPos: existingById.get(mid)!.editorialPosition,
+      chapterId: mid,
+    });
+  }
+
+  // unmatched existing positions, sorted, with prefix counts — answers
+  // "how many unmatched chapters lie in (a, b)" by binary search
+  const unmatchedPos = existing
+    .filter((e) => !matchedIds.has(e.id))
+    .map((e) => e.editorialPosition)
+    .sort((a, b) => a - b);
+  // count of unmatched positions < x
+  const countBelow = (x: number): number => {
+    let lo = 0, hi = unmatchedPos.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (unmatchedPos[mid] < x) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+
+  // per-gap counters of currently-'new' items: original semantics counted
+  // `out.filter(itemClass==='new' && in gap)` at each step, and items flipped
+  // to structural_conflict earlier in the same gap drop out of later counts —
+  // replicate with a mutable per-gap counter
+  const newInGap = new Map<string, number>();
+  const gapKeyOf = new Array<string | null>(out.length).fill(null);
+  let ai = 0;
+  for (let i = 0; i < out.length; i++) {
+    while (ai < anchors.length && anchors[ai].srcIdx < i) ai++;
+    const prev = ai > 0 ? anchors[ai - 1] : undefined;
+    const next = anchors[ai];
+    if (out[i].itemClass === 'new' && prev && next) {
+      const key = `${prev.srcIdx}:${next.srcIdx}`;
+      gapKeyOf[i] = key;
+      newInGap.set(key, (newInGap.get(key) ?? 0) + 1);
+    }
+  }
 
   const anyAnchor = anchors.length > 0;
+  ai = 0;
   for (let i = 0; i < out.length; i++) {
     const res = out[i];
+    while (ai < anchors.length && anchors[ai].srcIdx < i) ai++;
+    const prevAnchor = ai > 0 ? anchors[ai - 1] : undefined;
+    const nextAnchor = anchors[ai];
     if (res.itemClass !== 'new') continue;
-    const prevAnchor = [...anchors].reverse().find((a) => a.srcIdx < i);
-    const nextAnchor = anchors.find((a) => a.srcIdx > i);
 
     if (prevAnchor && nextAnchor) {
       res.insertAfterChapterId = prevAnchor.chapterId;
       res.insertBeforeChapterId = nextAnchor.chapterId;
       // span integrity: new items in this gap vs existing chapters between the
       // anchors that nobody matched — both non-zero means split/merge/renumber
-      const betweenExisting = existing.filter(
-        (e) => !matchedIds.has(e.id) && e.editorialPosition > prevAnchor.exPos && e.editorialPosition < nextAnchor.exPos,
-      ).length;
-      const newInGap = out.filter(
-        (o, j) => o.itemClass === 'new' && j > prevAnchor.srcIdx && j < nextAnchor.srcIdx,
-      ).length;
-      if (betweenExisting > 0 && newInGap > 0) {
+      const betweenExisting = countBelow(nextAnchor.exPos) - countBelow(prevAnchor.exPos);
+      const gapNew = newInGap.get(gapKeyOf[i]!) ?? 0;
+      if (betweenExisting > 0 && gapNew > 0) {
         res.itemClass = 'structural_conflict';
         res.reason.push('span_count_mismatch');
+        newInGap.set(gapKeyOf[i]!, gapNew - 1); // later items in this gap see the flip
       } else {
         res.positionConfident = true;
         res.reason.push('anchored_between_neighbors');
@@ -202,7 +243,7 @@ export function matchChapters(existing: ExistingChapter[], source: SourceItemRef
       // tail: anchored from the left — safe append unless the site still has
       // unmatched chapters beyond the anchor (leapfrog risk)
       const isLastSourceChunk = !nextAnchor; // no later anchor at all
-      const missingAfter = existing.filter((e) => !matchedIds.has(e.id) && e.editorialPosition > prevAnchor.exPos).length;
+      const missingAfter = unmatchedPos.length - countBelow(prevAnchor.exPos);
       if (missingAfter > 0) {
         // source ends before chapters that exist on the site (e.g. only 1–170
         // uploaded against 1–180): appending here would leapfrog kept chapters

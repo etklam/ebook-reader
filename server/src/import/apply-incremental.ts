@@ -3,8 +3,11 @@
 // keeps the site version (§05 incremental contract); missing chapters stay.
 // One short transaction: job lock → work lock → edit_version check → match →
 // insert/renumber → persist result. Idempotent replay like commitImport.
-import { createHash } from 'node:crypto';
-import { asc, eq } from 'drizzle-orm';
+// Writes are batched (stabilization §11): client-generated chapter ids make
+// the insert→renumber mapping deterministic, and one set-based UPDATE applies
+// all final positions instead of one UPDATE per chapter.
+import { createHash, randomUUID } from 'node:crypto';
+import { asc, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { chapters, chapterRevisions, importItems, importJobs, works } from '../db/schema.ts';
 import { matchChapters, type MatchResult } from './match.ts';
@@ -35,6 +38,8 @@ interface Insert {
   afterChapterId: string | null;
 }
 
+const BATCH = 500;
+
 export async function applyIncremental(
   db: NodePgDatabase,
   jobId: string,
@@ -61,6 +66,7 @@ export async function applyIncremental(
       return { ok: false, status: 409, error: 'not_appliable', detail: `job status is ${job.status}` };
     }
     if (!job.workId) return { ok: false, status: 400, error: 'work_required', detail: 'upload with workId to target an existing work' };
+    const targetWorkId = job.workId; // narrowed once; closures below need the non-null value
 
     // work row lock serializes concurrent applies/edits of the same work (§12)
     const workRows = await tx.select().from(works)
@@ -98,6 +104,7 @@ export async function applyIncremental(
 
     // --- decide what this apply does -------------------------------------------
     const itemById = new Map(items.map((i) => [i.id, i]));
+    const existingById = new Map(existing.map((e) => [e.id, e]));
     const inserts: Insert[] = [];
     const skipped: string[] = [];
     const unresolved: Array<{ itemId: string; labelRaw: string; itemClass: string; reason: string[] }> = [];
@@ -107,7 +114,7 @@ export async function applyIncremental(
     for (const [itemId, decision] of Object.entries(req.resolutions ?? {})) {
       if (decision.startsWith('match:')) {
         const target = decision.slice('match:'.length);
-        if (!existing.some((e) => e.id === target)) {
+        if (!existingById.has(target)) {
           return { ok: false, status: 400, error: 'invalid_resolution', detail: `chapter ${target} 不屬於此作品` };
         }
         adminMatch.set(itemId, target);
@@ -147,7 +154,7 @@ export async function applyIncremental(
         // Admin confirmed this source item IS that existing chapter. In
         // incremental mode the site body stays (rename/revision is M4); a
         // body-identical confirmation is just an unchanged match.
-        const ex = existing.find((e) => e.id === adminChapter)!;
+        const ex = existingById.get(adminChapter)!;
         if (ex.bodyCompareHash === item.bodyHash) unchanged++;
         else modifiedKept++;
         continue;
@@ -192,19 +199,22 @@ export async function applyIncremental(
       order.splice(end, 0, { insert: ins });
     }
 
-    // create chapters + revisions first (positions get rewritten right after;
-    // the DEFERRABLE unique tolerates transient duplicates inside the tx)
-    const newIds: string[] = [];
-    for (const slot of order) {
-      if (!('insert' in slot)) continue;
-      const ins = slot.insert;
-      const chapter = await tx.insert(chapters).values({
-        workId: job.workId,
+    // ids for new chapters are generated client-side so the batched inserts
+    // below never depend on RETURNING order
+    const insertsInOrder = order.filter((s): s is { insert: Insert } => 'insert' in s).map((s) => s.insert);
+    const insertId = new Map<Insert, string>();
+    for (const ins of insertsInOrder) insertId.set(ins, randomUUID());
+
+    for (let i = 0; i < insertsInOrder.length; i += BATCH) {
+      const batch = insertsInOrder.slice(i, i + BATCH);
+      await tx.insert(chapters).values(batch.map((ins) => ({
+        id: insertId.get(ins)!,
+        workId: targetWorkId,
         labelRaw: ins.labelRaw,
-        editorialPosition: 0, // rewritten below
-      }).returning({ id: chapters.id });
-      const revision = await tx.insert(chapterRevisions).values({
-        chapterId: chapter[0].id,
+        editorialPosition: 0, // rewritten by the set-based renumber below
+      })));
+      await tx.insert(chapterRevisions).values(batch.map((ins) => ({
+        chapterId: insertId.get(ins)!,
         title: ins.title,
         contentKey: ins.contentKey,
         bodyCompareHash: ins.bodyHash,
@@ -213,24 +223,31 @@ export async function applyIncremental(
           .digest('hex'),
         processorVersion: job.processorVersion,
         sourceImportId: jobId,
-      }).returning({ id: chapterRevisions.id });
-      await tx.update(chapters).set({ headRevisionId: revision[0].id })
-        .where(eq(chapters.id, chapter[0].id));
-      newIds.push(chapter[0].id);
+      })));
     }
 
-    // renumber from the merged order. Existing slots carry their stable id;
-    // new-chapter slots consume newIds in creation order (which followed the
-    // merged order), so shift() pairs them correctly. Per-row updates are fine
-    // at M3 scale; the DEFERRABLE unique tolerates transient duplicates.
-    if (order.length > 0) {
-      const newQueue = [...newIds];
-      const idBySlot = order.map((slot) => ('chapterId' in slot ? slot.chapterId : newQueue.shift()!));
-      for (let i = 0; i < idBySlot.length; i++) {
-        await tx.update(chapters).set({ editorialPosition: i + 1 })
-          .where(eq(chapters.id, idBySlot[i]));
-      }
+    // renumber everything to the merged order in one set-based statement; the
+    // DEFERRABLE unique tolerates transient duplicates inside the tx
+    const finalIds: string[] = [];
+    const finalPos: number[] = [];
+    for (let i = 0; i < order.length; i++) {
+      const slot = order[i];
+      finalIds.push('chapterId' in slot ? slot.chapterId : insertId.get(slot.insert)!);
+      finalPos.push(i + 1);
     }
+    // sql.param: one array parameter each — a bare JS array in a sql`` template
+    // would expand into a parameter-list tuple and break the unnest cast
+    await tx.execute(sql`
+      update app.chapters c set editorial_position = v.pos
+      from unnest(${sql.param(finalIds)}::uuid[], ${sql.param(finalPos)}::int[]) as v(id, pos)
+      where c.id = v.id`);
+
+    // wire head_revision_id for the new chapters (exactly one revision each)
+    const newIds = [...insertId.values()];
+    await tx.execute(sql`
+      update app.chapters c set head_revision_id = r.id
+      from app.chapter_revisions r
+      where r.chapter_id = c.id and c.id = any(${sql.param(newIds)}::uuid[])`);
 
     const newEditVersion = work.editVersion + 1;
     await tx.update(works).set({ editVersion: newEditVersion, updatedAt: new Date() })

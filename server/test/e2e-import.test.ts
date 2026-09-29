@@ -56,7 +56,7 @@ async function uploadAndProcess(name: string, bytes: Buffer | string, cookie: st
   const res = await upload(new File([buf], name), cookie, extra);
   assert.equal(res.status, 201, `upload ${name} should be accepted`);
   const { importId } = await res.json() as { importId: string };
-  const processed = await runOnce(workerDb, storage, `e2e-${SUFFIX}`);
+  const processed = await runOnce(workerDb, storage, { owner: `e2e-${SUFFIX}`, leaseMs: 300_000, heartbeatMs: 100_000, maxAttempts: 3, storageConcurrency: 6 });
   assert.equal(processed, importId, 'worker should claim exactly this job');
   return importId;
 }
@@ -132,7 +132,7 @@ test('IMP-E2E: upload base-180.txt → queue → parse → preview → commit �
   assert.equal((await app.request(`/api/admin/imports/${importId}/commit`, { method: 'POST', headers: { cookie: member, 'content-type': 'application/json' }, body: '{}' })).status, 403);
 
   // 3. worker processes it
-  const claim = await runOnce(workerDb, storage, `e2e-${SUFFIX}`);
+  const claim = await runOnce(workerDb, storage, { owner: `e2e-${SUFFIX}`, leaseMs: 300_000, heartbeatMs: 100_000, maxAttempts: 3, storageConcurrency: 6 });
   assert.equal(claim, importId);
 
   // 5. admin preview
@@ -314,7 +314,7 @@ test('IMP-12a: commit before processing is rejected, nothing canonical created',
   const n = await q(`select count(*)::int as n from app.chapters c join app.import_jobs j on j.committed_work_id=c.work_id where j.id=$1`, [importId]);
   assert.equal(n[0].n, 0);
   // drain the queue so later tests' uploads are claimed in order
-  const drained = await runOnce(workerDb, storage, `e2e-${SUFFIX}`);
+  const drained = await runOnce(workerDb, storage, { owner: `e2e-${SUFFIX}`, leaseMs: 300_000, heartbeatMs: 100_000, maxAttempts: 3, storageConcurrency: 6 });
   assert.equal(drained, importId);
 });
 
