@@ -4,7 +4,7 @@
 // operation — import/apply never publishes.
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { asc, eq, inArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import {
   categories, chapters, chapterRevisions, tags, workCategories, works, workReleases, workTags,

@@ -16,8 +16,10 @@ import { adminImportRoutes } from './routes/admin-imports.ts';
 import { adminWorkRoutes } from './routes/admin-works.ts';
 import { readerRoutes } from './routes/reader.ts';
 import { worksRoutes } from './routes/works.ts';
+import { meRoutes } from './routes/me.ts';
 
-const config = loadApiConfig();
+export const apiConfig = loadApiConfig();
+const config = apiConfig;
 
 const pool = makePool({
   connectionString: config.databaseUrl,
@@ -76,7 +78,8 @@ app.get('/api/me', (c) => {
 });
 
 app.route('/', healthRoutes(pool));
-app.route('/', authRoutes(db));
+app.route('/', authRoutes({ db, config }));
+app.route('/', meRoutes({ db }));
 app.route('/', adminImportRoutes({ db, storage: localStorage(config.storageRoot), config }));
 app.route('/', adminWorkRoutes({ db, storage: localStorage(config.storageRoot) }));
 app.route('/', readerRoutes({ db, storage: localStorage(config.storageRoot) }));

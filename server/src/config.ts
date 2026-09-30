@@ -13,6 +13,9 @@ export interface ApiConfig {
   maxAttempts: number;
   tlsMode: TlsMode;
   dbCaFile: string | null;
+  /** M6 Beta registration policy: no email/recovery infra → closed|invite only
+   *  are safe; 'open' is available but must stay off until recovery exists */
+  registrationMode: 'closed' | 'invite' | 'open';
 }
 
 export interface WorkerConfig {
@@ -64,6 +67,10 @@ function tls(env: Env): { tlsMode: TlsMode; dbCaFile: string | null } {
 }
 
 export function loadApiConfig(env: Env = process.env): ApiConfig {
+  const registrationMode = env.REGISTRATION_MODE?.trim() || 'closed';
+  if (!['closed', 'invite', 'open'].includes(registrationMode)) {
+    throw new Error('config: REGISTRATION_MODE must be closed, invite or open');
+  }
   return {
     databaseUrl: requiredUrl(env, 'DATABASE_URL'),
     port: int(env, 'PORT', 3000, 1, 65535),
@@ -73,6 +80,7 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     maxEpubBytes: int(env, 'IMPORT_MAX_EPUB_BYTES', 50 * 1024 * 1024, 1, 1024 * 1024 * 1024),
     maxAttempts: int(env, 'MAX_ATTEMPTS', 3, 1, 20),
     ...tls(env),
+    registrationMode: registrationMode as 'closed' | 'invite' | 'open',
   };
 }
 
