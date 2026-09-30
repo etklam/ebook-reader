@@ -846,7 +846,7 @@ Playwright WebKit 通過不等於 iPhone Safari 真機通過；桌面模擬器�
 | M1｜基礎工程 | repo、CI、環境設定、PostgreSQL 18／Drizzle／pg.Pool、低權限 roles、migration、核心 schema 與約束、Admin 身分與授權、private storage、worker 骨架；執行 DB-T1／DB-T2 | 非 Admin 無法上傳；本機可啟動；失敗日誌可追溯；DB-01／DB-02／DB-03 基礎案例通過，runtime 不跑 DDL |
 | M2｜首次匯入 | TXT／EPUB parser、安全檢查、編碼預覽、分章修正、staging、草稿內容瀏覽 | IMP-01、14–16 與核心安全樣本通過，不跳過 EPUB |
 | M3｜增量與中間插章 | 匹配規則、diff preview、人工解歧義、完整／局部追加、排序預覽 | IMP-02、04–08、18 通過，不重複建章、不以最大章號判新章 |
-| M4｜覆蓋與可靠套用 | 不可變修訂、覆蓋更新、版本衝突、冪等、重試、受保護回復、發布快照 | IMP-03、09–13、17、VER-01／02 通過，故障不破壞正式內容 |
+| M4｜覆蓋與可靠套用 | 不可變修訂、覆蓋更新、版本衝突、冪等、重試、受保護回復（發布快照屬 M6，隨發布 API 實作） | IMP-03、09–13、VER-01／02 通過，故障不破壞正式內容；IMP-17 資源感知部分延後（見 §23 ADR-08） |
 | M5｜手機閱讀器 | 底部控制、bottom sheet、分頁／捲動、繁簡、主題字號、目錄、段落定位 | READ-01／02 在實機通過；百萬字不全塞 DOM |
 | M6｜書庫、會員與追更 | 短篇／連載入口、搜尋、分類／標籤、多標籤 all／any 與複合篩選、底部篩選面板、註冊登入、收藏、書架、書籤、進度同步、已讀及更新標記 | READ-03、PUB-01／02、CAT-01–CAT-12 與會員權限案例通過；taxonomy 基礎及匯入保護按 03A-G 在 M1／M2 先建立，效能／安全回歸於 M7 收尾 |
 | M7｜Beta hardening | 全測試矩陣、效能量測、安全回歸、備份復原、監測、部署及管理手冊 | 無阻塞級錯配／資料遺失／越權；Beta runbook 可照做 |
@@ -868,6 +868,10 @@ Playwright WebKit 通過不等於 iPhone Safari 真機通過；桌面模擬器�
 **ADR-05：不依賴 AI 判斷章節身分。** 自動規則需可解釋；疑義人工確認，容許慢一點但不容許靜默錯覆蓋。
 
 **ADR-06：預覽及套用分離，發布再分離。** 所有正式更新可追溯並具版本檢查。
+
+**ADR-07（2026-10-01）：生產閱讀器採 canonical chapter renderer，不整合 epub.js／foliate-js。** canonical body 已是 TXT/EPUB 統一的純文字段落序列（`\n\n` 連接），引擎的 EPUB 包概念（spine/CFI）在 canonical 模型中不存在；引入引擎只會造成 TXT/EPUB 雙讀取路徑與定位契約衝突。原 §16「閱讀引擎擇一」需求由此 ADR 取代，M0 真機雙引擎比較失去必要性；真機驗證義務轉移至 M5 生產閱讀器 L3（`docs/adr/l3-device-checklist.md`）。詳見 `docs/adr/adr-07-reader-architecture.md`。
+
+**ADR-08（2026-10-01）：IMP-17 資源感知修訂偵測延後。** IMP-17 要求「同正文但圖片／註腳目標有改須判為修訂」；現行 canonical model 在 EPUB 解析時即拍平為純文字（M2 已知限制：圖片資源不映射、list 不萃取），資源層根本不存在，無從偵測。資源感知修訂依賴：EPUB parser 資源萃取＋`chapter_revision_resources` 式不可變資源關聯＋閱讀器安全渲染——三者在同一管線改動中補齊（併入圖片支援的 ingestion 工作，最早 M6 前處理）。在該管線完成前，IMP-17 不得標記為通過。
 
 主要風險：來源編碼／格式不一致、章節拆合、相同標籤、第三方閱讀器安全與手機兼容、大型 EPUB 資源消耗、內容授權。對策分別為預覽覆核、結構衝突、穩定 ID、adapter POC、安全配額與上架前來源確認。
 
@@ -913,7 +917,7 @@ v1.3／2026-09-28：review 後採納三項調整：一、M0 閱讀引擎改為 e
 | 階段 | 狀態 | 備註 |
 | --- | --- | --- |
 | M0（規格及高風險 POC） | 程式／POC 完成 | 雙引擎 POC、不規則章號解析器、合成 fixtures 均在 `m0/`；**L3 iOS Safari／Android Chrome 真機驗證仍未做** |
-| M0 閱讀引擎最終擇一 | 待定 | 未有真機比較證據前，不得宣稱 epub.js 或 foliate-js 勝出；兩者尚未整合進 production reader |
+| M0 閱讀引擎最終擇一 | 由 ADR-07 取代（2026-10-01） | 生產閱讀器採 canonical chapter renderer，不整合 epub.js／foliate-js（見 §23 ADR-07）；M0 雙引擎真機比較失去必要性，POC 保留於 `m0/` 作歷史參考 |
 | M1（基礎工程） | 完成，本機已驗證 | DB-01／02／03、非 Admin 403、本機啟動、CI L1＋L2（詳見 README） |
 | M2（首次匯入） | 完成（2026-09-29） | TXT 全流程＋**EPUB 解析完成**：container→OPF→spine 閱讀順序（非檔名順序）、nav/NCX 標籤、DOMPurify allowlist 清理、zip bomb（壓縮比/總量/條目上限）與路徑穿越防護、spine 重複去重、非文字節 needsReview。L2 e2e 7/7（含 IMP-16 上傳→解析→預覽→commit spine 順序 5 章）；單元 8/8。已知限制：一個 XHTML 多章錨點不拆分（標記 backlog）、list 內容暫不萃取、圖片資源暫不映射（M5 閱讀器前處理） |
 | M3（增量與中間插章） | 完成（2026-09-29） | 匹配引擎（`match.ts`：label key 唯一→自動匹配；重複/改名→ambiguous；重編號/拆合章→structural_conflict；錨點插入；無錨點→需確認，ADR-02）＋增量套用（交易內 job 鎖→作品鎖→`base_edit_version` 檢查→錨點插入＋DEFERRABLE 位移→`edit_version` 遞增；modified 保留站方版本 §05；冪等重放；`resolutions`/`confirmAppend` 人工決策）。API：`GET /:id/diff`、`POST /:id/apply`；UI 加目標作品＋比對＋套用。Gate 全過：單元 10/10（IMP-02/04/06/07/08/18 形狀）、e2e 13/13（IMP-02+04：+11 含 87.5 中插、ID 不變；IMP-07 confirmAppend；IMP-08 保留 171–180；IMP-18 重編號擋截＋Admin 解決；冪等；版本衝突 409）。過程修復：full-190 fixture 原本漏第 87 章（引擎正確地報衝突，fixture 錯） |
