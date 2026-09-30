@@ -146,6 +146,20 @@ export const chapterRevisions = app.table('chapter_revisions', {
   index('chapter_revisions_chapter_idx').on(t.chapterId, t.createdAt),
 ]);
 
+// Apply idempotency (dev-plan §12): retries with the same Idempotency-Key and
+// the same payload return the persisted response and create nothing; the same
+// key with a different payload is rejected. Written in the same transaction
+// as the content change it guards.
+export const applyIdempotency = app.table('apply_idempotency', {
+  key: text('key').primaryKey(),
+  importJobId: uuid('import_job_id').notNull().references(() => importJobs.id),
+  requestHash: text('request_hash').notNull(),
+  response: jsonb('response').notNull(),
+  createdAt: createdAt(),
+}, (t) => [
+  index('apply_idempotency_job_idx').on(t.importJobId),
+]);
+
 // --- source files (§17) --------------------------------------------------------
 export const sourceFiles = app.table('source_files', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -196,7 +210,7 @@ export const importJobs = app.table('import_jobs', {
   completedAt: timestamp('completed_at', { withTimezone: true }),
   createdAt: createdAt(),
 }, (t) => [
-  check('import_jobs_status_ck', sql`${t.status} in ('queued','processing','review_required','ready','failed','cancelled','committed','applied')`),
+  check('import_jobs_status_ck', sql`${t.status} in ('queued','processing','review_required','ready','failed','cancelled','committed','applied','reverted')`),
   index('import_jobs_status_created_idx').on(t.status, t.createdAt),
 ]);
 

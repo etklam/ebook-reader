@@ -156,16 +156,39 @@ function ImportPanel() {
     setDiff(body);
   }
 
-  async function applyIncremental(confirmAppend = false) {
+  async function applyIncremental(mode: 'incremental' | 'overwrite', confirmAppend = false) {
     if (!importId || !diff) return;
     setBusy(true); setError('');
+    const key = `ui-${importId}-${mode}-${Date.now()}`;
     const { status, body } = await api(`/api/admin/imports/${importId}/apply`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ baseEditVersion: diff.editVersion, confirmAppend }),
+      method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': key },
+      body: JSON.stringify({ baseEditVersion: diff.editVersion, mode, confirmAppend }),
     });
     setBusy(false);
     if (status !== 200) { setError(`${body.error ?? '套用失敗'}${body.unresolved?.length ? `（${body.unresolved.length} 項待決：${body.unresolved.map((u: any) => u.labelRaw).join('、')}）` : ''}`); return; }
     setApplyResult(body);
+    const refreshed = await api(`/api/admin/imports/${importId}`);
+    if (refreshed.status === 200) setJob(refreshed.body);
+  }
+
+  async function doRevert() {
+    if (!importId || !diff) return;
+    setBusy(true); setError('');
+    const plan = await api(`/api/admin/imports/${importId}/revert-plan`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    });
+    if (plan.status !== 200 || !plan.body.canRevert) {
+      setBusy(false);
+      setError(`無法回復：${plan.body?.reason ?? plan.body?.error ?? '未知原因'}`);
+      return;
+    }
+    const { status, body } = await api(`/api/admin/imports/${importId}/revert`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseEditVersion: plan.body.plan.editVersionFrom }),
+    });
+    setBusy(false);
+    if (status !== 200) { setError(body.error ?? '回復失敗'); return; }
+    setApplyResult({ summary: null, reverted: body });
     const refreshed = await api(`/api/admin/imports/${importId}`);
     if (refreshed.status === 200) setJob(refreshed.body);
   }
@@ -230,18 +253,29 @@ function ImportPanel() {
                      來源缺失（保留）<b>{diff.match.missingFromSource.length}</b></p>
                   <p style={s.muted}>基準版本 edit_version = {diff.editVersion}</p>
                   {diff.match.needsReview && <p style={s.warn}>有項目需要決策（待決清單會顯示在套用錯誤訊息）；無錨點的新章可用「確認全部追加到結尾」。</p>}
-                  <button style={s.button} onClick={() => applyIncremental()} disabled={busy || job.status === 'applied'}>
-                    套用增量
+                  <button style={s.button} onClick={() => applyIncremental('incremental')} disabled={busy || job.status === 'applied'}>
+                    套用增量（修訂保留站方）
                   </button>{' '}
-                  <button style={s.button} onClick={() => applyIncremental(true)} disabled={busy || job.status === 'applied'}>
+                  <button style={s.button} onClick={() => applyIncremental('overwrite')} disabled={busy || job.status === 'applied'}>
+                    套用覆蓋（修訂章內容）
+                  </button>{' '}
+                  <button style={s.button} onClick={() => applyIncremental('incremental', true)} disabled={busy || job.status === 'applied'}>
                     確認全部追加到結尾
                   </button>
                 </div>
               )}
-              {applyResult && (
-                <p style={s.ok}>已套用（增量）：新增 {applyResult.summary.added}、相同 {applyResult.summary.unchanged}、
+              {applyResult?.summary && (
+                <p style={s.ok}>已套用（{applyResult.summary.updated > 0 || applyResult.modifiedMode ? '覆蓋' : '增量'}）：
+                  新增 {applyResult.summary.added}、更新 {applyResult.summary.updated}、相同 {applyResult.summary.unchanged}、
                   保留站方修訂 {applyResult.summary.modifiedKept}、略過 {applyResult.summary.skipped}、
                   保留缺失 {applyResult.summary.missingKept}；edit_version → {applyResult.newEditVersion}。</p>
+              )}
+              {applyResult?.reverted && (
+                <p style={s.ok}>已回復：移除 {applyResult.reverted.removedChapters} 章、還原 {applyResult.reverted.restoredRevisions} 個修訂；
+                  edit_version → {applyResult.reverted.editVersion}。</p>
+              )}
+              {job.status === 'applied' && (
+                <button style={s.button} onClick={doRevert} disabled={busy}>回復此次套用</button>
               )}
             </>
           )}

@@ -3,7 +3,7 @@
 // so illegal transitions fail explicitly instead of silently overwriting.
 export const IMPORT_STATES = [
   'queued', 'processing', 'review_required', 'ready',
-  'failed', 'cancelled', 'committed', 'applied',
+  'failed', 'cancelled', 'committed', 'applied', 'reverted',
 ] as const;
 
 export type ImportStatus = (typeof IMPORT_STATES)[number];
@@ -18,8 +18,10 @@ export const TERMINAL_STATES: readonly ImportStatus[] = ['cancelled', 'committed
 // - parse/domain failure: processing → failed
 // - reanalyze: ready | review_required | failed → queued
 // - commit: ready | review_required → committed
-// - incremental apply: ready | review_required → applied
-// - committed / applied are terminal: the canonical result is already durable
+// - incremental/overwrite apply: ready | review_required → applied
+// - protected revert (M4): applied → reverted (only while the work is still
+//   at the version that apply produced — later edits block it, VER-02)
+// - committed / reverted are terminal: the canonical result is already durable
 export const TRANSITIONS: Readonly<Record<ImportStatus, readonly ImportStatus[]>> = {
   queued: ['processing', 'cancelled'],
   processing: ['queued', 'review_required', 'ready', 'failed', 'cancelled'],
@@ -28,7 +30,8 @@ export const TRANSITIONS: Readonly<Record<ImportStatus, readonly ImportStatus[]>
   failed: ['queued', 'cancelled'],
   cancelled: [],
   committed: [],
-  applied: [],
+  applied: ['reverted'],
+  reverted: [],
 };
 
 export function canTransition(from: string, to: string): boolean {

@@ -9,21 +9,54 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { asc, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { chapters, chapterRevisions, importItems, importJobs, works } from '../db/schema.ts';
+import { chapters, chapterRevisions, importItems, importJobs, works, applyIdempotency } from '../db/schema.ts';
 import { matchChapters, type MatchResult } from './match.ts';
+import { assertTransition } from './states.ts';
+
+/** persisted on the job row: the replay response AND the revert snapshot */
+export interface AppliedSnapshot {
+  workId: string;
+  newEditVersion: number;
+  summary: { added: number; updated: number; unchanged: number; modifiedKept: number; skipped: number; missingKept: number };
+  mode: 'incremental' | 'overwrite';
+  /** chapters this apply created (a revert removes exactly these) */
+  addedChapterIds: string[];
+  /** head-revision moves this apply made (a revert restores exactly these) */
+  revisionChanges: { chapterId: string; previousHeadRevisionId: string | null; newRevisionId: string }[];
+}
+
+// stable hash of the request payload: resolutions are key-sorted so object
+// key order never changes the identity of "the same operation"
+function hashApplyRequest(jobId: string, req: ApplyRequest): string {
+  const canonical = JSON.stringify({
+    jobId,
+    mode: req.mode ?? 'incremental',
+    baseEditVersion: req.baseEditVersion,
+    confirmAppend: req.confirmAppend === true,
+    resolutions: req.resolutions
+      ? Object.fromEntries(Object.entries(req.resolutions).sort(([a], [b]) => a.localeCompare(b)))
+      : null,
+  });
+  return createHash('sha256').update(canonical).digest('hex');
+}
 
 export interface ApplyRequest {
   baseEditVersion: number;
+  /** incremental keeps site versions for modified chapters (§05); overwrite
+   * creates a new immutable revision and moves head_revision_id (§12) */
+  mode?: 'incremental' | 'overwrite';
   /** required when unresolvable items exist with no anchored position */
   confirmAppend?: boolean;
   /** itemId → 'new' | 'exclude' | 'match:<chapterId>' (Admin decisions) */
   resolutions?: Record<string, string>;
+  /** Idempotency-Key (§12): same key+payload replays the stored response */
+  idempotencyKey?: string | null;
 }
 
 export type ApplyResult =
   | {
       ok: true; status: 200; workId: string; newEditVersion: number;
-      summary: { added: number; unchanged: number; modifiedKept: number; skipped: number; missingKept: number };
+      summary: { added: number; updated: number; unchanged: number; modifiedKept: number; skipped: number; missingKept: number };
       alreadyApplied: boolean;
     }
   | { ok: false; status: 400 | 404 | 409; error: string; detail?: string; unresolved?: Array<{ itemId: string; labelRaw: string; itemClass: string; reason: string[] }> };
@@ -51,12 +84,25 @@ export async function applyIncremental(
     const job = jobRows[0];
     if (!job) return { ok: false, status: 404, error: 'not_found' };
 
+    // Idempotency-Key (§12) FIRST — a key reused with a different payload is a
+    // hard conflict even when the job was already applied (key conflict outranks
+    // replay); same key+payload replays the persisted response
+    const requestHash = hashApplyRequest(jobId, req);
+    if (req.idempotencyKey) {
+      const [rec] = await tx.select().from(applyIdempotency)
+        .where(eq(applyIdempotency.key, req.idempotencyKey)).for('update').limit(1);
+      if (rec) {
+        if (rec.importJobId !== jobId || rec.requestHash !== requestHash) {
+          return { ok: false, status: 409, error: 'idempotency_key_conflict', detail: '同一 Idempotency-Key 已用於不同操作' };
+        }
+        const replay = rec.response as Extract<ApplyResult, { ok: true }>;
+        return { ...replay, alreadyApplied: true };
+      }
+    }
+
     // idempotent replay: applied summary is persisted on the job row
-    if (job.status === 'applied') {
-      const saved = job.appliedResult as {
-        workId: string; newEditVersion: number;
-        summary: { added: number; unchanged: number; modifiedKept: number; skipped: number; missingKept: number };
-      };
+    if (job.status === 'applied' || job.status === 'reverted') {
+      const saved = job.appliedResult as AppliedSnapshot;
       return {
         ok: true, status: 200, workId: saved.workId, newEditVersion: saved.newEditVersion,
         summary: saved.summary, alreadyApplied: true,
@@ -85,6 +131,7 @@ export async function applyIncremental(
       labelRaw: chapters.labelRaw,
       editorialPosition: chapters.editorialPosition,
       bodyCompareHash: chapterRevisions.bodyCompareHash,
+      headRevisionId: chapters.headRevisionId,
     }).from(chapters)
       .leftJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
       .where(eq(chapters.workId, job.workId))
@@ -110,6 +157,9 @@ export async function applyIncremental(
     const unresolved: Array<{ itemId: string; labelRaw: string; itemClass: string; reason: string[] }> = [];
 
     let unchanged = 0, modifiedKept = 0;
+    // overwrite mode: matched items with a different body become new revisions
+    const updates: { chapterId: string; previousHeadRevisionId: string | null; labelRaw: string; title: string; contentKey: string; bodyHash: string }[] = [];
+    const mode = req.mode ?? 'incremental';
     const adminMatch = new Map<string, string>(); // itemId → chapterId
     for (const [itemId, decision] of Object.entries(req.resolutions ?? {})) {
       if (decision.startsWith('match:')) {
@@ -126,9 +176,19 @@ export async function applyIncremental(
       const decision = req.resolutions?.[m.itemId];
       if (m.itemClass === 'unchanged') { unchanged++; continue; }
       if (m.itemClass === 'modified') {
-        // Admin-confirmed identity with new body: still keep site version in
-        // incremental mode (§05); overwrite is M4. Count as kept.
-        modifiedKept++;
+        // §05: incremental keeps the site version; overwrite creates a new
+        // immutable revision on the same chapter_id (ADR-03)
+        if (mode === 'overwrite') {
+          const ex = existingById.get(m.matchedChapterId!)!;
+          updates.push({
+            chapterId: ex.id,
+            previousHeadRevisionId: ex.headRevisionId,
+            labelRaw: item.labelRaw, title: item.title,
+            contentKey: item.contentKey, bodyHash: item.bodyHash,
+          });
+        } else {
+          modifiedKept++;
+        }
         continue;
       }
       if (m.itemClass === 'new' && m.positionConfident) {
@@ -151,12 +211,19 @@ export async function applyIncremental(
       }
       const adminChapter = adminMatch.get(m.itemId);
       if (adminChapter) {
-        // Admin confirmed this source item IS that existing chapter. In
-        // incremental mode the site body stays (rename/revision is M4); a
-        // body-identical confirmation is just an unchanged match.
+        // Admin confirmed this source item IS that existing chapter. A
+        // body-identical confirmation is an unchanged match; a differing body
+        // follows the mode (keep site vs new revision).
         const ex = existingById.get(adminChapter)!;
         if (ex.bodyCompareHash === item.bodyHash) unchanged++;
-        else modifiedKept++;
+        else if (mode === 'overwrite') {
+          updates.push({
+            chapterId: ex.id,
+            previousHeadRevisionId: ex.headRevisionId,
+            labelRaw: item.labelRaw, title: item.title,
+            contentKey: item.contentKey, bodyHash: item.bodyHash,
+          });
+        } else modifiedKept++;
         continue;
       }
       if (m.itemClass === 'new' && !m.positionConfident && req.confirmAppend) {
@@ -226,6 +293,36 @@ export async function applyIncremental(
       })));
     }
 
+    // overwrite: new immutable revisions for matched-but-changed chapters.
+    // chapter_id never changes (ADR-03); head_revision_id moves forward.
+    const revisionChanges: { chapterId: string; previousHeadRevisionId: string | null; newRevisionId: string }[] = [];
+    for (const up of updates) {
+      const revId = randomUUID();
+      revisionChanges.push({ chapterId: up.chapterId, previousHeadRevisionId: up.previousHeadRevisionId, newRevisionId: revId });
+    }
+    for (let i = 0; i < updates.length; i += BATCH) {
+      const batch = updates.slice(i, i + BATCH);
+      await tx.insert(chapterRevisions).values(batch.map((up, j) => ({
+        id: revisionChanges[i + j].newRevisionId,
+        chapterId: up.chapterId,
+        title: up.title,
+        contentKey: up.contentKey,
+        bodyCompareHash: up.bodyHash,
+        revisionHash: createHash('sha256')
+          .update(`${up.title}\n${up.bodyHash}\n${job.processorVersion}`)
+          .digest('hex'),
+        processorVersion: job.processorVersion,
+        sourceImportId: jobId,
+      })));
+    }
+    if (revisionChanges.length > 0) {
+      await tx.execute(sql`
+        update app.chapters c set head_revision_id = v.rev
+        from unnest(${sql.param(revisionChanges.map((r) => r.chapterId))}::uuid[],
+                    ${sql.param(revisionChanges.map((r) => r.newRevisionId))}::uuid[]) as v(id, rev)
+        where c.id = v.id`);
+    }
+
     // renumber everything to the merged order in one set-based statement; the
     // DEFERRABLE unique tolerates transient duplicates inside the tx
     const finalIds: string[] = [];
@@ -249,26 +346,40 @@ export async function applyIncremental(
       from app.chapter_revisions r
       where r.chapter_id = c.id and c.id = any(${sql.param(newIds)}::uuid[])`);
 
+    assertTransition(job.status, 'applied');
     const newEditVersion = work.editVersion + 1;
     await tx.update(works).set({ editVersion: newEditVersion, updatedAt: new Date() })
       .where(eq(works.id, job.workId));
 
     const summary = {
       added: inserts.length,
+      updated: updates.length,
       unchanged,
       modifiedKept,
       skipped: skipped.length,
       missingKept: result.missingFromSource.length,
     };
-    const applied = { workId: job.workId, newEditVersion, summary };
+    // revert snapshot (§12): exactly what this apply created, so the protected
+    // revert can undo it without touching anyone else's later edits
+    const applied: AppliedSnapshot = {
+      workId: job.workId, newEditVersion, summary, mode,
+      addedChapterIds: [...insertId.values()],
+      revisionChanges,
+    };
     await tx.update(importJobs).set({
       status: 'applied',
-      applyMode: 'incremental',
+      applyMode: mode,
       appliedResult: applied,
       completedAt: new Date(),
     }).where(eq(importJobs.id, jobId));
 
-    return { ok: true, status: 200, workId: job.workId, newEditVersion, summary, alreadyApplied: false };
+    const response = { ok: true as const, status: 200 as const, workId: job.workId, newEditVersion, summary, alreadyApplied: false };
+    if (req.idempotencyKey) {
+      await tx.insert(applyIdempotency).values({
+        key: req.idempotencyKey, importJobId: jobId, requestHash, response,
+      });
+    }
+    return response;
   });
 }
 

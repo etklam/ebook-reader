@@ -31,6 +31,21 @@ const P181 = readFileSync(join(FIXTURES, 'partial-181-190.txt'));
 let admin = '';
 let baseWorkId = ''; // the base-180 work every test re-creates
 
+
+// process the queue until OUR job is done — parallel test files share the
+// queue, so a poll may legitimately claim another file's job first
+async function processUntil(importId: string): Promise<void> {
+  for (let i = 0; i < 40; i++) {
+    const processed = await runOnce(workerDb, storage, { owner: `m3-${SUFFIX}`, leaseMs: 300_000, heartbeatMs: 100_000, maxAttempts: 3, storageConcurrency: 6 });
+    if (processed === importId) return;
+    // a parallel test file may have claimed ours; done is done
+    const rows = await q(`select status from app.import_jobs where id=$1`, [importId]);
+    if (rows[0] && !['queued', 'processing'].includes(rows[0].status)) return;
+    if (!processed) await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`job ${importId} was never claimed`);
+}
+
 async function q(sql: string, params: unknown[] = []) {
   return (await workerPool.query(sql, params)).rows;
 }
@@ -52,8 +67,7 @@ async function importInto(workId: string, name: string, bytes: Buffer): Promise<
   });
   assert.equal(res.status, 201, `upload ${name}`);
   const { importId } = await res.json() as { importId: string };
-  const processed = await runOnce(workerDb, storage, { owner: `m3-${SUFFIX}`, leaseMs: 300_000, heartbeatMs: 100_000, maxAttempts: 3, storageConcurrency: 6 });
-  assert.equal(processed, importId, 'worker claims exactly this job');
+  await processUntil(importId);
   return importId;
 }
 
@@ -78,7 +92,7 @@ async function createBaseWork(): Promise<string> {
     body: (() => { const f = new FormData(); f.append('file', new File([BASE], 'base-180.txt')); return f; })(),
   });
   const { importId } = await res.json() as { importId: string };
-  await runOnce(workerDb, storage, { owner: `m3-${SUFFIX}`, leaseMs: 300_000, heartbeatMs: 100_000, maxAttempts: 3, storageConcurrency: 6 });
+  await processUntil(importId);
   const commit = await app.request(`/api/admin/imports/${importId}/commit`, {
     method: 'POST', headers: { cookie: admin, 'content-type': 'application/json' },
     body: JSON.stringify({ title: `m3-base-${SUFFIX}`, workType: 'serial' }),
@@ -138,7 +152,7 @@ test('IMP-02 + IMP-04: full-190 incremental → +11 (incl. 87.5 mid-insert), 4 m
 
   const { status, body } = await apply(importId, { baseEditVersion: 1 });
   assert.equal(status, 200, JSON.stringify(body));
-  assert.deepEqual(body.summary, { added: 11, unchanged: 176, modifiedKept: 4, skipped: 0, missingKept: 0 });
+  assert.deepEqual(body.summary, { added: 11, updated: 0, unchanged: 176, modifiedKept: 4, skipped: 0, missingKept: 0 });
   assert.equal(body.newEditVersion, 2);
 
   // 191 chapters; old chapter ids unchanged (§09 identity stability)
@@ -190,7 +204,7 @@ test('IMP-08: 1–170 upload → nothing added, 171–180 kept', async () => {
   assert.equal(diff.match.missingFromSource.length, 21); // 87.5, 181–190 were added earlier
   const r = await apply(importId, { baseEditVersion: cur });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.body.summary, { added: 0, unchanged: 170, modifiedKept: 0, skipped: 0, missingKept: 21 });
+  assert.deepEqual(r.body.summary, { added: 0, updated: 0, unchanged: 170, modifiedKept: 0, skipped: 0, missingKept: 21 });
   const n = (await q(`select count(*)::int as n from app.chapters where work_id=$1`, [baseWorkId]))[0].n;
   assert.equal(n, 191); // unchanged total
 });
@@ -221,7 +235,7 @@ test('IMP-18: renumbered source is blocked with an unresolved list; Admin can re
     body: (() => { const f = new FormData(); f.append('file', new File([Buffer.from(tiny)], 't.txt')); return f; })(),
   });
   const { importId: firstId } = await res.json() as { importId: string };
-  await runOnce(workerDb, storage, { owner: `m3-${SUFFIX}`, leaseMs: 300_000, heartbeatMs: 100_000, maxAttempts: 3, storageConcurrency: 6 });
+  await processUntil(firstId);
   const commit = await app.request(`/api/admin/imports/${firstId}/commit`, {
     method: 'POST', headers: { cookie: admin, 'content-type': 'application/json' },
     body: JSON.stringify({ title: `m3-tiny-${SUFFIX}`, workType: 'serial' }),

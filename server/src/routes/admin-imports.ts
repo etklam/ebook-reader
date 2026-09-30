@@ -15,6 +15,7 @@ import { processorVersion } from '../import/versions.ts';
 import { commitImport } from '../import/commit.ts';
 import { applyIncremental, diffImport } from '../import/apply-incremental.ts';
 import { reanalyzeImport } from '../import/reanalyze.ts';
+import { revertPlan, revertImport } from '../import/revert.ts';
 import type {
   ImportJobResponse, ImportChapterPageResponse, ImportUploadResponse,
 } from './dto.ts';
@@ -203,14 +204,39 @@ export function adminImportRoutes(deps: ImportRoutesDeps): Hono<{ Variables: { u
     if (!Number.isInteger(body?.baseEditVersion)) {
       return c.json({ error: 'base_edit_version_required' }, 400);
     }
+    const idempotencyKey = c.req.header('idempotency-key')?.trim() || null;
+    if (idempotencyKey !== null && idempotencyKey.length > 200) {
+      return c.json({ error: 'invalid_idempotency_key' }, 400);
+    }
     const result = await applyIncremental(db, routeId(c), {
       baseEditVersion: body.baseEditVersion as number,
+      mode: body.mode === 'overwrite' ? 'overwrite' : 'incremental',
       confirmAppend: body.confirmAppend === true,
       resolutions: body.resolutions && typeof body.resolutions === 'object' ? body.resolutions : undefined,
+      idempotencyKey,
     });
     if (!result.ok) return c.json(result, result.status);
     const { ok: _ok, status: _status, ...resp } = result;
     return c.json(resp);
+  });
+
+  // M4: revert preview — what a protected revert would undo, and whether the
+  // work is still at the version this apply produced (§18 revert-plan)
+  app.post('/api/admin/imports/:id/revert-plan', async (c) => {
+    const result = await revertPlan(db, routeId(c));
+    if (!result.ok) return c.json({ error: result.error, detail: (result as { detail?: string }).detail }, result.status);
+    return c.json(result);
+  });
+
+  // M4: execute the protected revert (single transaction, VER-02 rules)
+  app.post('/api/admin/imports/:id/revert', async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    if (!Number.isInteger(body?.baseEditVersion)) {
+      return c.json({ error: 'base_edit_version_required' }, 400);
+    }
+    const result = await revertImport(db, routeId(c), { baseEditVersion: body.baseEditVersion as number });
+    if (!result.ok) return c.json({ error: result.error, detail: result.detail }, result.status);
+    return c.json(result);
   });
 
   // re-run parsing, optionally with an explicit encoding override (encoding

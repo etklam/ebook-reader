@@ -9,7 +9,7 @@
     "start:worker": "node --env-file=.env src/worker.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test src/**/*.test.ts",
-    "test:e2e": "node --env-file=.env --test test/*.test.ts",
+    "test:e2e": "node --env-file=.env --test --test-concurrency=1 test/*.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate && node --env-file=.env scripts/apply-grants.mjs",
     "db:verify": "node --env-file=.env scripts/db-verify.mjs"
