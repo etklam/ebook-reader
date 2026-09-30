@@ -50,9 +50,22 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   for (const w of [publicWork, longWork]) {
     if (!w) continue;
+    // M6 FK order: member state → release snapshot → revisions → chapters
+    await pool.query(`delete from app.reading_progress where work_id=$1`, [w]);
+    await pool.query(`delete from app.bookmarks where work_id=$1`, [w]);
+    await pool.query(`delete from app.user_chapter_reads where chapter_id in (select id from app.chapters where work_id=$1)`, [w]);
+    await pool.query(`delete from app.user_follows where work_id=$1`, [w]);
+    await pool.query(`delete from app.user_library where work_id=$1`, [w]);
     await pool.query(`update app.chapters set head_revision_id = null where work_id = $1`, [w]);
+    await pool.query(`delete from app.release_items where release_id in (select id from app.work_releases where work_id=$1)`, [w]);
+    await pool.query(`delete from app.publication_events where work_id=$1`, [w]);
+    await pool.query(`update app.works set active_release_id=null where id=$1`, [w]);
+    await pool.query(`delete from app.work_releases where work_id=$1`, [w]);
     await pool.query(`delete from app.chapter_revisions where chapter_id in (select id from app.chapters where work_id = $1)`, [w]);
     await pool.query(`delete from app.chapters where work_id = $1`, [w]);
+    await pool.query(`delete from app.work_categories where work_id=$1`, [w]);
+    await pool.query(`update app.source_files set work_id=null where work_id=$1`, [w]);
+    await pool.query(`update app.import_jobs set work_id=null where work_id=$1`, [w]);
     await pool.query(`delete from app.works where id = $1`, [w]);
   }
   await pool.query(`delete from app.import_items where import_job_id in (select id from app.import_jobs where requested_by_user_id in (select id from app.users where email = $1))`, [ADMIN]);
@@ -83,7 +96,20 @@ async function seedWork(fixture: string, title: string): Promise<string> {
   });
   expect(commit.status).toBe(200);
   const workId: string = commit.body.workId;
-  await pool.query(`update app.works set visibility = 'public' where id = $1`, [workId]);
+  // M6: public readability requires an active release — publish through the
+  // real pipeline (first publish needs one active category)
+  const [cat] = (await pool.query(
+    `insert into app.categories (display_name) values ($1) returning id`,
+    [`spec-cat-${SUFFIX}-${workId.slice(0, 4)}`],
+  )).rows as Array<{ id: string }>;
+  await pool.query(`insert into app.work_categories (work_id, category_id) values ($1,$2) on conflict do nothing`, [workId, cat.id]);
+  await pool.query(`update app.works set serial_status='ongoing', visibility='public' where id=$1`, [workId]);
+  const pub = await fetch('http://localhost:3000' + `/api/admin/works/${workId}/publish`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: adminCookie, 'idempotency-key': `spec-${workId}` },
+    body: '{}',
+  });
+  expect(pub.status).toBe(200);
   return workId;
 }
 

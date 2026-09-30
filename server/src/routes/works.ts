@@ -142,6 +142,20 @@ export function worksRoutes(deps: CatalogDeps): Hono<Record<string, never>> {
     return c.json({ count: row.n });
   });
 
+  // public taxonomy lists for the catalog filter sheet (active only)
+  app.get('/api/taxonomy/:kind', async (c) => {
+    const kind = c.req.param('kind');
+    if (kind !== 'categories' && kind !== 'tags') return c.json({ error: 'invalid_filter' }, 400);
+    const table = kind === 'categories' ? categories : tags;
+    const rows = await db.select({
+      id: table.id, displayName: table.displayName,
+    }).from(table)
+      .where(eq(table.isActive, true))
+      .orderBy(asc(table.sortOrder), asc(table.displayName))
+      .limit(200);
+    return c.json({ items: rows });
+  });
+
   // public work detail: release-scoped metadata + lightweight TOC head
   app.get('/api/works/:id', async (c) => {
     const id = c.req.param('id');

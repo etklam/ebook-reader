@@ -42,12 +42,14 @@ app.use('/api/*', async (c, next) => {
   if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
     const origin = c.req.header('origin');
     if (origin) {
-      const host = c.req.header('host');
+      let ok = false;
       try {
-        if (new URL(origin).host !== host) return c.json({ error: 'origin_mismatch' }, 403);
+        const originHost = new URL(origin).host;
+        ok = originHost === c.req.header('host') || config.csrfAllowedOrigins.includes(origin);
       } catch {
-        return c.json({ error: 'origin_mismatch' }, 403);
+        ok = false;
       }
+      if (!ok) return c.json({ error: 'origin_mismatch' }, 403);
     }
   }
   await next();

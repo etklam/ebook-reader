@@ -92,7 +92,8 @@ before(async () => {
 
   weirdWork = await uploadAndCommit('weird-labels.txt', readFileSync(join(FIXTURES, 'weird-labels.txt')), admin, `讀者測試-怪標籤-${SUFFIX}`);
   baseWork = await uploadAndCommit('base-180.txt', readFileSync(join(FIXTURES, 'base-180.txt')), admin, `讀者測試-Base-${SUFFIX}`);
-  await q(`update app.works set visibility='public' where id=$1`, [baseWork]);
+  // stays draft+unpublished: since M6, public works need an active release —
+  // head exposure for drafts is Admin preview only (covered against head here)
 
   weirdChapterIds = (await q(`select id from app.chapters where work_id=$1 order by editorial_position`, [weirdWork])).map((r: { id: string }) => r.id);
 });
@@ -138,10 +139,15 @@ test('READ-API: draft visibility — admin only; public readable anonymously; re
   // draft: member and anonymous are forbidden
   assert.equal((await app.request(`/api/reader/works/${weirdWork}`, { headers: { cookie: member } })).status, 403);
   assert.equal((await app.request(`/api/reader/works/${weirdWork}`)).status, 403);
-  // public: anonymous reads fine
-  const pub = await app.request(`/api/reader/works/${baseWork}`);
-  assert.equal(pub.status, 200);
-  assert.equal(((await pub.json()) as { chapterCount: number }).chapterCount, 180);
+  // public WITHOUT an active release exposes nothing (M6 §8 — never the head);
+  // flip back to draft afterwards so Admin head preview keeps working below
+  await q(`update app.works set visibility='public' where id=$1`, [baseWork]);
+  const unreleased = await app.request(`/api/reader/works/${baseWork}`);
+  assert.equal(unreleased.status, 200);
+  assert.equal(((await unreleased.json()) as { chapterCount: number }).chapterCount, 0);
+  const unreleasedToc = await app.request(`/api/reader/works/${baseWork}/chapters`);
+  assert.equal(((await unreleasedToc.json()) as { total: number }).total, 0);
+  await q(`update app.works set visibility='draft' where id=$1`, [baseWork]);
   // unknown and removed both 404
   assert.equal((await app.request(`/api/reader/works/00000000-0000-0000-0000-000000000000`)).status, 404);
   await q(`update app.works set visibility='removed' where id=$1`, [weirdWork]);
@@ -164,7 +170,7 @@ test('READ-API: TOC is ordered, labels verbatim, paginated, no bodies', async ()
     assert.ok(c.revisionId, 'every committed chapter has a head revision');
     assert.ok(!('body' in c), 'TOC must not carry chapter bodies');
   }
-  // pagination window
+  // pagination window (draft work previewed by Admin = editorial head)
   const page = await app.request(`/api/reader/works/${baseWork}/chapters?limit=50&offset=50`, { headers: { cookie: admin } });
   const pb = await page.json() as { total: number; limit: number; offset: number; chapters: Array<{ editorialPosition: number }> };
   assert.equal(pb.total, 180);
@@ -174,6 +180,7 @@ test('READ-API: TOC is ordered, labels verbatim, paginated, no bodies', async ()
   // limit is capped so a huge limit cannot fetch everything at once
   const capped = await app.request(`/api/reader/works/${baseWork}/chapters?limit=99999`, { headers: { cookie: admin } });
   assert.equal(((await capped.json()) as { limit: number }).limit, 500);
+  void capped;
 });
 
 test('READ-API: chapter content — head revision body, neighbors, paragraph count', async () => {

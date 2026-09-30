@@ -3,6 +3,8 @@
 // ../reader/; the two share only the fetch helper conventions.
 import { useEffect, useRef, useState } from 'react';
 import { navigate } from '../App.tsx';
+import { PublishPanel } from './PublishPanel.tsx';
+import { TaxonomyPanel } from './TaxonomyPanel.tsx';
 
 // --- tiny API helpers ----------------------------------------------------------
 async function api(path: string, init?: RequestInit): Promise<{ status: number; body: any }> {
@@ -60,11 +62,31 @@ export function AdminApp() {
     );
   }
 
+  return <AdminHome email={email || 'admin'} />;
+}
+
+function AdminHome({ email }: { email: string }) {
+  const [tab, setTab] = useState<'import' | 'publish' | 'taxonomy'>('import');
   return (
     <main style={s.page}>
-      <h1 style={s.h1}>匯入管理（M2–M4）</h1>
-      <p style={s.muted}>已登入：{email || 'admin'}</p>
-      <ImportPanel />
+      <h1 style={s.h1}>管理後台</h1>
+      <p style={s.muted}>已登入：{email}</p>
+      <div className="type-tabs" role="tablist" aria-label="管理功能">
+        {([
+          ['import', '匯入'],
+          ['publish', '發布'],
+          ['taxonomy', '分類標籤'],
+        ] as const).map(([v, label]) => (
+          <button key={v} role="tab" aria-selected={tab === v}
+            className={`reader-btn chip${tab === v ? ' active selected' : ''}`}
+            onClick={() => setTab(v)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === 'import' && <ImportPanel />}
+      {tab === 'publish' && <PublishPanel />}
+      {tab === 'taxonomy' && <TaxonomyPanel />}
     </main>
   );
 }

@@ -42,10 +42,12 @@ export async function visibleWork(db: NodePgDatabase, id: string, role: string):
 
 const routeId = (c: Context): string => c.req.param('id') as string;
 
-// which content source applies: a draft work has no release, so Admin preview
-// falls back to the editorial head; everything published reads the snapshot
-function contentSource(work: ReaderWork, role: string): 'release' | 'head' {
-  return work.activeReleaseId && !(work.visibility === 'draft' && role === 'admin') ? 'release' : 'head';
+// which content source applies: ONLY draft works previewed by Admin may read
+// the editorial head; everything else reads the active release, and a public
+// work without any release exposes nothing (never the head).
+function contentSource(work: ReaderWork, role: string): 'release' | 'head' | 'none' {
+  if (work.visibility === 'draft' && role === 'admin') return 'head';
+  return work.activeReleaseId ? 'release' : 'none';
 }
 
 export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId: string; role: string } }> {
@@ -59,6 +61,17 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
     if (!v.ok) return c.json({ error: v.error }, v.error === 'forbidden' ? 403 : 404);
     const work = v.work;
     const source = contentSource(work, c.get('role') ?? '');
+
+    if (source === 'none') {
+      // public work, no publication yet — nothing is readable (§8)
+      return c.json({
+        id: work.id, title: work.title, author: work.author,
+        workType: work.workType, serialStatus: work.serialStatus,
+        description: work.description, visibility: work.visibility,
+        chapterCount: 0, firstChapterId: null, latestChapterId: null,
+        releaseId: null, releaseVersion: null, publishedAt: null,
+      });
+    }
 
     if (source === 'head') {
       // draft preview: editorial counts (M5 semantics, Admin only)
@@ -130,7 +143,11 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
     const limit = Math.min(500, Math.max(1, Number(c.req.query('limit') ?? 200) || 200));
     const offset = Math.max(0, Number(c.req.query('offset') ?? 0) || 0);
 
-    if (contentSource(work, c.get('role') ?? '') === 'head') {
+    const source = contentSource(work, c.get('role') ?? '');
+    if (source === 'none') {
+      return c.json({ total: 0, limit, offset, chapters: [] });
+    }
+    if (source === 'head') {
       const [total] = await db.select({ n: sql<number>`count(*)::int` })
         .from(chapters).where(eq(chapters.workId, id));
       const rows = await db.select({
@@ -178,6 +195,7 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
     if (!v.ok) return c.json({ error: v.error }, v.error === 'forbidden' ? 403 : 404);
     const work = v.work;
     const source = contentSource(work, c.get('role') ?? '');
+    if (source === 'none') return c.json({ error: 'no_active_release' }, 404);
 
     let revisionId: string | null;
     let labelRaw: string;

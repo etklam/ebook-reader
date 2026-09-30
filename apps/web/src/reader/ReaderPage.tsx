@@ -8,7 +8,7 @@ import type { ReaderChapter, ReaderWork } from '../api/types.ts';
 import { splitParagraphs } from './paragraphs.ts';
 import { convertParagraphs } from './conversion.ts';
 import {
-  loadPosition, loadSettings, remapPosition, savePosition, saveSettings,
+  loadPosition, loadSettings, normalizeSettings, remapPosition, savePosition, saveSettings,
   type ReaderSettings, type ReadingPosition,
 } from './reader-state.ts';
 import {
@@ -22,6 +22,11 @@ import { BottomSheet } from './BottomSheet.tsx';
 import { TableOfContents } from './TableOfContents.tsx';
 import { ReaderSettingsPanel } from './ReaderSettings.tsx';
 import { navigate } from '../App.tsx';
+import {
+  createProgressSync, pushPreferences,
+  resolveMemberEntry, scheduleReadMarking, type MemberEntry,
+} from './member-sync.ts';
+import { createBookmark } from '../api/client.ts';
 
 type LoadState =
   | { phase: 'loading' }
@@ -67,6 +72,9 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   const [pageCount, setPageCount] = useState(1);
   const [vpWidth, setVpWidth] = useState(0);
   const [approxRestore, setApproxRestore] = useState(false);
+  const [member, setMember] = useState<MemberEntry | null>(null);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const captureRef = useRef<() => ReadingPosition | null>(() => null);
 
   const seqRef = useRef(0);           // stale-fetch guard (§13)
   const stripRef = useRef<HTMLDivElement | null>(null);
@@ -77,9 +85,10 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     setSettings((prev) => {
       const next = { ...prev, ...patch };
       saveSettings(next);
+      void pushPreferences(next, Boolean(member?.isMember));
       return next;
     });
-  }, []);
+  }, [member?.isMember]);
 
   // --- anchor capture (mode-aware) ------------------------------------------------
   const captureAnchor = useCallback((): ReadingPosition | null => {
@@ -104,6 +113,8 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
       fraction: 0,
     };
   }, [chapter, settings.mode]);
+
+  captureRef.current = captureAnchor;
 
   // capture the anchor before a layout-changing setting applies (§11.3).
   // Mode round-trips (scroll→paginated→scroll) restore the exact scroll-mode
@@ -157,10 +168,22 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         const w = await getWork(workId);
         if (cancelled) return;
         setWork(w);
+        const entry = await resolveMemberEntry(workId);
+        if (cancelled) return;
+        setMember(entry);
+        if (entry.settings) {
+          const merged = normalizeSettings({ ...loadSettings(), ...entry.settings });
+          saveSettings(merged);
+          setSettings(merged);
+        }
         const saved = loadPosition(workId);
-        const target = initialChapterId ?? saved?.chapterId ?? w.firstChapterId;
+        const pos = entry.position ?? saved;
+        const target = initialChapterId ?? pos?.chapterId ?? w.firstChapterId;
         if (!target) { setState({ phase: 'error', code: 'chapter_not_found', retryable: false }); return; }
-        await loadChapter(target, initialChapterId ? null : saved);
+        // restore whenever the saved position is for THIS chapter — reload and
+        // back-navigation land on the same paragraph regardless of entry path;
+        // loadChapter ignores restores for other chapters
+        await loadChapter(target, pos);
       } catch (e) {
         if (cancelled) return;
         if (e instanceof ApiRequestError) setState({ phase: 'error', code: e.code, retryable: false });
@@ -169,6 +192,12 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     })();
     return () => { cancelled = true; };
   }, [workId]);
+
+  // a chapter counts as read after 10s of reading (never via prefetch, §33)
+  useEffect(() => {
+    if (!chapter || !member?.isMember) return;
+    return scheduleReadMarking(chapter, true);
+  }, [chapter, member?.isMember]);
 
   // keep the URL in sync with the loaded chapter (§13)
   useEffect(() => {
@@ -196,12 +225,13 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   useEffect(() => {
     if (!chapter) return;
     const vp = viewportRef.current;
-    const onSave = () => savePositionDebounced(workId, captureAnchor());
+    const onSave = () => { savePositionDebounced(workId, captureAnchor()); syncSaver(); };
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') {
         savePositionDebounced.cancel();
         const p = captureAnchor();
         if (p) savePosition(workId, p);
+        syncRef.current?.flush();
       }
     };
     // scroll mode scrolls the .reader-scroll container, not the window
@@ -212,6 +242,29 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [chapter, settings.mode, captureAnchor, savePositionDebounced, workId]);
+
+  // member server sync: debounced writes + flush on hide (§42/§43)
+  const syncRef = useRef<ReturnType<typeof createProgressSync>>(null);
+  // 8s trailing debounce over scroll activity (§43); flush happens directly on
+  // chapter change / visibility hidden
+  const syncSaver = useRef(debounce(() => syncRef.current?.flush(), 8000)).current;
+  useEffect(() => {
+    if (!member?.isMember) { syncRef.current = null; return; }
+    const sync = createProgressSync(
+      workId,
+      () => captureRef.current(),
+      (server) => {
+        // a newer device won (§30): adopt the account position deliberately
+        setSyncNotice('已同步至帳號最新閱讀位置');
+        pendingAnchor.current = server;
+        setApproxRestore(true);
+        if (chapter && server.chapterId !== chapter.chapterId) void loadChapter(server.chapterId, server);
+      },
+      () => setSyncNotice('進度同步暫時失敗，稍後自動重試'),
+    );
+    syncRef.current = sync;
+    return () => { syncRef.current = null; };
+  }, [member?.isMember, workId, chapter, loadChapter]);
 
   // after content mounts with a pending anchor: re-anchor, then derive the page
   useEffect(() => {
@@ -261,6 +314,9 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     if (!chapterId) return;
     setChromeVisible(false);
     setSheet(null);
+    const p = captureAnchor();
+    if (p) savePosition(workId, p);
+    syncRef.current?.flush();
     const saved = loadPosition(workId);
     void loadChapter(chapterId, saved?.chapterId === chapterId ? saved : null);
   }, [loadChapter, workId]);
@@ -334,6 +390,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
       {approxRestore && (
         <p className="reader-note" role="status">章節內容已更新，已回到最接近的段落。</p>
       )}
+      {syncNotice && <p className="reader-note" role="status" style={{ top: 'calc(env(safe-area-inset-top, 0px) + 44px)' }}>{syncNotice}</p>}
 
       <div
         className={paginated ? 'reader-viewport' : 'reader-scroll'}
@@ -355,6 +412,14 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         onNext={() => goChapter(chapter.nextChapterId)}
         onToc={() => setSheet('toc')}
         onSettings={() => setSheet('settings')}
+        onBookmark={member?.isMember ? () => {
+          const p = captureAnchor();
+          if (p) {
+            void createBookmark({ workId, chapterId: p.chapterId, revisionId: p.revisionId, paragraphIndex: p.paragraphIndex })
+              .then(() => setSyncNotice('已加入書籤'))
+              .catch(() => setSyncNotice('書籤加入失敗'));
+          }
+        } : undefined}
       />
 
       <BottomSheet open={sheet === 'toc'} title={`目錄（${work.chapterCount} 章）`} onClose={() => setSheet(null)}>

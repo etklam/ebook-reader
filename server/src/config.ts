@@ -16,6 +16,9 @@ export interface ApiConfig {
   /** M6 Beta registration policy: no email/recovery infra → closed|invite only
    *  are safe; 'open' is available but must stay off until recovery exists */
   registrationMode: 'closed' | 'invite' | 'open';
+  /** extra CSRF-allowed origins behind host-rewriting proxies (comma-separated);
+   *  same-host origins are always allowed */
+  csrfAllowedOrigins: string[];
 }
 
 export interface WorkerConfig {
@@ -81,6 +84,8 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     maxAttempts: int(env, 'MAX_ATTEMPTS', 3, 1, 20),
     ...tls(env),
     registrationMode: registrationMode as 'closed' | 'invite' | 'open',
+    csrfAllowedOrigins: (env.CSRF_ALLOWED_ORIGINS ?? '')
+      .split(',').map((s) => s.trim()).filter(Boolean),
   };
 }
 
