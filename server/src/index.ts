@@ -13,7 +13,9 @@ import { localStorage } from './storage.ts';
 import { healthRoutes } from './routes/health.ts';
 import { authRoutes } from './routes/auth.ts';
 import { adminImportRoutes } from './routes/admin-imports.ts';
+import { adminWorkRoutes } from './routes/admin-works.ts';
 import { readerRoutes } from './routes/reader.ts';
+import { worksRoutes } from './routes/works.ts';
 
 const config = loadApiConfig();
 
@@ -28,6 +30,26 @@ const db = makeDb(pool);
 
 export const app = new Hono<{ Variables: { userId: string; role: string } }>();
 app.use(logger());
+
+// CSRF (§53): cookie auth is SameSite=Lax, but top-level cross-site form POSTs
+// still carry cookies — so every state-changing /api request presenting an
+// Origin header must come from our own origin. Browsers always send Origin on
+// cross-origin POSTs; same-origin fetches send it too. Non-browser clients
+// without Origin are unaffected (they don't carry our cookies).
+app.use('/api/*', async (c, next) => {
+  if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+    const origin = c.req.header('origin');
+    if (origin) {
+      const host = c.req.header('host');
+      try {
+        if (new URL(origin).host !== host) return c.json({ error: 'origin_mismatch' }, 403);
+      } catch {
+        return c.json({ error: 'origin_mismatch' }, 403);
+      }
+    }
+  }
+  await next();
+});
 
 // resolve the session cookie (if any) for every /api route — registered
 // BEFORE the route modules so guards see the resolved role
@@ -56,7 +78,9 @@ app.get('/api/me', (c) => {
 app.route('/', healthRoutes(pool));
 app.route('/', authRoutes(db));
 app.route('/', adminImportRoutes({ db, storage: localStorage(config.storageRoot), config }));
+app.route('/', adminWorkRoutes({ db, storage: localStorage(config.storageRoot) }));
 app.route('/', readerRoutes({ db, storage: localStorage(config.storageRoot) }));
+app.route('/', worksRoutes({ db }));
 
 // bind only when run as the entrypoint — test files import `app` without
 // grabbing a port (and colliding with a running dev server)

@@ -3,9 +3,9 @@
 // exactly that — and only while the work is still at the version that apply
 // produced. Any later edit blocks the revert with an explicit conflict;
 // automatic compensation plans are deferred backlog per v1.3.
-import { asc, eq, sql } from 'drizzle-orm';
+import { asc, eq, inArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { chapters, importJobs, works } from '../db/schema.ts';
+import { chapters, importJobs, releaseItems, works } from '../db/schema.ts';
 import { assertTransition } from './states.ts';
 import type { AppliedSnapshot } from './apply-incremental.ts';
 
@@ -104,6 +104,24 @@ export async function revertImport(
     }
     if (work.editVersion !== req.baseEditVersion) {
       return { ok: false, status: 409, error: 'edit_version_conflict', detail: `base ${req.baseEditVersion} ≠ current ${work.editVersion}` };
+    }
+
+    // published releases reference immutable revisions/chapters — a revert
+    // must never physically delete content a release snapshot still points at
+    // (§47). Editorial rollback across a publication is a manual operation.
+    const revisionRefs = snapshot.revisionChanges.length > 0
+      ? await tx.select({ id: releaseItems.revisionId }).from(releaseItems)
+        .where(inArray(releaseItems.revisionId, snapshot.revisionChanges.map((r) => r.newRevisionId))).limit(1)
+      : [];
+    const chapterRefs = snapshot.addedChapterIds.length > 0
+      ? await tx.select({ id: releaseItems.chapterId }).from(releaseItems)
+        .where(inArray(releaseItems.chapterId, snapshot.addedChapterIds)).limit(1)
+      : [];
+    if (revisionRefs.length > 0 || chapterRefs.length > 0) {
+      return {
+        ok: false, status: 409, error: 'revert_published',
+        detail: '此匯入的內容已被發布快照引用；歷史 release 不可破壞，請以新匯入/新發布修正內容',
+      };
     }
 
     // 1) restore moved head revisions, then drop the revisions this apply made
