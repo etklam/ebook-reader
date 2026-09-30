@@ -13,6 +13,7 @@ import { localStorage } from './storage.ts';
 import { healthRoutes } from './routes/health.ts';
 import { authRoutes } from './routes/auth.ts';
 import { adminImportRoutes } from './routes/admin-imports.ts';
+import { readerRoutes } from './routes/reader.ts';
 
 const config = loadApiConfig();
 
@@ -55,6 +56,7 @@ app.get('/api/me', (c) => {
 app.route('/', healthRoutes(pool));
 app.route('/', authRoutes(db));
 app.route('/', adminImportRoutes({ db, storage: localStorage(config.storageRoot), config }));
+app.route('/', readerRoutes({ db, storage: localStorage(config.storageRoot) }));
 
 // bind only when run as the entrypoint — test files import `app` without
 // grabbing a port (and colliding with a running dev server)
