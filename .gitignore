@@ -1,5 +1,15 @@
 node_modules/
 dist/
+coverage/
 .env
+.env.*
+!.env.example
 *.log
 .DS_Store
+
+# private uploaded content / runtime state — never enters Git
+storage/
+
+# local scratch (test artifacts, dumps)
+*.local
+tmp/

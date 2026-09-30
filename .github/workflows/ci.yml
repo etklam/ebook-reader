@@ -62,7 +62,5 @@ jobs:
           pnpm db:verify
       - name: M2 import E2E (IMP acceptance)
         working-directory: server
-        # URLs come from job env; node --env-file just needs the file present
-        run: |
-          touch .env
-          pnpm test:e2e
+        # scripts use --env-file-if-exists=.env; job env supplies the URLs directly
+        run: pnpm test:e2e
