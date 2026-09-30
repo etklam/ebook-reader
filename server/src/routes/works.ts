@@ -73,19 +73,19 @@ export function worksRoutes(deps: CatalogDeps): Hono<Record<string, never>> {
     if (categoryIds.length > 0) {
       conds.push(sql`exists (
         select 1 from ${workCategories} wc
-        where wc.work_id = ${works.id} and wc.category_id in ${categoryIds})`);
+        where wc.work_id = ${works.id} and wc.category_id = any(${sql.param(categoryIds)}::uuid[]))`);
     }
     if (tagIds.length > 0) {
       conds.push(tagMode === 'all'
         // every selected tag present: no selected tag is missing from the work
         ? sql`not exists (
-            select x from unnest(${tagIds}::uuid[]) as x(id)
+            select x from unnest(${sql.param(tagIds)}::uuid[]) as x(id)
             where not exists (
               select 1 from ${workTags} wt
               where wt.work_id = ${works.id} and wt.tag_id = x.id))`
         : sql`exists (
             select 1 from ${workTags} wt
-            where wt.work_id = ${works.id} and wt.tag_id in ${tagIds})`);
+            where wt.work_id = ${works.id} and wt.tag_id = any(${sql.param(tagIds)}::uuid[]))`);
     }
     if (q) {
       const likeVariants = (await searchVariants(q)).map((v) => `%${v}%`);
