@@ -105,11 +105,21 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     };
   }, [chapter, settings.mode]);
 
-  // capture the anchor before a layout-changing setting applies (§11.3)
+  // capture the anchor before a layout-changing setting applies (§11.3).
+  // Mode round-trips (scroll→paginated→scroll) restore the exact scroll-mode
+  // paragraph: column granularity would otherwise eat the intra-column offset.
+  const lastScrollAnchor = useRef<ReadingPosition | null>(null);
   const changeLayout = useCallback((patch: Partial<ReaderSettings>) => {
-    pendingAnchor.current = captureAnchor();
+    if (patch.mode === 'scroll' && settings.mode === 'paginated' && chapter) {
+      const remembered = lastScrollAnchor.current;
+      pendingAnchor.current = remembered?.chapterId === chapter.chapterId ? remembered : captureAnchor();
+    } else {
+      const anchor = captureAnchor();
+      pendingAnchor.current = anchor;
+      if (anchor && settings.mode === 'scroll') lastScrollAnchor.current = anchor;
+    }
     updateSettings(patch);
-  }, [captureAnchor, updateSettings]);
+  }, [captureAnchor, updateSettings, settings.mode, chapter]);
 
   // --- data loading ----------------------------------------------------------------
   const loadChapter = useCallback(async (chapterId: string, restore: ReadingPosition | null) => {
