@@ -1,24 +1,34 @@
-// Catalog work card: metadata only — no bodies, no admin internals.
+// A catalog entry, set as a ruled index row rather than a card: title on the
+// left edge, its apparatus hanging under it, status and tabular counts in a
+// right rail so a reader scanning forty works can compare down a column.
+// Metadata only — no bodies, no admin internals.
 import type { CatalogWork } from '../api/types.ts';
-
-const TYPE_LABEL = { serial: '連載', short_story: '短篇' } as const;
-const STATUS_LABEL = { ongoing: '連載中', completed: '已完結', paused: '暫停' } as const;
+import { STATUS_LABEL, TYPE_LABEL, count, relativeDay } from '../lib/format.ts';
 
 export function WorkCard({ work, onOpen }: { work: CatalogWork; onOpen(): void }) {
+  const status = work.serialStatus ? STATUS_LABEL[work.serialStatus] : TYPE_LABEL[work.workType];
   return (
-    <button className="work-card" onClick={onOpen} data-testid="work-card">
-      <div className="work-card-body">
-        <span className="work-title">{work.title}</span>
-        {work.author && <span className="work-author">{work.author}</span>}
-        {work.description && <span className="work-desc">{work.description.slice(0, 60)}{work.description.length > 60 ? '…' : ''}</span>}
-        <span className="work-meta">
-          {TYPE_LABEL[work.workType]}
-          {work.serialStatus ? ` · ${STATUS_LABEL[work.serialStatus]}` : ''}
-          {` · ${work.chapterCount} 章`}
-          {work.categories.length > 0 && ` · ${work.categories.join('、')}`}
+    <button className="row" onClick={onOpen} data-testid="work-card">
+      <span className="row-main">
+        <span className="row-title">{work.title}</span>
+        <span className="row-sub">
+          <span className="row-author">{work.author || '佚名'}</span>
+          {work.description && <span className="row-desc">{work.description}</span>}
+          {work.categories.length > 0 && (
+            <span className="row-meta">{work.categories.join(' · ')}</span>
+          )}
+          {work.tags.length > 0 && (
+            <span className="row-tags">{work.tags.map((t) => `#${t}`).join(' ')}</span>
+          )}
         </span>
-        {work.tags.length > 0 && <span className="work-tags">{work.tags.map((t) => `#${t}`).join(' ')}</span>}
-      </div>
+      </span>
+      <span className="row-rail">
+        <span className={work.serialStatus === 'ongoing' ? 'status status-ongoing' : 'status'}>
+          {status}
+        </span>
+        <span className="row-count">{count(work.chapterCount)} 章</span>
+        <span>{relativeDay(work.latestPublishedAt)}</span>
+      </span>
     </button>
   );
 }

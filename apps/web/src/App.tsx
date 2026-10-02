@@ -65,6 +65,11 @@ export function App() {
     return <ReaderPage key={route.route.workId} workId={route.route.workId} initialChapterId={route.route.chapterId} />;
   }
 
+  // admin owns its own <main> and has no bottom nav
+  if (route.page === 'admin') {
+    return <div className="app-shell"><AdminApp /></div>;
+  }
+
   let page: React.ReactNode;
   switch (route.page) {
     case 'work': page = <WorkDetailPage key={route.workId} workId={route.workId} />; break;
@@ -72,14 +77,13 @@ export function App() {
     case 'register': page = <RegistrationPage />; break;
     case 'library': page = <LibraryPage />; break;
     case 'bookmarks': page = <BookmarksPage />; break;
-    case 'admin': page = <AdminApp />; break;
     default: page = <CatalogPage />;
   }
 
   return (
     <div className="app-shell">
       <main className="app-main">{page}</main>
-      {route.page !== 'admin' && <BottomNav active={route.page} />}
+      <BottomNav active={route.page} />
     </div>
   );
 }

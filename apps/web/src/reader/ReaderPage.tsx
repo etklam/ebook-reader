@@ -27,6 +27,8 @@ import {
   resolveMemberEntry, scheduleReadMarking, type MemberEntry,
 } from './member-sync.ts';
 import { createBookmark } from '../api/client.ts';
+import { SkeletonChapter } from '../components/Skeleton.tsx';
+import { count } from '../lib/format.ts';
 
 type LoadState =
   | { phase: 'loading' }
@@ -39,6 +41,15 @@ const ERROR_TEXT: Record<string, string> = {
   forbidden: '這部作品尚未公開',
   content_unavailable: '章節內容暫時無法讀取',
   network: '網路異常，請重試',
+};
+
+// what to do about it — an error code on its own tells the reader nothing
+const ERROR_HINT: Record<string, string> = {
+  work_not_found: '它可能尚未發布，或連結已經失效。',
+  chapter_not_found: '這一章可能在最近一次發布中被移除或重編了。回書庫重新進入可取得目前的目錄。',
+  forbidden: '這部作品還沒有公開的發布版本，只有管理員看得到草稿。',
+  content_unavailable: '正文暫時取不到，內容本身沒有遺失。稍後重試即可。',
+  network: '看起來是連線中斷。重試一次通常就好；進度已經存在這台裝置上。',
 };
 
 // small body cache: next/prev revisits and preloads never re-fetch an
@@ -80,6 +91,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   const stripRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const pendingAnchor = useRef<ReadingPosition | null>(null);
+  const ruleRef = useRef<HTMLSpanElement | null>(null);
 
   const updateSettings = useCallback((patch: Partial<ReaderSettings>) => {
     setSettings((prev) => {
@@ -222,10 +234,21 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     debounce((wid: string, pos: ReadingPosition | null) => { if (pos) savePosition(wid, pos); }, 400),
   ).current;
 
+  // position within the chapter, written straight to the DOM: a progress rule
+  // that re-rendered on every scroll event would be a frame budget spent on
+  // nothing. In paginated mode the width comes from page/pageCount in render.
+  const paintRule = useCallback(() => {
+    const vp = viewportRef.current;
+    const rule = ruleRef.current;
+    if (!vp || !rule || settings.mode !== 'scroll') return;
+    const span = vp.scrollHeight - vp.clientHeight;
+    rule.style.width = `${span > 0 ? Math.min(100, (vp.scrollTop / span) * 100) : 0}%`;
+  }, [settings.mode]);
+
   useEffect(() => {
     if (!chapter) return;
     const vp = viewportRef.current;
-    const onSave = () => { savePositionDebounced(workId, captureAnchor()); syncSaver(); };
+    const onSave = () => { savePositionDebounced(workId, captureAnchor()); syncSaver(); paintRule(); };
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') {
         savePositionDebounced.cancel();
@@ -241,7 +264,19 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
       vp?.removeEventListener('scroll', onSave);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [chapter, settings.mode, captureAnchor, savePositionDebounced, workId]);
+  }, [chapter, settings.mode, captureAnchor, savePositionDebounced, workId, paintRule]);
+
+  // transient notices clear themselves — a toast that never leaves is a banner
+  useEffect(() => {
+    if (!syncNotice) return;
+    const t = setTimeout(() => setSyncNotice(null), 3500);
+    return () => clearTimeout(t);
+  }, [syncNotice]);
+  useEffect(() => {
+    if (!approxRestore) return;
+    const t = setTimeout(() => setApproxRestore(false), 5000);
+    return () => clearTimeout(t);
+  }, [approxRestore]);
 
   // member server sync: debounced writes + flush on hide (§42/§43)
   const syncRef = useRef<ReturnType<typeof createProgressSync>>(null);
@@ -279,6 +314,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (settings.mode === 'scroll') {
         restoreScrollPosition(vp, root, anchor.paragraphIndex, anchor.fraction ?? 0);
+        paintRule();
       } else {
         // the viewport div is shared across modes: drop any scroll-mode offset
         vp.scrollTop = 0;
@@ -287,7 +323,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         setPage(clampPage(columnIndexForParagraph(root, anchor.paragraphIndex, vp, 0), count));
       }
     }));
-  }, [state.phase, chapter, converted, settings.mode, settings.fontSize, settings.lineHeight, settings.paragraphSpacing]);
+  }, [state.phase, chapter, converted, settings.mode, settings.fontSize, settings.lineHeight, settings.paragraphSpacing, paintRule]);
 
   // viewport resize / orientation: re-anchor the visible paragraph, recompute pages
   useEffect(() => {
@@ -343,20 +379,39 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   }, [settings.mode, turnPage, goChapter, chapter]);
 
   // --- render -----------------------------------------------------------------------
-  if (!chapter || state.phase === 'loading') return <div className="reader-msg" data-testid="reader-loading">載入中…</div>;
-  if (state.phase === 'error') {
+  // chapter-shaped placeholder, in the reader's own theme, so the first real
+  // paragraph lands where the eye is already looking
+  if (!chapter || state.phase === 'loading') {
     return (
-      <div className="reader-msg" data-testid="reader-error">
-        <p>{ERROR_TEXT[state.code] ?? '發生錯誤'}</p>
-        <code className="reader-err-code">{state.code}</code>
-        {state.retryable && (
-          <button className="reader-btn" onClick={() => void loadChapter(chapter.chapterId, null)}>重試</button>
-        )}
-        <button className="reader-btn" onClick={() => navigate('/')}>離開</button>
+      <div className={`reader theme-${settings.theme}`} data-testid="reader-loading">
+        <SkeletonChapter />
       </div>
     );
   }
-  if (!work) return <div className="reader-msg" data-testid="reader-loading">載入中…</div>;
+  if (state.phase === 'error') {
+    return (
+      <div className={`reader theme-${settings.theme}`}>
+        <div className="reader-msg" data-testid="reader-error">
+          <h2>{ERROR_TEXT[state.code] ?? '發生錯誤'}</h2>
+          <p>{ERROR_HINT[state.code] ?? '請稍後再試，或回書庫換一本。'}</p>
+          <code className="reader-err-code">{state.code}</code>
+          <div className="msg-actions">
+            {state.retryable && (
+              <button className="btn primary" onClick={() => void loadChapter(chapter.chapterId, null)}>重試</button>
+            )}
+            <button className="btn" onClick={() => navigate('/')}>回書庫</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (!work) {
+    return (
+      <div className={`reader theme-${settings.theme}`} data-testid="reader-loading">
+        <SkeletonChapter />
+      </div>
+    );
+  }
 
   const paginated = settings.mode === 'paginated';
   const step = (vpWidth || 360) + COLUMN_GAP;
@@ -379,18 +434,29 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         '--reader-para-spacing': `${settings.paragraphSpacing}em`,
       } as React.CSSProperties}
     >
+      {/* running head: where you are, in the book and in the chapter. 返回 lives
+          in the bottom toolbar where the thumb is (§04), not up here. */}
       <header className="reader-top" data-visible={chromeVisible || undefined}>
-        <button className="reader-btn" aria-label="返回" onClick={() => navigate('/')}>←</button>
         <div className="reader-top-title">
           <span className="reader-chapter-label">{chapter.labelRaw}{chapter.title ? ` ${chapter.title}` : ''}</span>
           <span className="reader-work-title">{work.title}</span>
         </div>
+        <span
+          className="reader-rule"
+          ref={ruleRef}
+          style={paginated ? { width: `${((page + 1) / Math.max(1, pageCount)) * 100}%` } : undefined}
+          aria-hidden="true"
+        />
       </header>
 
-      {approxRestore && (
-        <p className="reader-note" role="status">章節內容已更新，已回到最接近的段落。</p>
+      {(approxRestore || syncNotice) && (
+        <div className="reader-notes">
+          {approxRestore && (
+            <p className="reader-note" role="status">章節內容已更新，已回到最接近的段落。</p>
+          )}
+          {syncNotice && <p className="reader-note" role="status">{syncNotice}</p>}
+        </div>
       )}
-      {syncNotice && <p className="reader-note" role="status" style={{ top: 'calc(env(safe-area-inset-top, 0px) + 44px)' }}>{syncNotice}</p>}
 
       <div
         className={paginated ? 'reader-viewport' : 'reader-scroll'}
@@ -407,22 +473,30 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         visible={chromeVisible}
         hasPrev={chapter.previousChapterId !== null}
         hasNext={chapter.nextChapterId !== null}
-        progress={`第 ${chapter.labelRaw || '—'} 章 · ${pageCount > 1 ? `${page + 1}/${pageCount} · ` : ''}${work.chapterCount} 章`}
+        progress={`${chapter.labelRaw || '—'}　·　共 ${count(work.chapterCount)} 章`}
+        paginated={paginated}
+        page={page}
+        pageCount={pageCount}
+        conversion={settings.conversion}
         onPrev={() => goChapter(chapter.previousChapterId)}
         onNext={() => goChapter(chapter.nextChapterId)}
+        onPrevPage={() => { if (turnPage(-1) !== 'moved') goChapter(chapter.previousChapterId); }}
+        onNextPage={() => { if (turnPage(1) !== 'moved') goChapter(chapter.nextChapterId); }}
         onToc={() => setSheet('toc')}
         onSettings={() => setSheet('settings')}
-        onBookmark={member?.isMember ? () => {
+        onBack={() => navigate(`/works/${workId}`)}
+        onConversion={(conversion) => changeLayout({ conversion })}
+        onBookmark={() => {
+          if (!member?.isMember) { setSyncNotice('登入後可加入書籤'); return; }
           const p = captureAnchor();
-          if (p) {
-            void createBookmark({ workId, chapterId: p.chapterId, revisionId: p.revisionId, paragraphIndex: p.paragraphIndex })
-              .then(() => setSyncNotice('已加入書籤'))
-              .catch(() => setSyncNotice('書籤加入失敗'));
-          }
-        } : undefined}
+          if (!p) return;
+          void createBookmark({ workId, chapterId: p.chapterId, revisionId: p.revisionId, paragraphIndex: p.paragraphIndex })
+            .then(() => setSyncNotice('已加入書籤'))
+            .catch(() => setSyncNotice('書籤加入失敗'));
+        }}
       />
 
-      <BottomSheet open={sheet === 'toc'} title={`目錄（${work.chapterCount} 章）`} onClose={() => setSheet(null)}>
+      <BottomSheet open={sheet === 'toc'} title={`目錄（${count(work.chapterCount)} 章）`} onClose={() => setSheet(null)}>
         <TableOfContents
           workId={workId}
           currentChapterId={chapter.chapterId}

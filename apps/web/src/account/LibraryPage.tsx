@@ -1,65 +1,121 @@
-// 我的書庫 (§40): saved works with continue-reading, update badges, and
-// favorite/remove + follow/unfollow without leaving the page.
+// 我的書庫 (§40): saved works as ruled rows with continue-reading, update
+// markers, and favourite/follow changes without leaving the page.
 import { useCallback, useEffect, useState } from 'react';
-import { getLibrary, removeFromLibrary, unfollow } from '../api/client.ts';
+import { getLibrary, logout, removeFromLibrary, unfollow } from '../api/client.ts';
 import type { LibraryEntry } from '../api/types.ts';
 import { navigate } from '../App.tsx';
-import { useMe } from './useMe.ts';
-
-const STATUS_LABEL = { ongoing: '連載中', completed: '已完結', paused: '暫停' } as const;
+import { refreshMe, useMe } from './useMe.ts';
+import { SkeletonRows } from '../components/Skeleton.tsx';
+import { EmptyState } from '../components/EmptyState.tsx';
+import { STATUS_LABEL, dateTime } from '../lib/format.ts';
 
 export function LibraryPage() {
   const { me, loading } = useMe();
   const [entries, setEntries] = useState<LibraryEntry[] | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     getLibrary().then((r) => setEntries(r.works)).catch(() => setEntries([]));
   }, []);
   useEffect(() => { if (me) refresh(); }, [me, refresh]);
 
-  if (loading) return <p className="muted page-pad">載入中…</p>;
-  if (!me) {
+  const act = (workId: string, p: Promise<unknown>) => {
+    setBusyId(workId);
+    void p.then(refresh).catch(() => undefined).finally(() => setBusyId(null));
+  };
+
+  if (loading) {
     return (
-      <div className="auth-page">
-        <p>登入後即可使用書庫、追更與進度同步。</p>
-        <button className="reader-btn primary" onClick={() => navigate('/login')}>登入</button>
+      <div className="page-head">
+        <div className="head-line"><h1>我的書庫</h1></div>
+        <SkeletonRows count={3} />
       </div>
     );
   }
 
+  if (!me) {
+    return (
+      <div className="auth-page">
+        <EmptyState
+          title="登入後這裡是你的書庫"
+          body="收藏的作品、追更的新章提醒，以及跨裝置接續的閱讀位置，都會留在帳號裡。未登入也能閱讀，進度只存在這台裝置上。"
+          action={<button className="btn primary" onClick={() => navigate('/login')}>登入</button>}
+        />
+      </div>
+    );
+  }
+
+  const updated = entries?.filter((e) => e.hasUpdate).length ?? 0;
+
   return (
     <div className="library-page" data-testid="library">
-      <h1>我的書庫</h1>
-      <div className="detail-cta" style={{ marginBottom: 12 }}>
-        <button className="reader-btn" onClick={() => navigate('/me/bookmarks')}>我的書籤</button>
-      </div>
-      {entries === null && <p className="muted">載入中…</p>}
-      {entries !== null && entries.length === 0 && <p className="muted">還沒有收藏的作品。</p>}
-      <div className="work-list">
+      <header className="page-head">
+        <div className="head-line">
+          <h1>我的書庫</h1>
+          {entries && (
+            <span className="head-note">
+              {entries.length} 部{updated > 0 ? ` · ${updated} 部有更新` : ''}
+            </span>
+          )}
+        </div>
+        <nav className="subnav" aria-label="會員頁面">
+          <button className="linkish" onClick={() => navigate('/me/bookmarks')}>我的書籤</button>
+          <button className="linkish" onClick={() => navigate('/')}>到書庫找書</button>
+          <button className="linkish" style={{ marginInlineStart: 'auto' }}
+            onClick={() => void logout().then(refreshMe).then(() => navigate('/')).catch(() => undefined)}>
+            登出
+          </button>
+        </nav>
+      </header>
+
+      {entries === null && <SkeletonRows count={3} label="載入書庫" />}
+
+      {entries !== null && entries.length === 0 && (
+        <EmptyState
+          title="還沒有收藏的作品"
+          body="在作品頁按「☆ 收藏」會把它放進這裡；按「追更」則會在有新章節時標記出來。"
+          action={<button className="btn primary" onClick={() => navigate('/')}>去書庫逛逛</button>}
+        />
+      )}
+
+      <div className="rows">
         {entries?.map((e) => (
-          <div key={e.workId} className="work-card" data-testid="library-card">
-            <div className="work-card-body">
-              <button className="linkish work-title" onClick={() => navigate(`/works/${e.workId}`)}>{e.title}</button>
-              <span className="work-meta">
+          <div key={e.workId} className="row" data-testid="library-card">
+            <div className="row-main">
+              <button className="row-title" onClick={() => navigate(`/works/${e.workId}`)}>
+                {e.title}
+              </button>
+              <div className="row-sub">
+                <span className="row-meta">{e.author || '佚名'}</span>
+                {e.hasUpdate && (
+                  <span className="flag-new">有更新（{e.newChapterCount} 新章）</span>
+                )}
+                <span className="row-meta">
+                  {e.lastReadAt ? `上次閱讀 ${dateTime(e.lastReadAt)}` : '尚未開始閱讀'}
+                </span>
+                <span className="row-actions">
+                  <button className="chip primary" disabled={busyId === e.workId}
+                    onClick={() => {
+                      if (e.continueChapterId) navigate(`/read/${e.workId}/${e.continueChapterId}`);
+                      else navigate(`/works/${e.workId}`);
+                    }}>
+                    {e.continueChapterId ? '繼續閱讀' : '開始閱讀'}
+                  </button>
+                  <button className="chip" disabled={busyId === e.workId}
+                    onClick={() => act(e.workId, unfollow(e.workId))}>取消追更</button>
+                  <button className="chip" disabled={busyId === e.workId}
+                    onClick={() => act(e.workId, removeFromLibrary(e.workId))}>移出書庫</button>
+                </span>
+              </div>
+            </div>
+            <div className="row-rail">
+              <span className={e.serialStatus === 'ongoing' ? 'status status-ongoing' : 'status'}>
                 {e.serialStatus ? STATUS_LABEL[e.serialStatus] : '短篇'}
-                {e.hasUpdate && <b className="update-badge"> 有更新（{e.newChapterCount} 新章）</b>}
-              </span>
-              {e.lastReadAt && <span className="muted">上次閱讀：{new Date(e.lastReadAt).toLocaleString('zh-Hant')}</span>}
-              <span className="row-actions">
-                <button className="reader-btn chip primary" onClick={() => {
-                  if (e.continueChapterId) navigate(`/read/${e.workId}/${e.continueChapterId}`);
-                  else navigate(`/works/${e.workId}`);
-                }}>{e.continueChapterId ? '繼續閱讀' : '開始閱讀'}</button>
-                <button className="reader-btn chip" onClick={() => unfollow(e.workId).then(refresh).catch(() => undefined)}>取消追更</button>
-                <button className="reader-btn chip" onClick={() => removeFromLibrary(e.workId).then(refresh).catch(() => undefined)}>移出書庫</button>
               </span>
             </div>
           </div>
         ))}
       </div>
-      <p className="muted page-pad">
-        想追更多作品？到<a className="linkish" onClick={() => navigate('/')} href="/">書庫</a>逛逛。
-      </p>
     </div>
   );
 }

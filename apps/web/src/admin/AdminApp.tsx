@@ -1,10 +1,11 @@
-// M2 Admin import screen (moved verbatim from the old monolithic main.tsx) —
-// upload → poll → preview → commit → diff/apply/revert. The reader lives in
-// ../reader/; the two share only the fetch helper conventions.
+// Admin: upload → poll → preview → commit → diff/apply/revert (M2–M4) plus
+// publish and taxonomy (M6). Same token vocabulary as the member surfaces — the
+// person reviewing machine output deserves the same legibility as the reader.
 import { useEffect, useRef, useState } from 'react';
 import { navigate } from '../App.tsx';
 import { PublishPanel } from './PublishPanel.tsx';
 import { TaxonomyPanel } from './TaxonomyPanel.tsx';
+import { count } from '../lib/format.ts';
 
 // --- tiny API helpers ----------------------------------------------------------
 async function api(path: string, init?: RequestInit): Promise<{ status: number; body: any }> {
@@ -17,73 +18,129 @@ const STATUS_TEXT: Record<string, string> = {
   ready: '可提交', failed: '失敗', cancelled: '已取消', committed: '已提交', applied: '已套用增量',
 };
 
+// status drives a dot colour *and* the word — never colour alone
+const STATUS_TONE: Record<string, string> = {
+  queued: 'state-busy', processing: 'state-busy', review_required: 'state-review',
+  ready: 'state-ok', committed: 'state-ok', applied: 'state-ok',
+  failed: 'state-bad', cancelled: 'state-bad',
+};
+
+function Status({ status }: { status: string }) {
+  return (
+    <span className={`state ${STATUS_TONE[status] ?? ''}`}>
+      {STATUS_TEXT[status] ?? status}
+    </span>
+  );
+}
+
 // --- app ------------------------------------------------------------------------
 export function AdminApp() {
   const [me, setMe] = useState<any>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     api('/api/me').then(({ body }) => setMe(body.user));
   }, []);
 
-  if (me === null) return <p style={s.loading}>載入中…</p>;
+  if (me === null) {
+    return (
+      <div className="app-main admin-shell" role="status" aria-label="載入中">
+        <div className="sk sk-line" style={{ width: '40%', height: '1.6em', marginTop: 32 }} />
+      </div>
+    );
+  }
 
   if (!me) {
     return (
-      <main style={s.page}>
-        <h1 style={s.h1}>管理員登入</h1>
-        {loginError && <p style={s.error}>{loginError}</p>}
-        <form style={s.form} onSubmit={async (e) => {
-          e.preventDefault();
-          const { status: st } = await api('/api/auth/login', {
-            method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ email, password }),
-          });
-          if (st !== 200) { setLoginError('登入失敗'); return; }
-          const me2 = await api('/api/me');
-          setMe(me2.body.user);
-        }}>
-          <input style={s.input} type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-          <input style={s.input} type="password" placeholder="密碼" value={password} onChange={(e) => setPassword(e.target.value)} required />
-          <button style={s.button} type="submit">登入</button>
-        </form>
+      <main className="app-main admin-shell">
+        <div className="auth-page">
+          <h1>管理員登入</h1>
+          <p className="auth-lede">匯入、發布與分類管理需要管理員帳號。</p>
+          <form className="auth-form" onSubmit={async (e) => {
+            e.preventDefault();
+            setBusy(true);
+            const { status: st } = await api('/api/auth/login', {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ email, password }),
+            });
+            setBusy(false);
+            if (st !== 200) { setLoginError('登入失敗，請確認帳號與密碼'); return; }
+            const me2 = await api('/api/me');
+            setMe(me2.body.user);
+          }}>
+            <div className="field">
+              <label htmlFor="admin-email">電子郵件</label>
+              <input className="input" id="admin-email" type="email" value={email} required
+                autoComplete="email" onChange={(e) => setEmail(e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="admin-password">密碼</label>
+              <input className="input" id="admin-password" type="password" value={password} required
+                autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} />
+            </div>
+            {loginError && <p className="form-error" role="alert">{loginError}</p>}
+            <button className="btn primary" type="submit" disabled={busy}>
+              {busy ? '登入中…' : '登入'}
+            </button>
+          </form>
+        </div>
       </main>
     );
   }
 
   if (me.role !== 'admin') {
     return (
-      <main style={s.page}>
-        <p>此帳號不是管理員。</p>
-        <button style={s.button} onClick={async () => { await api('/api/auth/logout', { method: 'POST' }); setMe(null); }}>登出</button>
+      <main className="app-main admin-shell">
+        <div className="empty">
+          <h2>這個帳號不是管理員</h2>
+          <p>管理後台只開放給管理員帳號。可以改用其他帳號登入，或回書庫繼續閱讀。</p>
+          <div className="row-actions">
+            <button className="btn" onClick={async () => {
+              await api('/api/auth/logout', { method: 'POST' });
+              setMe(null);
+            }}>登出</button>
+            <button className="btn" onClick={() => navigate('/')}>回書庫</button>
+          </div>
+        </div>
       </main>
     );
   }
 
-  return <AdminHome email={email || 'admin'} />;
+  return <AdminHome email={me.email || email || 'admin'} onLogout={() => setMe(null)} />;
 }
 
-function AdminHome({ email }: { email: string }) {
+function AdminHome({ email, onLogout }: { email: string; onLogout(): void }) {
   const [tab, setTab] = useState<'import' | 'publish' | 'taxonomy'>('import');
   return (
-    <main style={s.page}>
-      <h1 style={s.h1}>管理後台</h1>
-      <p style={s.muted}>已登入：{email}</p>
-      <div className="type-tabs" role="tablist" aria-label="管理功能">
-        {([
-          ['import', '匯入'],
-          ['publish', '發布'],
-          ['taxonomy', '分類標籤'],
-        ] as const).map(([v, label]) => (
-          <button key={v} role="tab" aria-selected={tab === v}
-            className={`reader-btn chip${tab === v ? ' active selected' : ''}`}
-            onClick={() => setTab(v)}>
-            {label}
-          </button>
-        ))}
-      </div>
+    <main className="app-main admin-shell">
+      <header className="page-head">
+        <div className="head-line">
+          <h1>管理後台</h1>
+          <span className="head-note">
+            {email}
+            {'　'}
+            <button className="linkish" onClick={async () => {
+              await api('/api/auth/logout', { method: 'POST' });
+              onLogout();
+            }}>登出</button>
+          </span>
+        </div>
+        <div className="seg" role="tablist" aria-label="管理功能">
+          {([
+            ['import', '匯入'],
+            ['publish', '發布'],
+            ['taxonomy', '分類標籤'],
+          ] as const).map(([v, label]) => (
+            <button key={v} role="tab" aria-selected={tab === v} className="seg-item"
+              onClick={() => setTab(v)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </header>
       {tab === 'import' && <ImportPanel />}
       {tab === 'publish' && <PublishPanel />}
       {tab === 'taxonomy' && <TaxonomyPanel />}
@@ -98,6 +155,15 @@ type Job = {
   stagedChapters: number; stagedNeedsReview: number; sourceFile: any;
   committedWorkId: string | null;
 };
+
+const ENCODINGS = [
+  { v: '', label: '自動偵測' },
+  { v: 'utf-8', label: 'UTF-8' },
+  { v: 'utf-16le', label: 'UTF-16 LE' },
+  { v: 'utf-16be', label: 'UTF-16 BE' },
+  { v: 'big5', label: 'Big5' },
+  { v: 'gb18030', label: 'GB18030' },
+];
 
 function ImportPanel() {
   const [file, setFile] = useState<File | null>(null);
@@ -219,112 +285,196 @@ function ImportPanel() {
 
   const enc = job?.encodingResult;
   const detected = job?.detectedEncoding ?? job?.detected_encoding;
-
   const openReader = job?.committedWorkId;
+  const cls = (k: string) => diff?.match.items.filter((i: any) => i.itemClass === k).length ?? 0;
+  const pending = diff
+    ? diff.match.items.filter((i: any) => ['ambiguous', 'structural_conflict'].includes(i.itemClass)).length
+    : 0;
 
   return (
     <>
-      {openReader && (
-        <p style={s.ok}>
-          作品 <code>{openReader}</code> 已就緒 —{' '}
-          <button style={{ ...s.button, padding: '4px 10px' }} onClick={() => navigate(`/read/${openReader}`)}>開啟閱讀器</button>
+      <section className="admin-panel">
+        <h2>匯入</h2>
+        <p className="muted">
+          上傳 TXT 或 EPUB 建立新作品，或指定既有作品做增量／覆蓋。提交只會產生草稿——
+          公開內容在「發布」頁才會變動。
         </p>
-      )}
-      <form style={s.form} onSubmit={submit}>
-        <label style={s.label}>TXT／EPUB 檔案（TXT 上限 30 MiB、EPUB 50 MiB）</label>
-        <input style={s.input} type="file" accept=".txt,.epub" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />
-        <label style={s.label}>作品名稱（提交時建立）</label>
-        <input style={s.input} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例如：長夜將盡" />
-        <label style={s.label}>作品類型</label>
-        <select style={s.input} value={workType} onChange={(e) => setWorkType(e.target.value)}>
-          <option value="serial">長篇連載</option>
-          <option value="short_story">短篇小說</option>
-        </select>
-        <label style={s.label}>目標作品 ID（增量匯入時填；留空＝新作品）</label>
-        <input style={s.input} value={workId} onChange={(e) => setWorkId(e.target.value)} placeholder="work UUID" />
-        <label style={s.label}>指定編碼（可留空自動偵測）</label>
-        <select style={s.input} value={encoding} onChange={(e) => setEncoding(e.target.value)}>
-          <option value="">自動偵測</option>
-          <option value="utf-8">UTF-8</option>
-          <option value="utf-16le">UTF-16 LE</option>
-          <option value="utf-16be">UTF-16 BE</option>
-          <option value="big5">Big5</option>
-          <option value="gb18030">GB18030</option>
-        </select>
-        <button style={s.button} type="submit" disabled={busy || !file}>上傳並解析</button>
-      </form>
 
-      {error && <p style={s.error}>{error}</p>}
+        {openReader && (
+          <p className="form-ok">
+            作品 <code className="mono">{openReader}</code> 已就緒。{' '}
+            <button className="linkish" onClick={() => navigate(`/read/${openReader}`)}>開啟閱讀器</button>
+          </p>
+        )}
+
+        <form className="form-grid" onSubmit={submit}>
+          <div className="field">
+            <label htmlFor="imp-file">來源檔案</label>
+            <input className="input" id="imp-file" type="file" accept=".txt,.epub" required
+              aria-describedby="imp-file-hint"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <span className="hint" id="imp-file-hint">TXT 上限 30 MiB，EPUB 上限 50 MiB。</span>
+          </div>
+          <div className="field">
+            <label htmlFor="imp-title">作品名稱</label>
+            <input className="input" id="imp-title" value={title} placeholder="例如：長夜將盡"
+              aria-describedby="imp-title-hint" onChange={(e) => setTitle(e.target.value)} />
+            <span className="hint" id="imp-title-hint">提交為草稿時建立；增量匯入可留空。</span>
+          </div>
+          <div className="field">
+            <label htmlFor="imp-type">作品類型</label>
+            <select className="input" id="imp-type" value={workType} onChange={(e) => setWorkType(e.target.value)}>
+              <option value="serial">長篇連載</option>
+              <option value="short_story">短篇小說</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="imp-work">目標作品 ID</label>
+            <input className="input input-mono" id="imp-work" value={workId} placeholder="work UUID"
+              aria-describedby="imp-work-hint" onChange={(e) => setWorkId(e.target.value)} />
+            <span className="hint" id="imp-work-hint">留空＝建立新作品。填入才會進入增量／覆蓋流程。</span>
+          </div>
+          <div className="field">
+            <label htmlFor="imp-enc">文字編碼</label>
+            <select className="input" id="imp-enc" value={encoding} onChange={(e) => setEncoding(e.target.value)}>
+              {ENCODINGS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+            </select>
+            <span className="hint">偵測結果不對時再指定，然後重新解析。</span>
+          </div>
+          <button className="btn primary" type="submit" disabled={busy || !file} aria-busy={busy || undefined}>
+            {busy ? '處理中…' : '上傳並解析'}
+          </button>
+        </form>
+
+        {error && <p className="form-error" role="alert">{error}</p>}
+      </section>
 
       {job && (
-        <section style={s.card}>
-          <h2 style={s.h2}>匯入狀態：{STATUS_TEXT[job.status] ?? job.status}</h2>
+        <section className="admin-panel">
+          <h2>匯入狀態</h2>
+          <p><Status status={job.status} /></p>
+
           {job.sourceFile && (
-            <p style={s.muted}>來源：{job.sourceFile.mimeType} · {job.sourceFile.sizeBytes} bytes · sha256 {String(job.sourceFile.fileHash).slice(0, 12)}…</p>
-          )}
-          {detected && (
-            <p>編碼：<b>{detected}</b>（{enc?.confidence}）{enc?.reason ? ` — ${enc.reason}` : ''}</p>
-          )}
-          {enc?.warnings?.length > 0 && (
-            <ul style={s.warnList}>{enc.warnings.map((w: string, i: number) => <li key={i} style={s.warn}>⚠ {w}</li>)}</ul>
-          )}
-          {job.status === 'failed' && (
-            <p style={s.error}>失敗：{job.errorCode}{job.errorDetail ? ` — ${job.errorDetail}` : ''}
-              <button style={{ ...s.button, marginLeft: 8 }} onClick={() => reanalyze()} disabled={busy}>重新解析</button>
+            <p className="hint">
+              {job.sourceFile.mimeType}　·　{count(job.sourceFile.sizeBytes)} bytes　·
+              sha256 <span className="mono">{String(job.sourceFile.fileHash).slice(0, 12)}…</span>
             </p>
           )}
+
+          {detected && (
+            <dl className="meta-grid">
+              <dt>編碼</dt>
+              <dd>{detected}{enc?.confidence ? `（信心 ${enc.confidence}）` : ''}</dd>
+              {enc?.reason && (<><dt>依據</dt><dd>{enc.reason}</dd></>)}
+            </dl>
+          )}
+
+          {enc?.warnings?.length > 0 && (
+            <ul>
+              {enc.warnings.map((w: string, i: number) => <li key={i} className="form-warn">{w}</li>)}
+            </ul>
+          )}
+
+          {job.status === 'failed' && (
+            <>
+              <p className="form-error" role="alert">
+                {job.errorCode}{job.errorDetail ? ` — ${job.errorDetail}` : ''}
+              </p>
+              <button className="btn" onClick={() => reanalyze(encoding)} disabled={busy}>
+                {encoding ? `以 ${encoding} 重新解析` : '重新解析'}
+              </button>
+            </>
+          )}
+
           {(job.status === 'ready' || job.status === 'review_required' || job.status === 'applied') && job.workId && (
             <>
-              <button style={s.button} onClick={loadDiff} disabled={busy}>與現有章節比對</button>
+              <h3>與現有章節比對</h3>
+              <button className="btn" onClick={loadDiff} disabled={busy}>載入比對結果</button>
               {diff && (
-                <div style={{ marginTop: 8 }}>
-                  <p>相同 <b>{diff.match.items.filter((i: any) => i.itemClass === 'unchanged').length}</b>｜
-                     有修訂（增量保留站方）<b>{diff.match.items.filter((i: any) => i.itemClass === 'modified').length}</b>｜
-                     新章 <b>{diff.match.items.filter((i: any) => i.itemClass === 'new').length}</b>｜
-                     待決 <b>{diff.match.items.filter((i: any) => ['ambiguous', 'structural_conflict'].includes(i.itemClass)).length}</b>｜
-                     來源缺失（保留）<b>{diff.match.missingFromSource.length}</b></p>
-                  <p style={s.muted}>基準版本 edit_version = {diff.editVersion}</p>
-                  {diff.match.needsReview && <p style={s.warn}>有項目需要決策（待決清單會顯示在套用錯誤訊息）；無錨點的新章可用「確認全部追加到結尾」。</p>}
-                  <button style={s.button} onClick={() => applyIncremental('incremental')} disabled={busy || job.status === 'applied'}>
-                    套用增量（修訂保留站方）
-                  </button>{' '}
-                  <button style={s.button} onClick={() => applyIncremental('overwrite')} disabled={busy || job.status === 'applied'}>
-                    套用覆蓋（修訂章內容）
-                  </button>{' '}
-                  <button style={s.button} onClick={() => applyIncremental('incremental', true)} disabled={busy || job.status === 'applied'}>
-                    確認全部追加到結尾
-                  </button>
-                </div>
+                <>
+                  <div className="tally">
+                    <div><b>{cls('unchanged')}</b>相同</div>
+                    <div><b>{cls('modified')}</b>有修訂</div>
+                    <div><b>{cls('new')}</b>新章</div>
+                    <div><b>{pending}</b>待決</div>
+                    <div><b>{diff.match.missingFromSource.length}</b>來源缺失</div>
+                  </div>
+                  <p className="hint">基準版本 edit_version = {diff.editVersion}；增量模式會保留站方已修訂的內容。</p>
+                  {diff.match.needsReview && (
+                    <p className="form-warn">
+                      有項目需要決策，待決清單會出現在套用的錯誤訊息裡。找不到錨點的新章可選「確認追加到結尾」。
+                    </p>
+                  )}
+                  <div className="row-actions">
+                    <button className="btn primary" onClick={() => applyIncremental('incremental')}
+                      disabled={busy || job.status === 'applied'}>
+                      套用增量
+                    </button>
+                    <button className="btn" onClick={() => {
+                      if (confirm('覆蓋會為每個有差異的章節建立新修訂，站方先前的修改會被來源內容取代。確定要覆蓋嗎？')) {
+                        void applyIncremental('overwrite');
+                      }
+                    }} disabled={busy || job.status === 'applied'}>
+                      套用覆蓋
+                    </button>
+                    <button className="btn" onClick={() => applyIncremental('incremental', true)}
+                      disabled={busy || job.status === 'applied'}>
+                      確認追加到結尾
+                    </button>
+                  </div>
+                </>
               )}
+
               {applyResult?.summary && (
-                <p style={s.ok}>已套用（{applyResult.summary.updated > 0 || applyResult.modifiedMode ? '覆蓋' : '增量'}）：
-                  新增 {applyResult.summary.added}、更新 {applyResult.summary.updated}、相同 {applyResult.summary.unchanged}、
-                  保留站方修訂 {applyResult.summary.modifiedKept}、略過 {applyResult.summary.skipped}、
-                  保留缺失 {applyResult.summary.missingKept}；edit_version → {applyResult.newEditVersion}。</p>
+                <p className="form-ok">
+                  已套用（{applyResult.summary.updated > 0 || applyResult.modifiedMode ? '覆蓋' : '增量'}）：
+                  新增 {applyResult.summary.added}、更新 {applyResult.summary.updated}、
+                  相同 {applyResult.summary.unchanged}、保留站方修訂 {applyResult.summary.modifiedKept}、
+                  略過 {applyResult.summary.skipped}、保留缺失 {applyResult.summary.missingKept}；
+                  edit_version → {applyResult.newEditVersion}。
+                </p>
               )}
               {applyResult?.reverted && (
-                <p style={s.ok}>已回復：移除 {applyResult.reverted.removedChapters} 章、還原 {applyResult.reverted.restoredRevisions} 個修訂；
-                  edit_version → {applyResult.reverted.editVersion}。</p>
+                <p className="form-ok">
+                  已回復：移除 {applyResult.reverted.removedChapters} 章、
+                  還原 {applyResult.reverted.restoredRevisions} 個修訂；
+                  edit_version → {applyResult.reverted.editVersion}。
+                </p>
               )}
               {job.status === 'applied' && (
-                <button style={s.button} onClick={doRevert} disabled={busy}>回復此次套用</button>
+                <p>
+                  <button className="btn" disabled={busy} onClick={() => {
+                    if (confirm('回復會移除這次套用新增的章節並還原被覆蓋的修訂。之後若已有其他修改，回復會被擋下。確定要回復嗎？')) {
+                      void doRevert();
+                    }
+                  }}>
+                    回復此次套用
+                  </button>
+                </p>
               )}
             </>
           )}
+
           {(job.status === 'ready' || job.status === 'review_required') && (
             <>
-              <p>偵測章節數：<b>{job.stagedChapters}</b>{job.stagedNeedsReview > 0 && <span style={s.warn}>（{job.stagedNeedsReview} 章需要覆核）</span>}</p>
+              <h3>
+                偵測章節 {count(job.stagedChapters)} 章
+                {job.stagedNeedsReview > 0 && <span className="form-warn">　{job.stagedNeedsReview} 章需要覆核</span>}
+              </h3>
               <ChapterList importId={importId!} />
               {!job.workId && (
-                <button style={s.button} onClick={commit} disabled={busy}>
+                <button className="btn primary btn-block" onClick={commit} disabled={busy}>
                   {job.status === 'review_required' ? '覆核後提交為草稿' : '提交為草稿'}
                 </button>
               )}
             </>
           )}
+
           {job.status === 'committed' && commitResult && (
-            <p style={s.ok}>已提交：作品 {commitResult.workId}，共 {commitResult.chapterCount} 章（草稿，未公開）。{' '}
-              <button style={{ ...s.button, padding: '4px 10px' }} onClick={() => navigate(`/read/${commitResult.workId}`)}>開啟閱讀器</button>
+            <p className="form-ok">
+              已提交：作品 <span className="mono">{commitResult.workId}</span>，
+              共 {count(commitResult.chapterCount)} 章（草稿，未公開）。{' '}
+              <button className="linkish" onClick={() => navigate(`/read/${commitResult.workId}`)}>開啟閱讀器</button>
             </p>
           )}
         </section>
@@ -342,45 +492,44 @@ function ChapterList({ importId }: { importId: string }) {
     api(`/api/admin/imports/${importId}/chapters?page=${page}&limit=50`).then(({ body }) => setData(body));
   }, [importId, page]);
 
-  if (!data) return <p style={s.muted}>載入章節…</p>;
-  const pages = Math.ceil(data.total / data.limit);
+  if (!data) {
+    return (
+      <div role="status" aria-label="載入章節">
+        {Array.from({ length: 5 }, (_, i) => (
+          <div className="sk sk-line" key={i} style={{ height: '1.1em', margin: '16px 0' }} aria-hidden="true" />
+        ))}
+      </div>
+    );
+  }
+
+  const pages = Math.max(1, Math.ceil(data.total / data.limit));
   return (
     <div>
-      <ol style={s.list}>
+      <ol className="rows">
         {data.chapters.map((c: any) => (
-          <li key={c.position} style={s.item}>
-            <b>{c.labelRaw || '（無標籤）'}</b>{c.title ? ` ${c.title}` : ''}
-            {c.needsReview && <span style={s.warn}>（需覆核）</span>}
-            <br /><span style={s.muted}>{c.snippet}…</span>
-            {c.warnings?.length > 0 && <div style={s.warn}>{c.warnings.join('、')}</div>}
+          <li className="row" key={c.position}>
+            <div className="row-main">
+              <span className="row-title" style={{ fontSize: 'var(--text-base)' }}>
+                {c.labelRaw || '（無標籤）'}{c.title ? `　${c.title}` : ''}
+              </span>
+              <div className="row-sub">
+                <span className="snippet">{c.snippet}…</span>
+                {c.warnings?.length > 0 && <span className="form-warn">{c.warnings.join('、')}</span>}
+              </div>
+            </div>
+            <div className="row-rail">
+              {c.needsReview
+                ? <span className="state state-review">需覆核</span>
+                : <span className="state state-ok">可提交</span>}
+            </div>
           </li>
         ))}
       </ol>
-      <p style={s.muted}>
-        第 {data.page} / {pages} 頁
-        <button style={{ ...s.button, marginLeft: 8 }} disabled={page <= 1} onClick={() => setPage(page - 1)}>上一頁</button>
-        <button style={{ ...s.button, marginLeft: 8 }} disabled={page >= pages} onClick={() => setPage(page + 1)}>下一頁</button>
-      </p>
+      <div className="row-actions" style={{ alignItems: 'center' }}>
+        <button className="btn" disabled={page <= 1} onClick={() => setPage(page - 1)}>上一頁</button>
+        <span className="hint tnum">第 {data.page} / {pages} 頁</span>
+        <button className="btn" disabled={page >= pages} onClick={() => setPage(page + 1)}>下一頁</button>
+      </div>
     </div>
   );
 }
-
-// --- minimal mobile-reasonable styles -------------------------------------------
-const s = {
-  page: { fontFamily: 'sans-serif', maxWidth: 640, margin: '0 auto', padding: 16, paddingBottom: 64 },
-  loading: { fontFamily: 'sans-serif', padding: 24 },
-  h1: { fontSize: 20 },
-  h2: { fontSize: 16 },
-  form: { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 },
-  label: { fontSize: 13, color: '#555' },
-  input: { padding: '10px 12px', fontSize: 16, borderRadius: 6, border: '1px solid #ccc' },
-  button: { padding: '10px 16px', fontSize: 15, borderRadius: 6, border: 'none', background: '#2563eb', color: '#fff', cursor: 'pointer' },
-  card: { border: '1px solid #ddd', borderRadius: 8, padding: 16, marginBottom: 16 },
-  list: { paddingLeft: 20, margin: '8px 0' },
-  item: { marginBottom: 8, fontSize: 14 },
-  muted: { color: '#777', fontSize: 13 },
-  error: { color: '#b91c1c' },
-  ok: { color: '#15803d' },
-  warn: { color: '#b45309', fontSize: 13 },
-  warnList: { paddingLeft: 20, margin: '4px 0', color: '#b45309', fontSize: 13 },
-} as const;
