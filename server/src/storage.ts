@@ -1,7 +1,8 @@
 // Private storage adapter (§16A-D): local volume now, S3-compatible later.
 // Keys are server-generated only; callers can never pass a raw path.
 import { randomUUID } from 'node:crypto';
-import { access, mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, stat, writeFile, unlink } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 const KEY_RE = /^[0-9a-f]{2}\/[0-9a-f-]+\.[a-z0-9]+$/;
@@ -11,8 +12,16 @@ export interface Storage {
   get(key: string): Promise<Buffer>;
   /** cheap existence check (publish validation must not read every body) */
   exists(key: string): Promise<boolean>;
-  /** idempotent: deleting an already-missing object is success (GC is M7) */
+  /** idempotent: deleting an already-missing object is success */
   delete(key: string): Promise<void>;
+  /** last-modified time, or null when the object is gone. The M7 orphan sweep
+   *  uses it to leave very recent objects alone: an import writes bodies before
+   *  committing the rows that reference them, so age is what distinguishes an
+   *  orphan from an in-flight write. */
+  modifiedAt(key: string): Promise<Date | null>;
+  /** every key currently present. Only the maintenance sweep calls this; the
+   *  request path never enumerates storage. */
+  list(): Promise<string[]>;
 }
 
 // storage keys are `shard/uuid.ext`; shard derived from the uuid itself so
@@ -47,6 +56,32 @@ export function localStorage(root: string): Storage {
       await unlink(resolve(key)).catch((e: NodeJS.ErrnoException) => {
         if (e.code !== 'ENOENT') throw e;
       });
+    },
+    async modifiedAt(key) {
+      try {
+        return (await stat(resolve(key))).mtime;
+      } catch {
+        return null;
+      }
+    },
+    async list() {
+      const keys: string[] = [];
+      let shards: Dirent[];
+      try {
+        shards = await readdir(root, { withFileTypes: true });
+      } catch {
+        return keys;   // nothing written yet
+      }
+      for (const shard of shards) {
+        if (!shard.isDirectory()) continue;
+        const files = await readdir(join(root, shard.name)).catch(() => [] as string[]);
+        for (const file of files) {
+          const key = `${shard.name}/${file}`;
+          // only well-formed keys: anything else was not written by put()
+          if (KEY_RE.test(key)) keys.push(key);
+        }
+      }
+      return keys;
     },
   };
 }

@@ -67,7 +67,13 @@ export function authRoutes(deps: AuthDeps): Hono<{ Variables: { userId: string; 
     // punish someone who logs in from several devices
     accountLimiter.clear(`login:${email.toLowerCase()}`);
     const session = newSession();
-    await db.insert(sessions).values({ id: session.id, userId: user.id, expiresAt: session.expiresAt });
+    await db.insert(sessions).values({
+      id: session.id,
+      userId: user.id,
+      expiresAt: session.expiresAt,
+      // lets the member recognise this device in /api/me/sessions (M7)
+      userAgent: (c.req.header('user-agent') ?? '').slice(0, 200),
+    });
     setCookie(c, SESSION_COOKIE, session.token, cookieOpts());
     return c.json({ ok: true });
   });
@@ -138,7 +144,12 @@ export function authRoutes(deps: AuthDeps): Hono<{ Variables: { userId: string; 
       return c.json({ error: result.error }, result.error === 'invalid_request' ? 400 : 403);
     }
     const session = newSession();
-    await db.insert(sessions).values({ id: session.id, userId: result.userId, expiresAt: session.expiresAt });
+    await db.insert(sessions).values({
+      id: session.id,
+      userId: result.userId,
+      expiresAt: session.expiresAt,
+      userAgent: (c.req.header('user-agent') ?? '').slice(0, 200),
+    });
     setCookie(c, SESSION_COOKIE, session.token, cookieOpts());
     return c.json({ ok: true }, 201);
   });

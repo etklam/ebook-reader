@@ -15,6 +15,7 @@ import { installErrorHandlers } from './http/errors.ts';
 import { securityHeaders } from './http/security.ts';
 import { healthRoutes } from './routes/health.ts';
 import { authRoutes } from './routes/auth.ts';
+import { accountRoutes } from './routes/account.ts';
 import { requireAdmin } from './http/guards.ts';
 import { adminImportRoutes } from './routes/admin-imports.ts';
 import { adminWorkRoutes } from './routes/admin-works.ts';
@@ -73,6 +74,10 @@ app.use('/api/*', async (c, next) => {
   await next();
 });
 
+// in-process throttle for session last-seen writes (see below)
+const LAST_SEEN_INTERVAL_MS = 5 * 60_000;
+const lastSeenWrites = new Map<string, number>();
+
 // resolve the session cookie (if any) for every /api route — registered
 // BEFORE the route modules so guards see the resolved role
 app.use('/api/*', async (c, next) => {
@@ -87,6 +92,24 @@ app.use('/api/*', async (c, next) => {
     if (rows[0]) {
       c.set('userId', rows[0].userId);
       c.set('role', rows[0].role);
+      // Throttled last-seen tracking so /api/me/sessions can show which device
+      // is which. Writing on every request would add a row update to every
+      // authenticated call for a field nothing reads that precisely.
+      const id = tokenId(token);
+      const now = Date.now();
+      const seen = lastSeenWrites.get(id) ?? 0;
+      if (now - seen > LAST_SEEN_INTERVAL_MS) {
+        lastSeenWrites.set(id, now);
+        if (lastSeenWrites.size > 5_000) {
+          for (const [k, t] of lastSeenWrites) {
+            if (now - t > LAST_SEEN_INTERVAL_MS) lastSeenWrites.delete(k);
+          }
+        }
+        // fire-and-forget: a failed bookkeeping write must not fail the request
+        void db.update(sessions).set({ lastSeenAt: new Date() })
+          .where(eq(sessions.id, id))
+          .catch(() => undefined);
+      }
     }
   }
   await next();
@@ -106,6 +129,7 @@ app.get('/api/me', (c) => {
 
 app.route('/', healthRoutes(pool));
 app.route('/', authRoutes({ db, config }));
+app.route('/', accountRoutes({ db, config }));
 app.route('/', meRoutes({ db }));
 app.route('/', adminImportRoutes({ db, storage: localStorage(config.storageRoot), config }));
 app.route('/', adminWorkRoutes({ db, storage: localStorage(config.storageRoot) }));

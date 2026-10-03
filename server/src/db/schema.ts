@@ -28,9 +28,32 @@ export const sessions = app.table('sessions', {
   userId: uuid('user_id').notNull().references(() => users.id),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  // M7 session management: enough to let a member recognise their own devices
+  // in the session list. Deliberately NOT the IP address — a per-request
+  // location trail is more personal data than "log out other devices" needs.
+  userAgent: text('user_agent').notNull().default(''),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
   createdAt: createdAt(),
 }, (t) => [
   index('sessions_user_idx').on(t.userId),
+  // the expiry sweep scans by expires_at across all users
+  index('sessions_expires_idx').on(t.expiresAt),
+]);
+
+// M7 account recovery without an email service: an Admin issues a one-time
+// token out-of-band and the member redeems it. Same shape as
+// registration_invites — only the sha256 is stored, single use, expiring.
+// This is what makes recovery possible at all in Beta; REGISTRATION_MODE=open
+// still needs real email verification before it can be turned on.
+export const passwordResets = app.table('password_resets', {
+  tokenHash: text('token_hash').primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  createdByUserId: uuid('created_by_user_id').notNull().references(() => users.id),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [
+  index('password_resets_user_idx').on(t.userId),
 ]);
 
 // --- works & taxonomy (§17, §03A-F; aliases/merge deferred per v1.3) ---------

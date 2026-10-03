@@ -43,6 +43,13 @@
       "when": 1790798586306,
       "tag": "0005_m6_member",
       "breakpoints": false
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791021316734,
+      "tag": "0006_m7_account",
+      "breakpoints": true
     }
   ]
 }
