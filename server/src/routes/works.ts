@@ -35,74 +35,99 @@ async function searchVariants(q: string): Promise<string[]> {
   return variantsForSearch(q);
 }
 
+// Single filter predicate builder shared by the list and the count endpoints
+// (§03A-F: "前端、API、count 查詢共用一個 filter predicate builder"). Both
+// endpoints must reject the same invalid input and must never silently widen
+// the result set, so validation lives here too — duplicating it would let the
+// two paths drift and report a count that does not match the list.
+export interface CatalogFilterError {
+  error: 'invalid_filter';
+  field: string;
+}
+export interface CatalogFilter {
+  conds: SQL[];
+  limit: number;
+  offset: number;
+  sort: SortKey;
+}
+
+export async function buildCatalogFilter(
+  query: (key: string) => string | undefined,
+): Promise<CatalogFilter | CatalogFilterError> {
+  const limit = Math.min(50, Math.max(1, Number(query('limit') ?? 20) || 20));
+  const offset = Math.max(0, Number(query('offset') ?? 0) || 0);
+  const q = (query('q') ?? '').trim().slice(0, 100);
+  const typeRaw = query('type') || null;
+  if (typeRaw && !['short_story', 'serial'].includes(typeRaw)) {
+    return { error: 'invalid_filter', field: 'type' };
+  }
+  const type = typeRaw as 'short_story' | 'serial' | null;
+  const serialStatus = (query('serialStatus') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (serialStatus.some((s) => !['ongoing', 'completed', 'paused'].includes(s))) {
+    return { error: 'invalid_filter', field: 'serialStatus' };
+  }
+  const categoryIds = parseUuidList(query('categoryIds'));
+  const tagIds = parseUuidList(query('tagIds'));
+  if (categoryIds === null || tagIds === null) {
+    return { error: 'invalid_filter', field: 'ids' };
+  }
+  const tagMode = query('tagMode') === 'any' ? 'any' : 'all';
+  const sortParam = query('sort') ?? 'updated';
+  if (!(sortParam in SORTS)) return { error: 'invalid_filter', field: 'sort' };
+
+  // base predicate: discoverable = public + published
+  const conds: SQL[] = [
+    eq(works.visibility, 'public'),
+    isNotNull(works.activeReleaseId),
+  ];
+  if (type) conds.push(eq(works.workType, type));
+  if (serialStatus.length > 0) {
+    conds.push(inArray(works.serialStatus, serialStatus as ('ongoing' | 'completed' | 'paused')[]));
+  }
+  if (categoryIds.length > 0) {
+    conds.push(sql`exists (
+      select 1 from ${workCategories} wc
+      where wc.work_id = ${works.id} and wc.category_id = any(${sql.param(categoryIds)}::uuid[]))`);
+  }
+  if (tagIds.length > 0) {
+    conds.push(tagMode === 'all'
+      // every selected tag present: no selected tag is missing from the work
+      ? sql`not exists (
+          select x from unnest(${sql.param(tagIds)}::uuid[]) as x(id)
+          where not exists (
+            select 1 from ${workTags} wt
+            where wt.work_id = ${works.id} and wt.tag_id = x.id))`
+      : sql`exists (
+          select 1 from ${workTags} wt
+          where wt.work_id = ${works.id} and wt.tag_id = any(${sql.param(tagIds)}::uuid[]))`);
+  }
+  if (q) {
+    const likeVariants = (await searchVariants(q)).map((v) => `%${v}%`);
+    const textMatch = or(...likeVariants.map((v) => [
+      sql`${works.title} ilike ${v}`,
+      sql`${works.author} ilike ${v}`,
+    ]).flat());
+    conds.push(sql`(
+      ${textMatch}
+      or exists (select 1 from ${workCategories} wc
+                 join ${categories} ct on ct.id = wc.category_id
+                 where wc.work_id = ${works.id} and ${or(...likeVariants.map((v) => sql`ct.display_name ilike ${v}`))})
+      or exists (select 1 from ${workTags} wt
+                 join ${tags} tg on tg.id = wt.tag_id
+                 where wt.work_id = ${works.id} and ${or(...likeVariants.map((v) => sql`tg.display_name ilike ${v}`))})
+    )`);
+  }
+  return { conds, limit, offset, sort: sortParam as SortKey };
+}
+
 export function worksRoutes(deps: CatalogDeps): Hono<Record<string, never>> {
   const { db } = deps;
   const app = new Hono<Record<string, never>>();
 
   app.get('/api/works', async (c) => {
-    const limit = Math.min(50, Math.max(1, Number(c.req.query('limit') ?? 20) || 20));
-    const offset = Math.max(0, Number(c.req.query('offset') ?? 0) || 0);
-    const q = (c.req.query('q') ?? '').trim().slice(0, 100);
-    const typeRaw = c.req.query('type') || null;
-    if (typeRaw && !['short_story', 'serial'].includes(typeRaw)) {
-      return c.json({ error: 'invalid_filter', field: 'type' }, 400);
-    }
-    const type = typeRaw as 'short_story' | 'serial' | null;
-    const serialStatus = (c.req.query('serialStatus') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-    if (serialStatus.some((s) => !['ongoing', 'completed', 'paused'].includes(s))) {
-      return c.json({ error: 'invalid_filter', field: 'serialStatus' }, 400);
-    }
-    const categoryIds = parseUuidList(c.req.query('categoryIds'));
-    const tagIds = parseUuidList(c.req.query('tagIds'));
-    if (categoryIds === null || tagIds === null) {
-      return c.json({ error: 'invalid_filter', field: 'ids' }, 400);
-    }
-    const tagMode = c.req.query('tagMode') === 'any' ? 'any' : 'all';
-    const sortParam = c.req.query('sort') ?? 'updated';
-    if (!(sortParam in SORTS)) return c.json({ error: 'invalid_filter', field: 'sort' }, 400);
-
-    // base predicate: discoverable = public + published
-    const conds: SQL[] = [
-      eq(works.visibility, 'public'),
-      isNotNull(works.activeReleaseId),
-    ];
-    if (type) conds.push(eq(works.workType, type));
-    if (serialStatus.length > 0) {
-      conds.push(inArray(works.serialStatus, serialStatus as ('ongoing' | 'completed' | 'paused')[]));
-    }
-    if (categoryIds.length > 0) {
-      conds.push(sql`exists (
-        select 1 from ${workCategories} wc
-        where wc.work_id = ${works.id} and wc.category_id = any(${sql.param(categoryIds)}::uuid[]))`);
-    }
-    if (tagIds.length > 0) {
-      conds.push(tagMode === 'all'
-        // every selected tag present: no selected tag is missing from the work
-        ? sql`not exists (
-            select x from unnest(${sql.param(tagIds)}::uuid[]) as x(id)
-            where not exists (
-              select 1 from ${workTags} wt
-              where wt.work_id = ${works.id} and wt.tag_id = x.id))`
-        : sql`exists (
-            select 1 from ${workTags} wt
-            where wt.work_id = ${works.id} and wt.tag_id = any(${sql.param(tagIds)}::uuid[]))`);
-    }
-    if (q) {
-      const likeVariants = (await searchVariants(q)).map((v) => `%${v}%`);
-      const textMatch = or(...likeVariants.map((v) => [
-        sql`${works.title} ilike ${v}`,
-        sql`${works.author} ilike ${v}`,
-      ]).flat());
-      conds.push(sql`(
-        ${textMatch}
-        or exists (select 1 from ${workCategories} wc
-                   join ${categories} ct on ct.id = wc.category_id
-                   where wc.work_id = ${works.id} and ${or(...likeVariants.map((v) => sql`ct.display_name ilike ${v}`))})
-        or exists (select 1 from ${workTags} wt
-                   join ${tags} tg on tg.id = wt.tag_id
-                   where wt.work_id = ${works.id} and ${or(...likeVariants.map((v) => sql`tg.display_name ilike ${v}`))})
-      )`);
-    }
+    const filter = await buildCatalogFilter((k) => c.req.query(k));
+    if ('error' in filter) return c.json(filter, 400);
+    const { conds, limit, offset } = filter;
 
     const rows = await db.select({
       id: works.id,
@@ -124,7 +149,7 @@ export function worksRoutes(deps: CatalogDeps): Hono<Record<string, never>> {
     }).from(works)
       .innerJoin(workReleases, eq(workReleases.id, works.activeReleaseId))
       .where(and(...conds))
-      .orderBy(SORTS[sortParam as SortKey], asc(works.id))
+      .orderBy(SORTS[filter.sort], asc(works.id))
       .limit(limit).offset(offset);
 
     return c.json({
@@ -135,10 +160,16 @@ export function worksRoutes(deps: CatalogDeps): Hono<Record<string, never>> {
     });
   });
 
+  // same filters as the list, no pagination (§03A-F). The count is distinct by
+  // work because works→work_releases joins on the single active release, so one
+  // work can never contribute two rows.
   app.get('/api/works/count', async (c) => {
-    const [row] = await db.select({ n: sql<number>`count(*)::int` })
+    const filter = await buildCatalogFilter((k) => c.req.query(k));
+    if ('error' in filter) return c.json(filter, 400);
+    const [row] = await db.select({ n: sql<number>`count(distinct ${works.id})::int` })
       .from(works)
-      .where(and(eq(works.visibility, 'public'), isNotNull(works.activeReleaseId)));
+      .innerJoin(workReleases, eq(workReleases.id, works.activeReleaseId))
+      .where(and(...filter.conds));
     return c.json({ count: row.n });
   });
 

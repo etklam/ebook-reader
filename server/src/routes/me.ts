@@ -29,6 +29,32 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
   };
   app.use('/api/me/*', requireUser);
 
+  // Reject a malformed :workId before it reaches a uuid column. Without this
+  // the driver raises 22P02 and the request becomes a 500 — an unhandled
+  // server error for what is plainly a bad client path.
+  const validWorkId: MiddlewareHandler<{ Variables: { userId: string; role: string } }> = async (c, next) => {
+    if (!UUID_RE.test(routeId(c))) return c.json({ error: 'work_not_found' }, 404);
+    await next();
+  };
+  for (const path of ['/api/me/library/:workId', '/api/me/follows/:workId',
+    '/api/me/follows/:workId/seen', '/api/me/progress/:workId']) {
+    app.use(path, validWorkId);
+  }
+
+  // A chapter reference must belong to the work it is filed under, and the
+  // revision to that chapter. Checking the revision alone let a client store
+  // progress for work A pointing at a chapter of work B, which then drives
+  // "continue reading" in the library straight into the wrong book.
+  const chapterBelongsTo = async (workId: string, chapterId: string, revisionId: string): Promise<boolean> => {
+    if (!UUID_RE.test(chapterId) || !UUID_RE.test(revisionId)) return false;
+    const [row] = await db.select({ workId: chapters.workId })
+      .from(chapterRevisions)
+      .innerJoin(chapters, eq(chapters.id, chapterRevisions.chapterId))
+      .where(and(eq(chapterRevisions.id, revisionId), eq(chapterRevisions.chapterId, chapterId)))
+      .limit(1);
+    return row?.workId === workId;
+  };
+
   const userIdOf = (c: Context<{ Variables: { userId: string; role: string } }>): string => c.get('userId');
 
   // resolve a work the user may reference: exists + (public/unlisted, or the
@@ -159,14 +185,23 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
     const workId = routeId(c);
     const userId = userIdOf(c);
     const body = await c.req.json().catch(() => ({}));
-    const version = Number.isInteger(body?.releaseVersion)
-      ? (body.releaseVersion as number)
-      : (await db.select({ v: sql<number>`coalesce(max(${workReleases.version}), 0)::int` })
-        .from(workReleases).where(eq(workReleases.workId, workId)))[0].v;
-    await db.update(userFollows)
+    const [{ v: latest }] = await db.select({ v: sql<number>`coalesce(max(${workReleases.version}), 0)::int` })
+      .from(workReleases).where(eq(workReleases.workId, workId));
+    // An explicit version is clamped to what actually exists. Unclamped, a
+    // client could post releaseVersion: 999999999 and permanently suppress its
+    // own update markers — every future release would compare as already seen.
+    const requested = Number.isInteger(body?.releaseVersion) ? (body.releaseVersion as number) : latest;
+    if (requested < 0) return c.json({ error: 'invalid_request' }, 400);
+    const version = Math.min(requested, latest);
+    const updated = await db.update(userFollows)
       .set({ lastSeenReleaseVersion: version })
-      .where(and(eq(userFollows.userId, userId), eq(userFollows.workId, workId)));
-    return c.json({ ok: true, lastSeenVersion: version });
+      .where(and(eq(userFollows.userId, userId), eq(userFollows.workId, workId)))
+      .returning({ workId: userFollows.workId });
+    // Not following is a no-op, not an error: the web client marks seen on
+    // every work-detail open (§38) and a 404 there would be pure noise. The
+    // response says plainly whether anything was updated.
+    if (updated.length === 0) return c.json({ ok: true, following: false, lastSeenVersion: null });
+    return c.json({ ok: true, following: true, lastSeenVersion: version });
   });
 
   // --- reading progress (§29/§30): optimistic concurrency ---------------------
@@ -201,10 +236,10 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
     if (fraction !== undefined && fraction !== null && (typeof fraction !== 'number' || fraction < 0 || fraction > 1)) {
       return c.json({ error: 'invalid_request' }, 400);
     }
-    // the saved revision must belong to the saved chapter (spot check)
-    const [rev] = await db.select({ chapterId: chapterRevisions.chapterId })
-      .from(chapterRevisions).where(eq(chapterRevisions.id, revisionId)).limit(1);
-    if (!rev || rev.chapterId !== chapterId) return c.json({ error: 'invalid_request' }, 400);
+    // chapter must be in THIS work and the revision must be that chapter's
+    if (!(await chapterBelongsTo(work.id, chapterId, revisionId))) {
+      return c.json({ error: 'invalid_request' }, 400);
+    }
 
     const updated = await db.update(readingProgress).set({
       chapterId, revisionId, paragraphIndex,
@@ -265,9 +300,13 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
   app.get('/api/me/reads', async (c) => {
     const userId = userIdOf(c);
     const workId = c.req.query('workId') ?? '';
+    // an unparseable workId used to fall through to "no filter" and return the
+    // user's entire read history — silently widening a requested filter is
+    // exactly what §03A forbids, so it is now an explicit error
+    if (workId && !UUID_RE.test(workId)) return c.json({ error: 'invalid_filter', field: 'workId' }, 400);
     const rows = await db.select({ chapterId: userChapterReads.chapterId, lastReadAt: userChapterReads.lastReadAt })
       .from(userChapterReads)
-      .where(workId && UUID_RE.test(workId)
+      .where(workId
         ? and(eq(userChapterReads.userId, userId),
             sql`${userChapterReads.chapterId} in (select id from app.chapters where work_id = ${workId})`)
         : eq(userChapterReads.userId, userId))
@@ -280,6 +319,8 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
   app.get('/api/me/bookmarks', async (c) => {
     const userId = userIdOf(c);
     const workId = c.req.query('workId');
+    // same rule as /api/me/reads: never widen a filter the caller asked for
+    if (workId && !UUID_RE.test(workId)) return c.json({ error: 'invalid_filter', field: 'workId' }, 400);
     const rows = await db.select({
       id: bookmarks.id,
       workId: bookmarks.workId,
@@ -293,7 +334,7 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
     }).from(bookmarks)
       .innerJoin(works, eq(works.id, bookmarks.workId))
       .innerJoin(chapters, eq(chapters.id, bookmarks.chapterId))
-      .where(workId && UUID_RE.test(workId)
+      .where(workId
         ? and(eq(bookmarks.userId, userId), eq(bookmarks.workId, workId))
         : eq(bookmarks.userId, userId))
       .orderBy(desc(bookmarks.updatedAt))
@@ -316,10 +357,11 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
     }
     const work = await visibleWork(workId, c.get('role'));
     if (!work) return c.json({ error: 'work_not_found' }, 404);
-    // the frozen revision must belong to the bookmarked chapter (§35)
-    const [rev] = await db.select({ chapterId: chapterRevisions.chapterId })
-      .from(chapterRevisions).where(eq(chapterRevisions.id, revisionId)).limit(1);
-    if (!rev || rev.chapterId !== chapterId) return c.json({ error: 'invalid_request' }, 400);
+    // the frozen revision must belong to the bookmarked chapter, and that
+    // chapter to this work (§35)
+    if (!(await chapterBelongsTo(work.id, chapterId, revisionId))) {
+      return c.json({ error: 'invalid_request' }, 400);
+    }
     const [row] = await db.insert(bookmarks).values({
       userId, workId, chapterId, revisionId,
       paragraphIndex, note: typeof note === 'string' ? note.slice(0, 500) : '',

@@ -3,6 +3,7 @@
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
+import { bodyLimit } from 'hono/body-limit';
 import { eq, and, isNull, gt } from 'drizzle-orm';
 import { pathToFileURL } from 'node:url';
 import { loadApiConfig } from './config.ts';
@@ -10,8 +11,11 @@ import { makePool, makeDb, closePool } from './db/client.ts';
 import { users, sessions } from './db/schema.ts';
 import { tokenId } from './auth/session.ts';
 import { localStorage } from './storage.ts';
+import { installErrorHandlers } from './http/errors.ts';
+import { securityHeaders } from './http/security.ts';
 import { healthRoutes } from './routes/health.ts';
 import { authRoutes } from './routes/auth.ts';
+import { requireAdmin } from './http/guards.ts';
 import { adminImportRoutes } from './routes/admin-imports.ts';
 import { adminWorkRoutes } from './routes/admin-works.ts';
 import { readerRoutes } from './routes/reader.ts';
@@ -32,6 +36,20 @@ const db = makeDb(pool);
 
 export const app = new Hono<{ Variables: { userId: string; role: string } }>();
 app.use(logger());
+installErrorHandlers(app);
+app.use('*', securityHeaders({ hsts: config.hsts }));
+
+// Bound JSON bodies globally. The import upload routes raise their own limit
+// (admin-imports.ts) and are matched first; everything else has no reason to
+// accept more than a few hundred KiB, and without a cap a single request could
+// make the process buffer arbitrary memory before any validation runs.
+app.use('/api/*', async (c, next) => {
+  if (c.req.path.startsWith('/api/admin/imports')) return next();
+  return bodyLimit({
+    maxSize: config.maxJsonBytes,
+    onError: (ctx) => ctx.json({ error: 'payload_too_large', maxBytes: config.maxJsonBytes }, 413),
+  })(c, next);
+});
 
 // CSRF (§53): cookie auth is SameSite=Lax, but top-level cross-site form POSTs
 // still carry cookies — so every state-changing /api request presenting an
@@ -73,6 +91,13 @@ app.use('/api/*', async (c, next) => {
   }
   await next();
 });
+
+// Admin guard mounted on the parent app, before any admin route module. It
+// previously lived inside adminImportRoutes and only covered admin-works.ts
+// because Hono hoists `/api/admin/*` middleware and that module happened to be
+// mounted first — swapping two app.route() lines would have silently exposed
+// publish and taxonomy. The guard now does not depend on mount order.
+app.use('/api/admin/*', requireAdmin);
 
 app.get('/api/me', (c) => {
   if (!c.get('userId')) return c.json({ user: null }, 401);

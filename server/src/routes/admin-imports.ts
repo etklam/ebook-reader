@@ -3,7 +3,7 @@
 // validated config. Responses are explicit DTOs (stabilization §9), never
 // spread DB rows.
 import { Hono } from 'hono';
-import type { Context, Next } from 'hono';
+import type { Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { createHash } from 'node:crypto';
 import { eq, asc, sql } from 'drizzle-orm';
@@ -37,8 +37,8 @@ export function adminImportRoutes(deps: ImportRoutesDeps): Hono<{ Variables: { u
   const { db, storage, config } = deps;
   const app = new Hono<{ Variables: { userId: string; role: string } }>();
 
-  // every /api/admin route is admin-only, enforced before any parsing
-  app.use('/api/admin/*', requireAdmin);
+  // the admin guard is mounted once on the parent app (http/guards.ts), so it
+  // applies to every /api/admin/* module regardless of mount order
   app.use('/api/admin/imports/*', bodyLimit({ maxSize: config.maxEpubBytes }));
   app.use('/api/admin/imports', bodyLimit({ maxSize: config.maxEpubBytes }));
 
@@ -250,10 +250,4 @@ export function adminImportRoutes(deps: ImportRoutesDeps): Hono<{ Variables: { u
   });
 
   return app;
-}
-
-// shared admin guard (used by app.ts for any future admin routes)
-export async function requireAdmin(c: Context, next: Next): Promise<Response | void> {
-  if (c.get('role') !== 'admin') return c.json({ error: 'forbidden' }, 403);
-  await next();
 }

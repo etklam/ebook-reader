@@ -25,4 +25,10 @@ pnpm --filter web test:browser  # M5＋M6 瀏覽器驗收（需 api+worker+web �
 
 M2 匯入 API（全部 Admin-only）：`POST /api/admin/imports`（上傳 TXT/EPUB，限 30/50 MiB）、`GET /api/admin/imports/:id`（狀態＋編碼結果＋章數）、`GET /api/admin/imports/:id/chapters`（分頁 staged 章節）、`POST /api/admin/imports/:id/commit`（冪等首匯入提交）、`POST /api/admin/imports/:id/reanalyze`（指定編碼重解析）。
 
+## M7 Beta hardening（進行中）
+
+安全與正確性回歸已完成，效能／備份／監測未開始。本輪修正 8 項 pre-M7 稽核缺陷並以 `server/test/e2e-hardening.test.ts`（HRD-01–08）釘住：`/api/works/count` 現與 `/api/works` 共用同一個 filter predicate builder（原本忽略所有 filter）、進度／書籤拒絕跨作品章節引用、`workId` filter 非法時回 400 而非靜默回傳全部、`follows/seen` clamp 至實際最新 release、非 UUID path param 回 4xx 而非 500（並停止把 SQL 與參數印進 log）、`requireAdmin` 移至父 app 掛載（不再依賴 route 註冊順序）、`/api/auth/login` 加 per-IP + per-account 滑動視窗限流、全域 JSON body 上限與安全回應標頭。**限流是單 process 的，不是分散式限流，也不是 DDoS 防護**（邊緣／proxy 責任，見 dev-plan §16）。新增環境變數見 `server/.env.example`。
+
+未做：查詢效能量測、備份還原演練、session／storage 清理、監測、瀏覽器測試入 CI、真機 L3、Beta runbook。
+
 開發順序 M0→M7 與各階段 gate 見 dev-plan §22；驗收分層見 §22A（CI 跑 L1+L2，真機僅 M0/M5/M7）；實際進度以 dev-plan §26 為準。

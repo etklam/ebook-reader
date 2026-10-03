@@ -19,6 +19,17 @@ export interface ApiConfig {
   /** extra CSRF-allowed origins behind host-rewriting proxies (comma-separated);
    *  same-host origins are always allowed */
   csrfAllowedOrigins: string[];
+  /** read X-Forwarded-For for rate-limit keys. Only safe when every request
+   *  provably passes through our own proxy — otherwise it is a one-header
+   *  bypass of every limit. */
+  trustProxy: boolean;
+  /** largest JSON/urlencoded body accepted outside the import upload routes */
+  maxJsonBytes: number;
+  /** auth throttling (M7). Per-process; see http/rate-limit.ts on replicas. */
+  authRateLimit: { windowMs: number; maxPerIp: number; maxPerAccount: number };
+  /** send HSTS. Off by default: on plain-HTTP dev it would pin localhost to
+   *  https in the browser for a year. */
+  hsts: boolean;
 }
 
 export interface WorkerConfig {
@@ -61,6 +72,16 @@ function int(env: Env, key: string, def: number, min: number, max: number): numb
   return n;
 }
 
+// strict boolean parsing: a typo must fail at startup, never fall back to a
+// weaker setting (an unnoticed `TRUST_PROXY=ture` would be silently insecure)
+function bool(env: Env, key: string, def: boolean): boolean {
+  const raw = env[key]?.trim().toLowerCase();
+  if (raw === undefined || raw === '') return def;
+  if (['1', 'true', 'yes'].includes(raw)) return true;
+  if (['0', 'false', 'no'].includes(raw)) return false;
+  throw new Error(`config: ${key} must be true or false`);
+}
+
 function tls(env: Env): { tlsMode: TlsMode; dbCaFile: string | null } {
   const mode = env.DB_TLS ?? 'verify-full';
   if (!TLS_MODES.includes(mode as TlsMode)) {
@@ -86,6 +107,14 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     registrationMode: registrationMode as 'closed' | 'invite' | 'open',
     csrfAllowedOrigins: (env.CSRF_ALLOWED_ORIGINS ?? '')
       .split(',').map((s) => s.trim()).filter(Boolean),
+    trustProxy: bool(env, 'TRUST_PROXY', false),
+    maxJsonBytes: int(env, 'MAX_JSON_BYTES', 256 * 1024, 1024, 8 * 1024 * 1024),
+    authRateLimit: {
+      windowMs: int(env, 'AUTH_RATE_LIMIT_WINDOW_MS', 5 * 60_000, 1_000, 3_600_000),
+      maxPerIp: int(env, 'AUTH_RATE_LIMIT_MAX_PER_IP', 60, 1, 10_000),
+      maxPerAccount: int(env, 'AUTH_RATE_LIMIT_MAX_PER_ACCOUNT', 10, 1, 10_000),
+    },
+    hsts: bool(env, 'HSTS', false),
   };
 }
 

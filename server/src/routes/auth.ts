@@ -10,24 +10,51 @@ import { registrationInvites, users, sessions } from '../db/schema.ts';
 import { hashPassword, verifyPassword } from '../auth/password.ts';
 import { SESSION_COOKIE, tokenId, newSession, cookieOpts } from '../auth/session.ts';
 import type { ApiConfig } from '../config.ts';
+import { clientIp, createRateLimiter, rateLimit } from '../http/rate-limit.ts';
 
 const USERNAME_RE = /^[\p{Script=Han}a-z0-9_-]{2,30}$/u;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export interface AuthDeps {
   db: NodePgDatabase;
-  config: Pick<ApiConfig, 'registrationMode'>;
+  config: Pick<ApiConfig, 'registrationMode' | 'authRateLimit' | 'trustProxy'>;
 }
 
 export function authRoutes(deps: AuthDeps): Hono<{ Variables: { userId: string; role: string } }> {
   const { db, config } = deps;
   const app = new Hono<{ Variables: { userId: string; role: string } }>();
 
+  // Two independent buckets (M7): per-address caps one host hammering the
+  // endpoint, per-account caps a distributed attack converging on one victim's
+  // password. Either one tripping is a 429.
+  const { windowMs, maxPerIp, maxPerAccount } = config.authRateLimit;
+  const ipLimiter = createRateLimiter({ windowMs, max: maxPerIp });
+  const accountLimiter = createRateLimiter({ windowMs, max: maxPerAccount });
+
+  app.use('/api/auth/login', rateLimit({
+    limiter: ipLimiter,
+    keyOf: (c) => `login:${clientIp(c, config.trustProxy)}`,
+    errorCode: 'too_many_attempts',
+  }));
+  app.use('/api/auth/register', rateLimit({
+    limiter: ipLimiter,
+    keyOf: (c) => `register:${clientIp(c, config.trustProxy)}`,
+    errorCode: 'too_many_attempts',
+  }));
+
   app.post('/api/auth/login', async (c) => {
     const { email, password } = await c.req.json().catch(() => ({}));
     if (typeof email !== 'string' || typeof password !== 'string'
       || email.length === 0 || email.length > 320 || password.length === 0 || password.length > 1024) {
       return c.json({ error: 'invalid_request' }, 400);
+    }
+    // Per-account check happens before the scrypt verify so a targeted attack
+    // cannot spend our CPU; it is keyed on the submitted address whether or not
+    // an account exists, so it leaks nothing about which addresses are real.
+    const accountVerdict = accountLimiter.check(`login:${email.toLowerCase()}`);
+    if (!accountVerdict.allowed) {
+      c.header('Retry-After', String(accountVerdict.retryAfter));
+      return c.json({ error: 'too_many_attempts', retryAfter: accountVerdict.retryAfter }, 429);
     }
     const rows = await db.select({ id: users.id, passwordHash: users.passwordHash })
       .from(users).where(eq(users.email, email.toLowerCase())).limit(1);
@@ -36,6 +63,9 @@ export function authRoutes(deps: AuthDeps): Hono<{ Variables: { userId: string; 
     if (!user || !(await verifyPassword(password, user.passwordHash))) {
       return c.json({ error: 'invalid_credentials' }, 401);
     }
+    // credit the successful attempt: the limit exists to stop guessing, not to
+    // punish someone who logs in from several devices
+    accountLimiter.clear(`login:${email.toLowerCase()}`);
     const session = newSession();
     await db.insert(sessions).values({ id: session.id, userId: user.id, expiresAt: session.expiresAt });
     setCookie(c, SESSION_COOKIE, session.token, cookieOpts());

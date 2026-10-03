@@ -57,7 +57,14 @@ export function catalogQueryString(query: CatalogQuery): string {
 }
 
 export const getCatalog = (query: CatalogQuery) => api<CatalogResponse>(`/api/works?${catalogQueryString(query)}`);
-export const getCatalogCount = () => api<{ count: number }>('/api/works/count');
+// takes the same filters as getCatalog — the server applies one shared
+// predicate builder, so a count without the active filters would disagree with
+// the list it is meant to describe (§03A-F)
+export const getCatalogCount = (query: CatalogQuery = {}) => {
+  const { limit: _l, offset: _o, ...filters } = query;
+  const qs = catalogQueryString(filters);
+  return api<{ count: number }>(`/api/works/count${qs ? `?${qs}` : ''}`);
+};
 export const getWorkDetail = (id: string) => api<WorkDetail>(`/api/works/${id}`);
 
 // --- public reader ---------------------------------------------------------------
