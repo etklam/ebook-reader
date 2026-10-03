@@ -26,7 +26,7 @@ const json = (method: string, body: unknown, extra?: RequestInit): RequestInit =
 import type {
   BookmarkEntry, CatalogResponse, FollowEntry, LibraryEntry, Me, PublishPreviewResponse,
   PublishResponse, ReaderChapter, ReaderPreferencesDto, ReaderWork, ServerProgress,
-  TaxonomyListResponse, TocResponse, WorkDetail,
+  TaxonomyListResponse, TocResponse, WorkDetail, WorkMemberState,
 } from './types.ts';
 
 // --- session -------------------------------------------------------------------
@@ -39,7 +39,9 @@ export const register = (username: string, email: string, password: string, invi
 // --- catalog -------------------------------------------------------------------
 export interface CatalogQuery {
   q?: string; type?: string; categoryIds?: string[]; tagIds?: string[];
-  tagMode?: 'all' | 'any'; serialStatus?: string[]; sort?: string; limit?: number; offset?: number;
+  tagMode?: 'all' | 'any'; serialStatus?: string[]; sort?: string; limit?: number;
+  /** opaque keyset cursor from a previous response's nextCursor */
+  cursor?: string;
 }
 
 export function catalogQueryString(query: CatalogQuery): string {
@@ -52,7 +54,7 @@ export function catalogQueryString(query: CatalogQuery): string {
   if (query.serialStatus?.length) p.set('serialStatus', query.serialStatus.join(','));
   if (query.sort) p.set('sort', query.sort);
   if (query.limit !== undefined) p.set('limit', String(query.limit));
-  if (query.offset !== undefined) p.set('offset', String(query.offset));
+  if (query.cursor) p.set('cursor', query.cursor);
   return p.toString();
 }
 
@@ -61,7 +63,7 @@ export const getCatalog = (query: CatalogQuery) => api<CatalogResponse>(`/api/wo
 // predicate builder, so a count without the active filters would disagree with
 // the list it is meant to describe (§03A-F)
 export const getCatalogCount = (query: CatalogQuery = {}) => {
-  const { limit: _l, offset: _o, ...filters } = query;
+  const { limit: _l, cursor: _c, ...filters } = query;
   const qs = catalogQueryString(filters);
   return api<{ count: number }>(`/api/works/count${qs ? `?${qs}` : ''}`);
 };
@@ -74,7 +76,13 @@ export const getToc = (id: string, limit: number, offset: number) =>
 export const getChapter = (id: string) => api<ReaderChapter>(`/api/reader/chapters/${id}`);
 
 // --- member state ------------------------------------------------------------------
-export const getLibrary = () => api<{ works: LibraryEntry[] }>('/api/me/library');
+export const getLibrary = (cursor?: string) =>
+  api<{ limit: number; nextCursor: string | null; works: LibraryEntry[] }>(
+    `/api/me/library${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+// one-work state for the detail page — cheaper and correct now that the
+// library is paginated (fetching page 1 would miss a work further down)
+export const getWorkMemberState = (workId: string) =>
+  api<WorkMemberState>(`/api/me/works/${workId}/state`);
 export const addToLibrary = (workId: string) => api<{ ok: true }>(`/api/me/library/${workId}`, json('PUT', {}));
 export const removeFromLibrary = (workId: string) => api<{ ok: true }>(`/api/me/library/${workId}`, { method: 'DELETE' });
 export const getFollows = () => api<{ follows: FollowEntry[] }>('/api/me/follows');

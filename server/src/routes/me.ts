@@ -4,8 +4,9 @@
 // the session user id — never from the request body.
 import { Hono } from 'hono';
 import type { Context, MiddlewareHandler } from 'hono';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { decodeCursor, encodeCursor, filterFingerprint } from '../catalog/cursor.ts';
 import {
   bookmarks, chapters, chapterRevisions, readerPreferences,
   readingProgress, userChapterReads, userFollows, userLibrary as library,
@@ -37,7 +38,8 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
     await next();
   };
   for (const path of ['/api/me/library/:workId', '/api/me/follows/:workId',
-    '/api/me/follows/:workId/seen', '/api/me/progress/:workId']) {
+    '/api/me/follows/:workId/seen', '/api/me/progress/:workId',
+    '/api/me/works/:workId/state']) {
     app.use(path, validWorkId);
   }
 
@@ -69,9 +71,24 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
   };
 
   // --- library / favorites (§27): independent from follows/progress/reads ----
+  // Keyset-paginated like the public catalog: the shelf used to return every
+  // row, so a member with thousands of favourites got an unbounded response.
+  // Ordered by (updatedAt desc, workId asc); the cursor carries both.
   app.get('/api/me/library', async (c) => {
     const userId = userIdOf(c);
+    const limit = Math.min(50, Math.max(1, Number(c.req.query('limit') ?? 20) || 20));
+    const fingerprint = filterFingerprint([`library=${userId}`]);
+    const scope: SQL[] = [eq(library.userId, userId)];
+    const rawCursor = c.req.query('cursor');
+    if (rawCursor) {
+      const decoded = decodeCursor(rawCursor, fingerprint);
+      if (!decoded.ok) return c.json({ error: decoded.error }, 400);
+      scope.push(sql`(${library.updatedAt} < ${decoded.cursor.k}::timestamptz
+        or (${library.updatedAt} = ${decoded.cursor.k}::timestamptz
+            and ${library.workId} > ${decoded.cursor.id}::uuid))`);
+    }
     const rows = await db.select({
+      sortValue: sql<string>`to_char(${library.updatedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
       workId: library.workId,
       title: works.title,
       author: works.author,
@@ -96,10 +113,18 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
       .innerJoin(works, eq(works.id, library.workId))
       .leftJoin(readingProgress, and(eq(readingProgress.userId, userId), eq(readingProgress.workId, library.workId)))
       .leftJoin(userFollows, and(eq(userFollows.userId, userId), eq(userFollows.workId, library.workId)))
-      .where(eq(library.userId, userId))
-      .orderBy(desc(library.updatedAt));
+      .where(and(...scope))
+      .orderBy(desc(library.updatedAt), asc(library.workId))
+      .limit(limit + 1);
+    const page = rows.slice(0, limit);
+    const last = page[page.length - 1];
+    const nextCursor = rows.length > limit && last
+      ? encodeCursor({ v: 1, f: fingerprint, k: last.sortValue, id: last.workId })
+      : null;
     return c.json({
-      works: rows.map((r) => ({
+      limit,
+      nextCursor,
+      works: page.map((r) => ({
         workId: r.workId,
         title: r.title,
         author: r.author,
@@ -112,6 +137,39 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
         lastReadAt: r.progressUpdatedAt?.toISOString() ?? null,
         addedAt: r.addedAt.toISOString(),
       })),
+    });
+  });
+
+  // Per-work member state for the work-detail page. The page used to fetch the
+  // entire library and the entire follow list to answer a single-work question,
+  // which broke as soon as the shelf became paginated — and was an O(shelf)
+  // query for one row even before that.
+  app.get('/api/me/works/:workId/state', validWorkId, async (c) => {
+    const userId = userIdOf(c);
+    const workId = routeId(c);
+    const [row] = await db.select({
+      inLibrary: sql<boolean>`exists (select 1 from app.user_library l
+        where l.user_id = ${userId} and l.work_id = ${workId})`,
+      following: sql<boolean>`exists (select 1 from app.user_follows f
+        where f.user_id = ${userId} and f.work_id = ${workId})`,
+      lastSeenVersion: sql<number | null>`(select f.last_seen_release_version from app.user_follows f
+        where f.user_id = ${userId} and f.work_id = ${workId})`,
+      latestVersion: sql<number | null>`(select max(r.version)::int from app.work_releases r
+        where r.work_id = ${workId})`,
+      newChapterCount: sql<number>`coalesce((
+        select sum(jsonb_array_length(e.new_chapter_ids))::int
+        from app.publication_events e
+        where e.work_id = ${workId}
+          and e.release_version > coalesce((select f.last_seen_release_version from app.user_follows f
+                                            where f.user_id = ${userId} and f.work_id = ${workId}), 0)), 0)`,
+    }).from(sql`(select 1) as one`);
+    return c.json({
+      inLibrary: row.inLibrary,
+      following: row.following,
+      lastSeenVersion: row.lastSeenVersion,
+      latestVersion: row.latestVersion,
+      // only meaningful while following — matches the follow-list semantics
+      newChapterCount: row.following ? row.newChapterCount : 0,
     });
   });
 

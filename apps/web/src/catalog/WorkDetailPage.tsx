@@ -4,7 +4,7 @@
 // update state. Opening the detail marks followed updates seen (§38 policy).
 import { useCallback, useEffect, useState } from 'react';
 import {
-  addToLibrary, follow, getFollows, getLibrary, getToc, getWorkDetail,
+  addToLibrary, follow, getToc, getWorkDetail, getWorkMemberState,
   getProgress, markFollowSeen, removeFromLibrary, unfollow,
 } from '../api/client.ts';
 import type { ServerProgress, TocEntry, WorkDetail } from '../api/types.ts';
@@ -55,14 +55,15 @@ export function WorkDetailPage({ workId }: { workId: string }) {
     void getProgress(workId).then((r) => setProgress(r.progress)).catch(() => undefined);
   }, [me, workId]);
 
+  // one request for this work's state: the library is keyset-paginated, so
+  // scanning page 1 would report "not saved" for anything further down
   const refreshState = useCallback(() => {
     if (!me) return;
-    void Promise.all([getLibrary(), getFollows()])
-      .then(([lib, fol]) => {
-        setInLibrary(lib.works.some((w) => w.workId === workId));
-        const f = fol.follows.find((x) => x.workId === workId);
-        setFollowing(Boolean(f));
-        setUpdateBadge(f?.newChapterCount ?? 0);
+    void getWorkMemberState(workId)
+      .then((s) => {
+        setInLibrary(s.inLibrary);
+        setFollowing(s.following);
+        setUpdateBadge(s.newChapterCount);
       }).catch(() => undefined);
   }, [me, workId]);
   useEffect(() => { refreshState(); }, [refreshState]);

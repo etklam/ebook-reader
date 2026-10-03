@@ -8,6 +8,7 @@ import { Hono } from 'hono';
 import { and, asc, desc, eq, inArray, isNotNull, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { categories, releaseItems, tags, workCategories, workReleases, works, workTags } from '../db/schema.ts';
+import { decodeCursor, encodeCursor, filterFingerprint } from '../catalog/cursor.ts';
 
 export interface CatalogDeps {
   db: NodePgDatabase;
@@ -47,15 +48,15 @@ export interface CatalogFilterError {
 export interface CatalogFilter {
   conds: SQL[];
   limit: number;
-  offset: number;
   sort: SortKey;
+  /** identity of this normalized condition set; a cursor is bound to it */
+  fingerprint: string;
 }
 
 export async function buildCatalogFilter(
   query: (key: string) => string | undefined,
 ): Promise<CatalogFilter | CatalogFilterError> {
   const limit = Math.min(50, Math.max(1, Number(query('limit') ?? 20) || 20));
-  const offset = Math.max(0, Number(query('offset') ?? 0) || 0);
   const q = (query('q') ?? '').trim().slice(0, 100);
   const typeRaw = query('type') || null;
   if (typeRaw && !['short_story', 'serial'].includes(typeRaw)) {
@@ -74,6 +75,20 @@ export async function buildCatalogFilter(
   const tagMode = query('tagMode') === 'any' ? 'any' : 'all';
   const sortParam = query('sort') ?? 'updated';
   if (!(sortParam in SORTS)) return { error: 'invalid_filter', field: 'sort' };
+
+  // Normalized identity of this condition set. Ids are sorted and de-duplicated
+  // so that semantically identical requests ("a,b" vs "b,a") share one cursor
+  // space; tagMode only participates when tags are actually selected, matching
+  // the predicate below (§03A-B: an unselected dimension does not constrain).
+  const fingerprint = filterFingerprint([
+    `type=${type ?? ''}`,
+    `cat=${[...new Set(categoryIds)].sort().join('.')}`,
+    `tag=${[...new Set(tagIds)].sort().join('.')}`,
+    `mode=${tagIds.length > 0 ? tagMode : ''}`,
+    `status=${[...new Set(serialStatus)].sort().join('.')}`,
+    `q=${q}`,
+    `sort=${sortParam}`,
+  ]);
 
   // base predicate: discoverable = public + published
   const conds: SQL[] = [
@@ -117,7 +132,29 @@ export async function buildCatalogFilter(
                  where wt.work_id = ${works.id} and ${or(...likeVariants.map((v) => sql`tg.display_name ilike ${v}`))})
     )`);
   }
-  return { conds, limit, offset, sort: sortParam as SortKey };
+  return { conds, limit, sort: sortParam as SortKey, fingerprint };
+}
+
+// Exact text form of each sort key, used both to emit a cursor and to compare
+// against one. published_at is rendered at microsecond precision on purpose: a
+// JS Date only carries milliseconds, and truncating it would make two releases
+// published in the same millisecond order inconsistently between the ORDER BY
+// and the keyset predicate — the one way a keyset cursor can still skip a row.
+const SORT_VALUE_SQL = {
+  updated: sql<string>`to_char(${workReleases.publishedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+  title: sql<string>`${works.title}`,
+} as const;
+
+// Keyset predicate for "strictly after this row in the sort order". The
+// directions are mixed (published_at DESC, id ASC), so a row-value comparison
+// does not apply and the two cases are spelled out.
+function afterCursor(sort: SortKey, key: string, id: string): SQL {
+  if (sort === 'updated') {
+    return sql`(${workReleases.publishedAt} < ${key}::timestamptz
+      or (${workReleases.publishedAt} = ${key}::timestamptz and ${works.id} > ${id}::uuid))`;
+  }
+  return sql`(${works.title} > ${key}
+    or (${works.title} = ${key} and ${works.id} > ${id}::uuid))`;
 }
 
 export function worksRoutes(deps: CatalogDeps): Hono<Record<string, never>> {
@@ -127,10 +164,20 @@ export function worksRoutes(deps: CatalogDeps): Hono<Record<string, never>> {
   app.get('/api/works', async (c) => {
     const filter = await buildCatalogFilter((k) => c.req.query(k));
     if ('error' in filter) return c.json(filter, 400);
-    const { conds, limit, offset } = filter;
+    const { conds, limit } = filter;
 
+    const rawCursor = c.req.query('cursor');
+    if (rawCursor) {
+      const decoded = decodeCursor(rawCursor, filter.fingerprint);
+      if (!decoded.ok) return c.json({ error: decoded.error }, 400);
+      conds.push(afterCursor(filter.sort, decoded.cursor.k, decoded.cursor.id));
+    }
+
+    // fetch one extra row to learn whether a further page exists without
+    // running a second query
     const rows = await db.select({
       id: works.id,
+      sortValue: SORT_VALUE_SQL[filter.sort],
       title: works.title,
       author: works.author,
       description: works.description,
@@ -150,13 +197,22 @@ export function worksRoutes(deps: CatalogDeps): Hono<Record<string, never>> {
       .innerJoin(workReleases, eq(workReleases.id, works.activeReleaseId))
       .where(and(...conds))
       .orderBy(SORTS[filter.sort], asc(works.id))
-      .limit(limit).offset(offset);
+      .limit(limit + 1);
+
+    const page = rows.slice(0, limit);
+    const last = page[page.length - 1];
+    const nextCursor = rows.length > limit && last
+      ? encodeCursor({ v: 1, f: filter.fingerprint, k: last.sortValue, id: last.id })
+      : null;
 
     return c.json({
       total: null, // count endpoint exists separately; lists stay cheap
       limit,
-      offset,
-      works: rows.map((w) => ({ ...w, latestPublishedAt: w.latestPublishedAt.toISOString() })),
+      nextCursor,
+      works: page.map(({ sortValue: _sortValue, ...w }) => ({
+        ...w,
+        latestPublishedAt: w.latestPublishedAt.toISOString(),
+      })),
     });
   });
 

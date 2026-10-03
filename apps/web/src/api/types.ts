@@ -27,7 +27,9 @@ export interface CatalogWork {
 export interface CatalogResponse {
   total: null;
   limit: number;
-  offset: number;
+  /** keyset cursor for the next page; null when the list is exhausted. Opaque
+   *  and bound to the filter set it came from — never hand it to another. */
+  nextCursor: string | null;
   works: CatalogWork[];
 }
 
@@ -89,6 +91,14 @@ export interface ReaderChapter {
 }
 
 // --- member state --------------------------------------------------------------
+export interface WorkMemberState {
+  inLibrary: boolean;
+  following: boolean;
+  lastSeenVersion: number | null;
+  latestVersion: number | null;
+  newChapterCount: number;
+}
+
 export interface LibraryEntry {
   workId: string;
   title: string;

@@ -13,11 +13,29 @@ export function LibraryPage() {
   const { me, loading } = useMe();
   const [entries, setEntries] = useState<LibraryEntry[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
+  // the shelf is keyset-paginated; refresh always restarts from the top so a
+  // favourite/follow change cannot leave a stale cursor pointing mid-list
   const refresh = useCallback(() => {
-    getLibrary().then((r) => setEntries(r.works)).catch(() => setEntries([]));
+    getLibrary()
+      .then((r) => { setEntries(r.works); setNextCursor(r.nextCursor); })
+      .catch(() => { setEntries([]); setNextCursor(null); });
   }, []);
   useEffect(() => { if (me) refresh(); }, [me, refresh]);
+
+  const loadMore = () => {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    void getLibrary(nextCursor)
+      .then((r) => {
+        setEntries((prev) => [...(prev ?? []), ...r.works]);
+        setNextCursor(r.nextCursor);
+      })
+      .catch(() => undefined)
+      .finally(() => setLoadingMore(false));
+  };
 
   const act = (workId: string, p: Promise<unknown>) => {
     setBusyId(workId);
@@ -52,9 +70,11 @@ export function LibraryPage() {
       <header className="page-head">
         <div className="head-line">
           <h1>我的書庫</h1>
+          {/* paginated: say "loaded", never imply a total we did not fetch */}
           {entries && (
             <span className="head-note">
-              {entries.length} 部{updated > 0 ? ` · ${updated} 部有更新` : ''}
+              {nextCursor ? `已載入 ${entries.length} 部` : `${entries.length} 部`}
+              {updated > 0 ? ` · ${updated} 部有更新` : ''}
             </span>
           )}
         </div>
@@ -116,6 +136,12 @@ export function LibraryPage() {
           </div>
         ))}
       </div>
+
+      {nextCursor && (
+        <button className="btn btn-block" disabled={loadingMore} onClick={loadMore}>
+          {loadingMore ? '載入中…' : '載入更多'}
+        </button>
+      )}
     </div>
   );
 }

@@ -176,7 +176,7 @@ after(async () => {
   rmSync(process.env.STORAGE_ROOT!, { recursive: true, force: true });
 });
 
-async function catalog(query: string, cookie = ''): Promise<{ works: Array<{ id: string; title: string; categories: string[]; tags: string[]; chapterCount: number }>; limit: number; offset: number }> {
+async function catalog(query: string, cookie = ''): Promise<{ works: Array<{ id: string; title: string; categories: string[]; tags: string[]; chapterCount: number }>; limit: number; nextCursor: string | null }> {
   const res = await app.request(`/api/works${query}`, { headers: cookie ? { cookie } : {} });
   assert.equal(res.status, 200, `catalog ${query}`);
   return res.json();
@@ -293,10 +293,12 @@ test('CAT: 0-result is truthful; invalid filters rejected; pagination preserves 
   const bad = await app.request('/api/works?type=nonsense');
   assert.equal(bad.status, 400);
 
-  const page1 = await catalog(`?tagIds=${tagR},${tagS}&tagMode=all&limit=1&offset=0`);
+  // keyset pagination (Phase 3.1): the filtered set has exactly one match, so
+  // page 1 must hold it and offer no cursor — pagination applies to the
+  // filtered set, never to the raw table
+  const page1 = await catalog(`?tagIds=${tagR},${tagS}&tagMode=all&limit=1`);
   assert.equal(page1.works.length, 1);
-  const page2 = await catalog(`?tagIds=${tagR},${tagS}&tagMode=all&limit=1&offset=1`);
-  assert.equal(page2.works.length, 0, 'pagination applies to the filtered set, not the raw table');
+  assert.equal(page1.nextCursor, null, 'a single-result filter must not advertise another page');
 
   const count = await (await app.request('/api/works/count')).json() as { count: number };
   assert.ok(count.count >= 3);

@@ -70,6 +70,7 @@ export function CatalogPage() {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [done, setDone] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [categories, setCategories] = useState<TaxonomyItem[]>([]);
   const [tags, setTags] = useState<TaxonomyItem[]>([]);
@@ -105,18 +106,23 @@ export function CatalogPage() {
     history.replaceState(null, '', location.pathname + search);
   }, []);
 
-  const load = useCallback((f: CatalogFilterState, offset: number, append: boolean) => {
+  // Keyset pagination: "load more" continues from the server's opaque cursor,
+  // not from works.length. With an offset a publication landing between two
+  // pages shifted the window and silently skipped a book (CAT-03).
+  const load = useCallback((f: CatalogFilterState, cursor: string | null, append: boolean) => {
     const seq = ++seqRef.current;
     setLoading(true);
     if (!append) setFailed(false);
     getCatalog({
       q: f.q || undefined, type: f.type || undefined,
       categoryIds: f.categoryIds, tagIds: f.tagIds, tagMode: f.tagMode,
-      serialStatus: f.serialStatus, sort: f.sort, limit: PAGE, offset,
+      serialStatus: f.serialStatus, sort: f.sort, limit: PAGE,
+      cursor: cursor ?? undefined,
     }).then((r) => {
       if (seq !== seqRef.current) return;   // a newer condition already won
       setWorks((prev) => (append ? [...prev, ...r.works] : r.works));
-      setDone(r.works.length < PAGE);
+      setNextCursor(r.nextCursor);
+      setDone(r.nextCursor === null);
     }).catch(() => {
       if (seq !== seqRef.current) return;
       if (!append) setWorks([]);
@@ -126,7 +132,8 @@ export function CatalogPage() {
     });
   }, []);
 
-  useEffect(() => { load(filter, 0, false); }, [filter, load]);
+  // a changed condition set always restarts from no cursor (§03A-C)
+  useEffect(() => { setNextCursor(null); load(filter, null, false); }, [filter, load]);
 
   const openDetail = (id: string) => navigate(`/works/${id}${location.search}`);
 
@@ -228,7 +235,7 @@ export function CatalogPage() {
         <EmptyState
           title="書庫暫時載不出來"
           body="可能是連線中斷。重試一次通常就好；若持續失敗，稍後再回來看看。"
-          action={<button className="btn" onClick={() => load(filter, 0, false)}>重試</button>}
+          action={<button className="btn" onClick={() => load(filter, null, false)}>重試</button>}
         />
       )}
 
@@ -258,7 +265,7 @@ export function CatalogPage() {
       {loading && works.length > 0 && <SkeletonRows count={2} label="載入更多" />}
 
       {!done && !loading && works.length > 0 && (
-        <button className="btn btn-block" onClick={() => load(filter, works.length, true)}>載入更多</button>
+        <button className="btn btn-block" onClick={() => load(filter, nextCursor, true)}>載入更多</button>
       )}
 
       <BottomSheet open={sheetOpen} title="篩選" onClose={() => setSheetOpen(false)}>
