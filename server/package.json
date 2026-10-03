@@ -16,7 +16,10 @@
     "seed:l3": "node --env-file-if-exists=.env scripts/seed-l3.mjs",
     "maintenance": "node --env-file-if-exists=.env scripts/maintenance.mjs",
     "perf:seed": "node --env-file-if-exists=.env scripts/perf-seed.mjs",
-    "perf:measure": "node --env-file-if-exists=.env scripts/perf-measure.mjs"
+    "perf:measure": "node --env-file-if-exists=.env scripts/perf-measure.mjs",
+    "backup": "node --env-file-if-exists=.env scripts/backup.mjs",
+    "restore:verify": "node --env-file-if-exists=.env scripts/restore-verify.mjs",
+    "ops:check": "node --env-file-if-exists=.env scripts/ops-check.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.0",

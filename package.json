@@ -18,7 +18,10 @@
     "test": "pnpm -r test",
     "maintenance": "pnpm --filter server maintenance",
     "perf:seed": "pnpm --filter server perf:seed",
-    "perf:measure": "pnpm --filter server perf:measure"
+    "perf:measure": "pnpm --filter server perf:measure",
+    "backup": "pnpm --filter server backup",
+    "restore:verify": "pnpm --filter server restore:verify",
+    "ops:check": "pnpm --filter server ops:check"
   },
   "devDependencies": {
     "eslint": "^10.11.0",

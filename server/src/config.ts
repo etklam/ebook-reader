@@ -35,6 +35,10 @@ export interface ApiConfig {
   /** send HSTS. Off by default: on plain-HTTP dev it would pin localhost to
    *  https in the browser for a year. */
   hsts: boolean;
+  /** record the caller's address in request logs. Off by default: it is
+   *  personal data and a reading site does not need a location trail to run.
+   *  Turn on for incident response. */
+  logClientIp: boolean;
 }
 
 export interface WorkerConfig {
@@ -121,6 +125,7 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
       maxPerAccount: int(env, 'AUTH_RATE_LIMIT_MAX_PER_ACCOUNT', 10, 1, 10_000),
     },
     hsts: bool(env, 'HSTS', false),
+    logClientIp: bool(env, 'LOG_CLIENT_IP', false),
   };
 }
 

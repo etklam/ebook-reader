@@ -10,11 +10,7 @@
 // Bodies never include the message of an unexpected error: a Postgres error
 // string can disclose schema, constraint and column names.
 import type { Hono } from 'hono';
-
-/** request-correlation id so a 500 body can be tied to one log line */
-function errorRef(): string {
-  return Math.random().toString(36).slice(2, 10);
-}
+import { getRequestRef, newRequestRef } from './logging.ts';
 
 interface PgLike {
   code?: string;
@@ -52,12 +48,28 @@ export function installErrorHandlers(app: Hono<{ Variables: { userId: string; ro
     // Malformed input that slipped past a route's own validation is a 400, not
     // a 500 — and it is not worth an error-level log line.
     if (code && CLIENT_INPUT_CODES.has(code)) {
-      console.warn(`[warn] ${c.req.method} ${c.req.path} invalid_request pg:${code}`);
+      console.warn(JSON.stringify({
+        t: new Date().toISOString(),
+        lvl: 'warn',
+        ref: getRequestRef(c),
+        method: c.req.method,
+        path: c.req.path,
+        err: `invalid_request pg:${code}`,
+      }));
       return c.json({ error: 'invalid_request' }, 400);
     }
 
-    const ref = errorRef();
-    console.error(`[error] ref=${ref} ${c.req.method} ${c.req.path} ${scrubError(err)}`);
+    // reuse the request's own ref so the 500 body, the request log line and
+    // this error line all carry the same id
+    const ref = getRequestRef(c) ?? newRequestRef();
+    console.error(JSON.stringify({
+      t: new Date().toISOString(),
+      lvl: 'error',
+      ref,
+      method: c.req.method,
+      path: c.req.path,
+      err: scrubError(err),
+    }));
     return c.json({ error: 'internal_error', ref }, 500);
   });
 }

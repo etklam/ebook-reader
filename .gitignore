@@ -17,3 +17,4 @@ tmp/
 # Playwright run artifacts (regenerated every run; CI uploads them on failure)
 test-results/
 playwright-report/
+backups/

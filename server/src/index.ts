@@ -2,7 +2,6 @@
 // session middleware → route modules (§18 modular boundaries).
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
-import { logger } from 'hono/logger';
 import { bodyLimit } from 'hono/body-limit';
 import { eq, and, isNull, gt } from 'drizzle-orm';
 import { pathToFileURL } from 'node:url';
@@ -13,6 +12,7 @@ import { tokenId } from './auth/session.ts';
 import { localStorage } from './storage.ts';
 import { installErrorHandlers } from './http/errors.ts';
 import { securityHeaders } from './http/security.ts';
+import { requestLogger } from './http/logging.ts';
 import { healthRoutes } from './routes/health.ts';
 import { authRoutes } from './routes/auth.ts';
 import { accountRoutes } from './routes/account.ts';
@@ -21,6 +21,7 @@ import { adminImportRoutes } from './routes/admin-imports.ts';
 import { adminWorkRoutes } from './routes/admin-works.ts';
 import { readerRoutes } from './routes/reader.ts';
 import { worksRoutes } from './routes/works.ts';
+import { opsRoutes } from './routes/ops.ts';
 import { meRoutes } from './routes/me.ts';
 
 export const apiConfig = loadApiConfig();
@@ -33,10 +34,22 @@ const pool = makePool({
   tlsMode: config.tlsMode,
   dbCaFile: config.dbCaFile,
 });
+// A Pool with no 'error' listener crashes the process when an IDLE pooled
+// client errors — e.g. the database restarts, a network blip resets the
+// connection, or an operator terminates a backend. pg emits that on the Pool,
+// and an unhandled 'error' event is fatal in Node. The pool discards the bad
+// client by itself; all we must do is not die.
+pool.on('error', (err) => {
+  console.error(`[error] idle pool client: ${err.name}: ${err.message}`);
+});
+
 const db = makeDb(pool);
 
+/** exported so operational scripts (restore drill) can shut the pool down */
+export const apiPool = pool;
+
 export const app = new Hono<{ Variables: { userId: string; role: string } }>();
-app.use(logger());
+app.use(requestLogger({ logClientIp: config.logClientIp, trustProxy: config.trustProxy }));
 installErrorHandlers(app);
 app.use('*', securityHeaders({ hsts: config.hsts }));
 
@@ -135,6 +148,7 @@ app.route('/', adminImportRoutes({ db, storage: localStorage(config.storageRoot)
 app.route('/', adminWorkRoutes({ db, storage: localStorage(config.storageRoot) }));
 app.route('/', readerRoutes({ db, storage: localStorage(config.storageRoot) }));
 app.route('/', worksRoutes({ db }));
+app.route('/', opsRoutes({ db }));
 
 // bind only when run as the entrypoint — test files import `app` without
 // grabbing a port (and colliding with a running dev server)
