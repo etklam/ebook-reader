@@ -185,6 +185,50 @@ export const applyIdempotency = app.table('apply_idempotency', {
   index('apply_idempotency_job_idx').on(t.importJobId),
 ]);
 
+// --- content resources (ADR-08 / IMP-17, §08) ----------------------------------
+// Images and other referenced assets, content-addressed: the same image in two
+// chapters (or two imports) is stored once. Rows are immutable like
+// chapter_revisions — nothing rewrites a resource in place, so a revision's
+// resource set is frozen the moment the revision is created.
+export const resources = app.table('resources', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // sha256 of the bytes; this is what a canonical body references
+  contentHash: text('content_hash').notNull().unique(),
+  storageKey: text('storage_key').notNull().unique(),
+  mediaType: text('media_type').notNull(),
+  sizeBytes: integer('size_bytes').notNull(),
+  createdAt: createdAt(),
+});
+
+// Which resources a given immutable revision references. Keyed by the body
+// marker's hash so the reader can resolve marker → URL without parsing hrefs.
+// This association is what makes resource-aware revision comparison possible
+// (IMP-17): the same prose with a different image is a different revision.
+export const chapterRevisionResources = app.table('chapter_revision_resources', {
+  revisionId: uuid('revision_id').notNull().references(() => chapterRevisions.id),
+  resourceId: uuid('resource_id').notNull().references(() => resources.id),
+  contentHash: text('content_hash').notNull(),
+  /** original href inside the source document, for traceability (§08) */
+  sourceHref: text('source_href').notNull().default(''),
+  /** alt text as authored, already sanitized to plain text */
+  alt: text('alt').notNull().default(''),
+}, (t) => [
+  primaryKey({ columns: [t.revisionId, t.contentHash] }),
+  index('chapter_revision_resources_resource_idx').on(t.resourceId),
+]);
+
+// Staged resource association for an import item, promoted to
+// chapter_revision_resources when the import is committed or applied.
+export const importItemResources = app.table('import_item_resources', {
+  importItemId: uuid('import_item_id').notNull().references(() => importItems.id),
+  resourceId: uuid('resource_id').notNull().references(() => resources.id),
+  contentHash: text('content_hash').notNull(),
+  sourceHref: text('source_href').notNull().default(''),
+  alt: text('alt').notNull().default(''),
+}, (t) => [
+  primaryKey({ columns: [t.importItemId, t.contentHash] }),
+]);
+
 // --- source files (§17) --------------------------------------------------------
 export const sourceFiles = app.table('source_files', {
   id: uuid('id').primaryKey().defaultRandom(),

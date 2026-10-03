@@ -11,7 +11,8 @@ import type { Context } from 'hono';
 import { asc, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import {
-  chapters, chapterRevisions, releaseItems, works, workReleases,
+  chapters, chapterRevisions, chapterRevisionResources, releaseItems, resources,
+  works, workReleases,
 } from '../db/schema.ts';
 import type { Storage } from '../storage.ts';
 
@@ -259,6 +260,19 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
       return c.json({ error: 'content_unavailable' }, 409);
     }
 
+    // resource manifest for this revision (ADR-08): the body carries
+    // [[img:<hash>]] markers and the reader resolves each to a URL from here.
+    // Scoped to the revision, so a stale body can never pull in a newer
+    // revision's images.
+    const resourceRows = await db.select({
+      contentHash: chapterRevisionResources.contentHash,
+      alt: chapterRevisionResources.alt,
+      mediaType: resources.mediaType,
+      sizeBytes: resources.sizeBytes,
+    }).from(chapterRevisionResources)
+      .innerJoin(resources, eq(resources.id, chapterRevisionResources.resourceId))
+      .where(eq(chapterRevisionResources.revisionId, revisionId));
+
     return c.json({
       chapterId: row.chapterId,
       workId: row.workId,
@@ -270,7 +284,64 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
       nextChapterId,
       paragraphCount: splitParagraphs(body).length,
       updatedAt: revision.createdAt.toISOString(),
+      resources: resourceRows.map((r) => ({
+        contentHash: r.contentHash,
+        url: `/api/reader/resources/${r.contentHash}`,
+        mediaType: r.mediaType,
+        sizeBytes: r.sizeBytes,
+        alt: r.alt,
+      })),
     });
+  });
+
+  // Resource bytes. Content-addressed, so the URL is immutable and cacheable;
+  // authorization is by reachability, not by knowing the hash:
+  //
+  //   public  — the resource is referenced by a revision inside the ACTIVE
+  //             release of a public/unlisted work (i.e. content anyone may
+  //             already read as prose)
+  //   admin   — anything else, including draft-only resources
+  //
+  // Checking reachability rather than trusting the hash means an unpublished
+  // image cannot be fetched by someone who guessed or scraped its hash from a
+  // draft preview.
+  app.get('/api/reader/resources/:hash', async (c) => {
+    const hash = c.req.param('hash');
+    if (!/^[0-9a-f]{64}$/.test(hash)) return c.json({ error: 'resource_not_found' }, 404);
+
+    const [res] = await db.select({
+      storageKey: resources.storageKey,
+      mediaType: resources.mediaType,
+      publiclyReachable: sql<boolean>`exists (
+        select 1
+        from app.chapter_revision_resources rr
+        join app.release_items ri on ri.revision_id = rr.revision_id
+        join app.works w on w.active_release_id = ri.release_id
+        where rr.content_hash = ${hash}
+          and w.visibility in ('public','unlisted'))`,
+    }).from(resources).where(eq(resources.contentHash, hash)).limit(1);
+    if (!res) return c.json({ error: 'resource_not_found' }, 404);
+    if (!res.publiclyReachable && c.get('role') !== 'admin') {
+      return c.json({ error: 'forbidden' }, 403);
+    }
+
+    let bytes: Buffer;
+    try {
+      bytes = await storage.get(res.storageKey);
+    } catch {
+      return c.json({ error: 'content_unavailable' }, 409);
+    }
+    // Immutable by construction (the URL *is* the content hash), so it can be
+    // cached hard. This overrides the global no-store: a resource carries no
+    // member state, and re-fetching every image on every chapter turn would be
+    // the single worst thing for mobile reading.
+    c.header('Cache-Control', 'public, max-age=31536000, immutable');
+    c.header('Content-Type', res.mediaType);
+    c.header('Content-Length', String(bytes.length));
+    // never let a browser treat an image response as a document
+    c.header('Content-Disposition', 'inline');
+    c.header('X-Content-Type-Options', 'nosniff');
+    return c.body(new Uint8Array(bytes));
   });
 
   return app;

@@ -445,3 +445,32 @@
   color: var(--brand);
 }
 .toc-more { width: 100%; margin-top: var(--sp-4); }
+
+/* ADR-08 image blocks: an image occupies a whole canonical paragraph, so it
+   participates in paragraph anchoring like any other block. Width is capped to
+   the text measure and height to the viewport so a tall illustration cannot
+   push the next paragraph entirely off screen on a phone. */
+.reader-figure {
+  margin-block: var(--sp-4);
+  text-align: center;
+}
+.reader-figure img {
+  max-width: 100%;
+  max-height: 80svh;
+  height: auto;
+  /* reserve nothing we cannot know: no layout shift guard is possible without
+     intrinsic dimensions, which the canonical model does not store */
+  display: inline-block;
+  border-radius: 2px;
+}
+.reader-figure-caption {
+  display: block;
+  margin-block-start: var(--sp-2);
+  font-size: 0.85em;
+  color: var(--ink-3);
+  text-align: center;
+}
+.reader-figure-missing {
+  padding-block: var(--sp-4);
+  border: 1px dashed var(--rule);
+}

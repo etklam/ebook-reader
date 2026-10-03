@@ -464,7 +464,8 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         onClick={onTap}
         data-testid="reader-viewport"
       >
-        <ReaderContent paragraphs={paragraphs} stripRef={stripRef} stripStyle={stripStyle} />
+        <ReaderContent paragraphs={paragraphs} resources={chapter?.resources}
+          stripRef={stripRef} stripStyle={stripStyle} />
       </div>
 
       {paginated && <p className="reader-pageinfo" aria-live="polite">{page + 1} / {pageCount}</p>}

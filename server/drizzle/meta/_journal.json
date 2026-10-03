@@ -50,6 +50,13 @@
       "when": 1791021316734,
       "tag": "0006_m7_account",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791022334332,
+      "tag": "0007_m7_resources",
+      "breakpoints": true
     }
   ]
 }

@@ -11,6 +11,10 @@ import { asc, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { chapters, chapterRevisions, importItems, importJobs, works, applyIdempotency } from '../db/schema.ts';
 import { matchChapters, type MatchResult } from './match.ts';
+import {
+  attachRevisionResources, headResourceDigests, resourceDigest, revisionHash,
+  stagedLinksByItem, type StagedResourceLink,
+} from './resources.ts';
 import { assertTransition } from './states.ts';
 
 /** persisted on the job row: the replay response AND the revert snapshot */
@@ -141,11 +145,22 @@ export async function applyIncremental(
       .where(eq(importItems.importJobId, jobId))
       .orderBy(asc(importItems.position));
 
+    // resource sets on both sides, so a prose-identical chapter with a changed
+    // image is classified `modified` rather than `unchanged` (IMP-17)
+    const stagedLinks = await stagedLinksByItem(tx, jobId);
+    const existingDigests = await headResourceDigests(tx, job.workId);
+
     const result = matchChapters(
-      existing.map((e) => ({ ...e, bodyCompareHash: e.bodyCompareHash ?? null, title: '' })),
+      existing.map((e) => ({
+        ...e,
+        bodyCompareHash: e.bodyCompareHash ?? null,
+        title: '',
+        resourceDigest: existingDigests.get(e.id) ?? '',
+      })),
       items.map((i) => ({
         itemId: i.id, position: i.position, labelRaw: i.labelRaw,
         volumeLabel: i.volumeLabel, bodyHash: i.bodyHash, title: i.title,
+        resourceDigest: resourceDigest(stagedLinks.get(i.id) ?? []),
       })),
     );
 
@@ -158,7 +173,9 @@ export async function applyIncremental(
 
     let unchanged = 0, modifiedKept = 0;
     // overwrite mode: matched items with a different body become new revisions
-    const updates: { chapterId: string; previousHeadRevisionId: string | null; labelRaw: string; title: string; contentKey: string; bodyHash: string }[] = [];
+    const updates: { itemId: string; chapterId: string; previousHeadRevisionId: string | null; labelRaw: string; title: string; contentKey: string; bodyHash: string }[] = [];
+    // revision → staged resource links, filled as revisions are created
+    const resourceAttachments: Array<{ revisionId: string; links: StagedResourceLink[] }> = [];
     const mode = req.mode ?? 'incremental';
     const adminMatch = new Map<string, string>(); // itemId → chapterId
     for (const [itemId, decision] of Object.entries(req.resolutions ?? {})) {
@@ -181,6 +198,7 @@ export async function applyIncremental(
         if (mode === 'overwrite') {
           const ex = existingById.get(m.matchedChapterId!)!;
           updates.push({
+            itemId: m.itemId,
             chapterId: ex.id,
             previousHeadRevisionId: ex.headRevisionId,
             labelRaw: item.labelRaw, title: item.title,
@@ -218,6 +236,7 @@ export async function applyIncremental(
         if (ex.bodyCompareHash === item.bodyHash) unchanged++;
         else if (mode === 'overwrite') {
           updates.push({
+            itemId: m.itemId,
             chapterId: ex.id,
             previousHeadRevisionId: ex.headRevisionId,
             labelRaw: item.labelRaw, title: item.title,
@@ -280,17 +299,24 @@ export async function applyIncremental(
         labelRaw: ins.labelRaw,
         editorialPosition: 0, // rewritten by the set-based renumber below
       })));
-      await tx.insert(chapterRevisions).values(batch.map((ins) => ({
+      const insertedRevs = await tx.insert(chapterRevisions).values(batch.map((ins) => ({
         chapterId: insertId.get(ins)!,
         title: ins.title,
         contentKey: ins.contentKey,
         bodyCompareHash: ins.bodyHash,
-        revisionHash: createHash('sha256')
-          .update(`${ins.title}\n${ins.bodyHash}\n${job.processorVersion}`)
-          .digest('hex'),
+        revisionHash: revisionHash({
+          title: ins.title,
+          bodyCompareHash: ins.bodyHash,
+          processorVersion: job.processorVersion,
+          resourceLinks: stagedLinks.get(ins.itemId) ?? [],
+        }),
         processorVersion: job.processorVersion,
         sourceImportId: jobId,
-      })));
+      }))).returning({ id: chapterRevisions.id, chapterId: chapterRevisions.chapterId });
+      for (const [j, rev] of insertedRevs.entries()) {
+        const links = stagedLinks.get(batch[j].itemId) ?? [];
+        if (links.length > 0) resourceAttachments.push({ revisionId: rev.id, links });
+      }
     }
 
     // overwrite: new immutable revisions for matched-but-changed chapters.
@@ -308,13 +334,23 @@ export async function applyIncremental(
         title: up.title,
         contentKey: up.contentKey,
         bodyCompareHash: up.bodyHash,
-        revisionHash: createHash('sha256')
-          .update(`${up.title}\n${up.bodyHash}\n${job.processorVersion}`)
-          .digest('hex'),
+        revisionHash: revisionHash({
+          title: up.title,
+          bodyCompareHash: up.bodyHash,
+          processorVersion: job.processorVersion,
+          resourceLinks: stagedLinks.get(up.itemId) ?? [],
+        }),
         processorVersion: job.processorVersion,
         sourceImportId: jobId,
       })));
+      for (const [j, up] of batch.entries()) {
+        const links = stagedLinks.get(up.itemId) ?? [];
+        if (links.length > 0) {
+          resourceAttachments.push({ revisionId: revisionChanges[i + j].newRevisionId, links });
+        }
+      }
     }
+    await attachRevisionResources(tx, resourceAttachments);
     if (revisionChanges.length > 0) {
       await tx.execute(sql`
         update app.chapters c set head_revision_id = v.rev
@@ -411,11 +447,22 @@ export async function diffImport(
     .where(eq(importItems.importJobId, jobId))
     .orderBy(asc(importItems.position));
 
+  // the preview must classify exactly as apply does, resources included —
+  // otherwise an Admin approves a diff that apply then disagrees with
+  const stagedLinks = await stagedLinksByItem(db, jobId);
+  const existingDigests = await headResourceDigests(db, job.workId);
+
   const match = matchChapters(
-    existing.map((e) => ({ ...e, bodyCompareHash: e.bodyCompareHash ?? null, title: '' })),
+    existing.map((e) => ({
+      ...e,
+      bodyCompareHash: e.bodyCompareHash ?? null,
+      title: '',
+      resourceDigest: existingDigests.get(e.id) ?? '',
+    })),
     items.map((i) => ({
       itemId: i.id, position: i.position, labelRaw: i.labelRaw,
       volumeLabel: i.volumeLabel, bodyHash: i.bodyHash, title: i.title,
+      resourceDigest: resourceDigest(stagedLinks.get(i.id) ?? []),
     })),
   );
   return { ok: true, match, workId: job.workId, editVersion: work.editVersion };

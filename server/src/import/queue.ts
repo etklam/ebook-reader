@@ -7,12 +7,12 @@
 import { createHash } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { importJobs, importItems, sourceFiles } from '../db/schema.ts';
+import { importItemResources, importJobs, importItems, resources, sourceFiles } from '../db/schema.ts';
 import type { Storage } from '../storage.ts';
 import { deleteBestEffort, mapBounded } from '../storage.ts';
 import { decodeTxt, EncodingError } from './encoding.ts';
 import { parseTxt, type StagedChapter } from './txt-parser.ts';
-import { parseEpub, EpubParseError } from './epub-parser.ts';
+import { parseEpub, EpubParseError, type ExtractedResource } from './epub-parser.ts';
 import { assertTransition, IllegalTransitionError } from './states.ts';
 
 export interface QueueOptions {
@@ -197,6 +197,7 @@ export async function processImportJob(
   let stagedChapters: StagedChapter[];
   let detectedEncoding: string | null = null;
   let encodingResult: { confidence: string; reason: string; warnings: string[] } | null = null;
+  let extractedResources: ExtractedResource[] = [];
 
   if (isEpub) {
     let parsed;
@@ -210,6 +211,7 @@ export async function processImportJob(
       throw e;
     }
     stagedChapters = parsed.chapters;
+    extractedResources = parsed.resources;
     encodingResult = { confidence: 'n/a', reason: 'EPUB 內部 XML 為 UTF-8', warnings: parsed.warnings };
   } else {
     let decoded;
@@ -248,6 +250,49 @@ export async function processImportJob(
       createdKeys.push(key);
       return key;
     });
+
+    // Resources are content-addressed and shared: an identical image already
+    // stored by an earlier import is reused rather than written again. Done
+    // outside the transaction like every other storage write (§12), and only
+    // after the bytes exist do we record a row pointing at them.
+    const resourceIds = new Map<string, string>();   // content hash → resources.id
+    for (const res of extractedResources) {
+      const [existing] = await db.select({ id: resources.id, storageKey: resources.storageKey })
+        .from(resources).where(eq(resources.contentHash, res.contentHash)).limit(1);
+      if (existing) {
+        resourceIds.set(res.contentHash, existing.id);
+        // Reusing the row is only safe if its object is actually there. If the
+        // object was lost (restore gap, storage migration, a sweep bug) then
+        // trusting the row would make the import silently produce chapters
+        // that cannot render — and re-importing the very file that could fix
+        // it would never write the bytes. We have them right here, so heal.
+        if (!(await storage.exists(existing.storageKey))) {
+          const healed = await storage.put(res.bytes, res.ext);
+          createdKeys.push(healed);
+          await db.update(resources)
+            .set({ storageKey: healed, sizeBytes: res.bytes.length, mediaType: res.mediaType })
+            .where(eq(resources.id, existing.id));
+        }
+        continue;
+      }
+      const key = await storage.put(res.bytes, res.ext);
+      createdKeys.push(key);
+      // a concurrent import may have inserted the same hash in between; the
+      // unique constraint decides and we adopt the winner's row
+      const inserted = await db.insert(resources).values({
+        contentHash: res.contentHash,
+        storageKey: key,
+        mediaType: res.mediaType,
+        sizeBytes: res.bytes.length,
+      }).onConflictDoNothing().returning({ id: resources.id });
+      if (inserted[0]) {
+        resourceIds.set(res.contentHash, inserted[0].id);
+      } else {
+        const [winner] = await db.select({ id: resources.id })
+          .from(resources).where(eq(resources.contentHash, res.contentHash)).limit(1);
+        if (winner) resourceIds.set(res.contentHash, winner.id);
+      }
+    }
     const staged = stagedChapters.map((ch, i) => ({
       importJobId: jobId,
       position: ch.position,
@@ -273,9 +318,33 @@ export async function processImportJob(
         throw new LeaseLostError(jobId);
       }
       // idempotent reprocess: discard any items from a partially-run attempt
+      // (resource associations first — they reference the item rows)
+      await tx.delete(importItemResources).where(sql`${importItemResources.importItemId} in
+        (select id from app.import_items where import_job_id = ${jobId})`);
       await tx.delete(importItems).where(eq(importItems.importJobId, jobId));
+      const insertedItems: Array<{ id: string; position: number }> = [];
       for (let i = 0; i < staged.length; i += 200) {
-        await tx.insert(importItems).values(staged.slice(i, i + 200));
+        insertedItems.push(...await tx.insert(importItems).values(staged.slice(i, i + 200))
+          .returning({ id: importItems.id, position: importItems.position }));
+      }
+      // stage which resources each item's body references (ADR-08)
+      const itemIdByPosition = new Map(insertedItems.map((r) => [r.position, r.id]));
+      const links = stagedChapters.flatMap((ch) => (ch.resources ?? []).flatMap((ref) => {
+        const itemId = itemIdByPosition.get(ch.position);
+        const resourceId = resourceIds.get(ref.contentHash);
+        // a reference whose bytes could not be stored is dropped here; the
+        // body marker was already omitted by the parser for the same reason
+        if (!itemId || !resourceId) return [];
+        return [{
+          importItemId: itemId,
+          resourceId,
+          contentHash: ref.contentHash,
+          sourceHref: ref.sourceHref.slice(0, 500),
+          alt: ref.alt.slice(0, 300),
+        }];
+      }));
+      for (let i = 0; i < links.length; i += 200) {
+        await tx.insert(importItemResources).values(links.slice(i, i + 200));
       }
       await tx.update(importJobs).set({
         status: finalStatus,

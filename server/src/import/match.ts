@@ -14,6 +14,8 @@ export interface ExistingChapter {
   /** null when the chapter has no revision yet */
   bodyCompareHash: string | null;
   title: string;
+  /** digest of the head revision's resource set (ADR-08). '' when none. */
+  resourceDigest?: string;
 }
 
 export interface SourceItemRef {
@@ -23,6 +25,8 @@ export interface SourceItemRef {
   volumeLabel: string | null;
   bodyHash: string;
   title: string;
+  /** digest of this item's staged resource set (ADR-08). '' when none. */
+  resourceDigest?: string;
 }
 
 export type ItemClass =
@@ -133,9 +137,27 @@ export function matchChapters(existing: ExistingChapter[], source: SourceItemRef
     const res = outById.get(s.itemId)!;
     if (!res.matchedChapterId) continue;
     const ex = existingById.get(res.matchedChapterId)!;
-    if (ex.bodyCompareHash === s.bodyHash) {
+    // IMP-17: a chapter whose prose is unchanged but whose image changed IS a
+    // revision. That is primarily caught by body_compare_hash itself, because
+    // the canonical body carries the image's content hash inside its
+    // [[img:…]] marker (ADR-08) — change the image and the body text changes.
+    //
+    // The resource digest is a second, independent check for the case the
+    // marker cannot express: the body is byte-identical but the stored
+    // association differs (e.g. alt metadata re-imported differently). It
+    // costs one query and it is the difference between "we believe the marker
+    // covers this" and "we verified it".
+    //
+    // processor_version deliberately participates in NEITHER (§10: a sanitizer
+    // upgrade must not be reported as an author edit).
+    const sameBody = ex.bodyCompareHash === s.bodyHash;
+    const sameResources = (ex.resourceDigest ?? '') === (s.resourceDigest ?? '');
+    if (sameBody && sameResources) {
       res.itemClass = 'unchanged';
       res.reason.push('body_hash_equal');
+    } else if (sameBody && !sameResources) {
+      res.itemClass = 'modified';
+      res.reason.push('resources_changed');
     } else {
       // body differs, but does it belong to a *different* existing chapter?
       const elsewhere = (byBody.get(s.bodyHash) ?? []).some((h) => h.ch.id !== ex.id);

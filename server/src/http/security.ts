@@ -23,8 +23,11 @@ export function securityHeaders(opts: SecurityHeaderOptions): MiddlewareHandler 
     h.set('Referrer-Policy', 'no-referrer');
     h.set('Cross-Origin-Resource-Policy', 'same-origin');
     h.set('Cross-Origin-Opener-Policy', 'same-origin');
-    // chapter bodies and member state must never land in a shared cache
-    if (c.req.path.startsWith('/api/')) {
+    // Chapter bodies and member state must never land in a shared cache.
+    // Only a default: a route that set its own Cache-Control did so knowingly
+    // (content-addressed resources are immutable and must be cacheable, or
+    // every chapter turn re-downloads its images over mobile data).
+    if (c.req.path.startsWith('/api/') && !h.has('Cache-Control')) {
       h.set('Cache-Control', 'no-store');
     }
     if (opts.hsts) {

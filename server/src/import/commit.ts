@@ -4,10 +4,12 @@
 // the same outcome without creating anything. No storage writes happen here:
 // bodies were already staged as immutable objects by the worker. M4
 // (overwrite) is deliberately not implemented.
-import { createHash } from 'node:crypto';
 import { asc, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { chapters, chapterRevisions, importItems, importJobs, works } from '../db/schema.ts';
+import {
+  attachRevisionResources, revisionHash, stagedLinksByItem, type StagedResourceLink,
+} from './resources.ts';
 
 export interface CommitRequest {
   workId?: string;
@@ -90,22 +92,35 @@ export async function commitImport(
       for (const r of rows) chapterIdByPos.set(r.editorialPosition, r.id);
     }
 
+    // resource-aware revision identity (ADR-08/IMP-17): the revision hash
+    // folds in the staged resource set, so identical prose with a different
+    // image is a different revision
+    const linksByItem = await stagedLinksByItem(tx, jobId);
+    const attached: Array<{ revisionId: string; links: StagedResourceLink[] }> = [];
     for (let i = 0; i < items.length; i += BATCH) {
+      const slice = items.slice(i, i + BATCH);
       const rows = await tx.insert(chapterRevisions).values(
-        items.slice(i, i + BATCH).map((item, j) => ({
+        slice.map((item, j) => ({
           chapterId: chapterIdByPos.get(i + j + 1)!,
           title: item.title,
           contentKey: item.contentKey,
           bodyCompareHash: item.bodyHash,
-          revisionHash: createHash('sha256')
-            .update(`${item.title}\n${item.bodyHash}\n${job.processorVersion}`)
-            .digest('hex'),
+          revisionHash: revisionHash({
+            title: item.title,
+            bodyCompareHash: item.bodyHash,
+            processorVersion: job.processorVersion,
+            resourceLinks: linksByItem.get(item.id) ?? [],
+          }),
           processorVersion: job.processorVersion,
           sourceImportId: jobId,
         })),
       ).returning({ id: chapterRevisions.id, chapterId: chapterRevisions.chapterId });
-      void rows; // ids wired by the set-based head update below
+      for (const [j, r] of rows.entries()) {
+        const links = linksByItem.get(slice[j].id) ?? [];
+        if (links.length > 0) attached.push({ revisionId: r.id, links });
+      }
     }
+    await attachRevisionResources(tx, attached);
 
     // head_revision_id in one set-based statement: every chapter of this
     // (empty) work got exactly one revision in this transaction

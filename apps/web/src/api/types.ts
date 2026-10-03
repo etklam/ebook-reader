@@ -77,6 +77,15 @@ export interface TocResponse {
   chapters: TocEntry[];
 }
 
+// ADR-08: resources referenced by THIS revision's body markers
+export interface ChapterResource {
+  contentHash: string;
+  url: string;
+  mediaType: string;
+  sizeBytes: number;
+  alt: string;
+}
+
 export interface ReaderChapter {
   chapterId: string;
   workId: string;
@@ -88,6 +97,7 @@ export interface ReaderChapter {
   nextChapterId: string | null;
   paragraphCount: number;
   updatedAt: string;
+  resources?: ChapterResource[];
 }
 
 // --- member state --------------------------------------------------------------

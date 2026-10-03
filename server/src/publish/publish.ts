@@ -108,6 +108,22 @@ export async function validateForPublish(
   const missing = (await Promise.all(keys.map(async (k) => (await storage.exists(k) ? null : k)))).filter(Boolean);
   if (missing.length > 0) problems.push(`${missing.length}_content_objects_missing`);
 
+  // ADR-08: publishing a chapter whose image bytes are gone would ship a
+  // visibly broken page. Resources referenced by the head revisions being
+  // snapshotted must exist, exactly like the chapter bodies above.
+  const resourceRows = await db.execute(sql`
+    select distinct r.storage_key
+    from app.chapters c
+    join app.chapter_revision_resources rr on rr.revision_id = c.head_revision_id
+    join app.resources r on r.id = rr.resource_id
+    where c.work_id = ${workId}`);
+  const resourceKeys = resourceRows.rows.map((row) => (row as { storage_key: string }).storage_key);
+  const missingResources = (await Promise.all(
+    resourceKeys.map(async (k) => (await storage.exists(k) ? null : k)))).filter(Boolean);
+  if (missingResources.length > 0) {
+    problems.push(`${missingResources.length}_resource_objects_missing`);
+  }
+
   const [cats] = await db.select({ n: sql<number>`count(*)::int` })
     .from(workCategories)
     .innerJoin(categories, eq(categories.id, workCategories.categoryId))

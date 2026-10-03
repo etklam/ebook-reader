@@ -80,10 +80,12 @@ export interface StorageSweepResult {
  * Collect storage objects left behind by failed or superseded imports.
  *
  * The reachability rule is deliberately conservative: an object is deletable
- * only when no chapter_revisions.content_key and no source_files.storage_key
- * refers to it. chapter_revisions are immutable and referenced by release
- * snapshots and member bookmarks, so anything they name must survive — §12
- * says orphan cleanup "不能刪掉仍被舊修訂或已發布內容引用的資源".
+ * only when nothing in chapter_revisions.content_key, source_files.storage_key
+ * or resources.storage_key refers to it. chapter_revisions are immutable and
+ * referenced by release snapshots and member bookmarks, so anything they name
+ * must survive — §12 says orphan cleanup "不能刪掉仍被舊修訂或已發布內容引用的
+ * 資源". All three reference sources must be consulted; missing one would make
+ * the sweep delete live content.
  *
  * `minAgeHours` keeps very recent objects even when unreferenced: an import
  * writes its objects before committing the rows that reference them, so a
@@ -105,6 +107,11 @@ export async function sweepStorage(
   for (const r of revisionKeys.rows) referenced.add((r as { key: string }).key);
   const sourceKeys = await db.execute(sql`select storage_key as key from app.source_files`);
   for (const r of sourceKeys.rows) referenced.add((r as { key: string }).key);
+  // Resource objects (ADR-08). Without this the sweep saw every image as an
+  // orphan and would have deleted the lot — the resources table is a third
+  // reference source alongside revisions and source files.
+  const resourceKeys = await db.execute(sql`select storage_key as key from app.resources`);
+  for (const r of resourceKeys.rows) referenced.add((r as { key: string }).key);
 
   // keys reachable from an ACTIVE release — i.e. content the public can ask for
   const publishedKeys = new Set<string>();
@@ -112,7 +119,13 @@ export async function sweepStorage(
     select distinct cr.content_key as key
     from app.release_items ri
     join app.works w on w.active_release_id = ri.release_id
-    join app.chapter_revisions cr on cr.id = ri.revision_id`);
+    join app.chapter_revisions cr on cr.id = ri.revision_id
+    union
+    select distinct r.storage_key as key
+    from app.release_items ri
+    join app.works w on w.active_release_id = ri.release_id
+    join app.chapter_revision_resources rr on rr.revision_id = ri.revision_id
+    join app.resources r on r.id = rr.resource_id`);
   for (const r of published.rows) publishedKeys.add((r as { key: string }).key);
 
   // integrity check in the other direction: a referenced object that is gone

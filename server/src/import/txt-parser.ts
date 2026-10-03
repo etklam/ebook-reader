@@ -5,6 +5,7 @@
 // Text is never discarded: leading content becomes a review-flagged item, and
 // a file with no headings at all becomes one whole-document item.
 import { parseLabel, type ParsedLabel } from './parse-label.ts';
+import type { ResourceRef } from './epub-parser.ts';
 
 export interface StagedChapter {
   position: number;
@@ -15,6 +16,9 @@ export interface StagedChapter {
   body: string; // EOL-normalized paragraphs joined with \n\n
   warnings: string[];
   needsReview: boolean;
+  /** resources this chapter's body references (ADR-08). TXT has none; EPUB
+   *  fills it from extracted images. */
+  resources?: ResourceRef[];
 }
 
 export interface ParsedTxt {

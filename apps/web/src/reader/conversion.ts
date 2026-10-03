@@ -16,11 +16,19 @@ async function converter(mode: 't' | 'cn'): Promise<Converter> {
   return cache[mode];
 }
 
+// ADR-08 block markers are machine syntax, not prose. The hash is hex so
+// conversion would not currently alter it, but running a text transform over a
+// structural marker is the kind of thing that breaks silently later — a single
+// altered character would stop the paragraph matching and render the raw
+// marker to the reader. Alt text inside the marker is left alone for the same
+// reason: it is re-read from the server-side manifest, not from here.
+const MARKER_RE = /^\[\[(?:img|note):/;
+
 export async function convertParagraphs(
   paragraphs: readonly string[],
   mode: ConversionMode,
 ): Promise<string[]> {
   if (mode === 'original') return [...paragraphs];
   const c = await converter(mode);
-  return paragraphs.map((p) => c(p));
+  return paragraphs.map((p) => (MARKER_RE.test(p) ? p : c(p)));
 }
