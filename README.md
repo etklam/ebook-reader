@@ -25,10 +25,27 @@ pnpm --filter web test:browser  # M5＋M6 瀏覽器驗收（需 api+worker+web �
 
 M2 匯入 API（全部 Admin-only）：`POST /api/admin/imports`（上傳 TXT/EPUB，限 30/50 MiB）、`GET /api/admin/imports/:id`（狀態＋編碼結果＋章數）、`GET /api/admin/imports/:id/chapters`（分頁 staged 章節）、`POST /api/admin/imports/:id/commit`（冪等首匯入提交）、`POST /api/admin/imports/:id/reanalyze`（指定編碼重解析）。
 
-## M7 Beta hardening（進行中）
+## M7 Beta hardening（程式與文件完成；真機 L3 待執行）
 
-安全與正確性回歸已完成，效能／備份／監測未開始。本輪修正 8 項 pre-M7 稽核缺陷並以 `server/test/e2e-hardening.test.ts`（HRD-01–08）釘住：`/api/works/count` 現與 `/api/works` 共用同一個 filter predicate builder（原本忽略所有 filter）、進度／書籤拒絕跨作品章節引用、`workId` filter 非法時回 400 而非靜默回傳全部、`follows/seen` clamp 至實際最新 release、非 UUID path param 回 4xx 而非 500（並停止把 SQL 與參數印進 log）、`requireAdmin` 移至父 app 掛載（不再依賴 route 註冊順序）、`/api/auth/login` 加 per-IP + per-account 滑動視窗限流、全域 JSON body 上限與安全回應標頭。**限流是單 process 的，不是分散式限流，也不是 DDoS 防護**（邊緣／proxy 責任，見 dev-plan §16）。新增環境變數見 `server/.env.example`。
+**Beta 之前剩下的唯一工作是真機驗證**（`docs/adr/l3-device-checklist.md` 18 項，需實機執行）。其餘 M7 工作已全部落地，分五批 commit：
 
-未做：查詢效能量測、備份還原演練、session／storage 清理、監測、瀏覽器測試入 CI、真機 L3、Beta runbook。
+- **安全與正確性回歸**（HRD-01–08）：`/api/works/count` 原本忽略所有 filter，現與 list 共用同一 predicate builder；進度／書籤拒絕跨作品章節引用；非法 `workId` filter 回 400 而非靜默回傳全部；`follows/seen` clamp；非 UUID path param 回 4xx 而非 500（並停止把 SQL 與參數印進 log）；`requireAdmin` 移至父 app（不再依賴 route 註冊順序）；login 加 per-IP＋per-account 限流；全域 JSON body 上限與安全標頭。
+- **Cursor 分頁**（PAG-01–07，CAT-03）：offset 分頁在捲動途中有新發布會靜默漏書，改為綁定 filters＋sort 的 opaque cursor；`/api/me/library` 同步改為 keyset（原本無上限回傳整個書架）。
+- **帳號自助**（ACC-01–06）：改密碼、session 列表／撤銷、Admin 代發一次性密碼復原 token。原本洩漏的 cookie 只能等 30 天 TTL。
+- **資源層**（RES-01–08，ADR-08／IMP-17）：EPUB 圖片與註腳不再被丟棄；canonical body 以 `[[img:<hash>]]` marker 表示，非 marker 段落逐字不變；資源以 content hash 定址、與不可變修訂一起凍結；`/api/reader/resources/:hash` 以可達性授權。**SVG 拒收**，註腳**非互動式**。
+- **可運維性**：`pnpm backup`／`restore:verify`（**還原演練已實際執行通過 8/8**，含真的用 API 讀出一章）、`pnpm maintenance`（session／孤立檔回收，storage 預設 dry-run）、`pnpm ops:check`、結構化 JSON 請求日誌、`pnpm perf:seed`／`perf:measure`、瀏覽器測試入 CI。
+
+**限流是單 process 的，不是分散式限流，也不是 DDoS 防護**（邊緣／proxy 責任，§16）。
+部署與運維請照 **[`docs/beta-runbook.md`](docs/beta-runbook.md)**；效能基線與索引決策見 [`docs/perf/`](docs/perf/)；後續計劃見 [`docs/development-plan.md`](docs/development-plan.md)。
+
+```bash
+pnpm dev:lan          # vite --host，手機可連（跑真機 L3 用）
+pnpm seed:l3          # 建三部已發布樣本，覆蓋 18 項檢核所需素材
+pnpm ops:check        # 健康檢查（exit 0/1/2，給 cron）
+pnpm backup           # DB＋storage＋manifest
+pnpm maintenance      # 回收（storage 預設 dry-run）
+```
+
+未做：真機 L3（18 項）、併發壓測、互動式註腳、SVG、全文搜尋、taxonomy 合併／alias、回復補償自動化、`open` 註冊（需 email 驗證）。
 
 開發順序 M0→M7 與各階段 gate 見 dev-plan §22；驗收分層見 §22A（CI 跑 L1+L2，真機僅 M0/M5/M7）；實際進度以 dev-plan §26 為準。
