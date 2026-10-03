@@ -1,5 +1,10 @@
 # L1 (every push): typecheck + unit tests + web build (dev-plan §22A).
-# L2 (stage gate): DB-01..03 against a real PostgreSQL 18 service container.
+# L2 (stage gate): DB-01..03 + API E2E + browser acceptance against a real
+#                  PostgreSQL 18 service container.
+#
+# L3 (real device) is NOT here and cannot be: docs/adr/l3-device-checklist.md is
+# a manual gate on physical iOS Safari and Android Chrome. Playwright passing
+# this workflow is not L3 (§22A).
 name: ci
 
 on:
@@ -64,3 +69,81 @@ jobs:
         working-directory: server
         # scripts use --env-file-if-exists=.env; job env supplies the URLs directly
         run: pnpm test:e2e
+
+  # Browser acceptance (M5/M6). Previously this ran only when someone
+  # remembered to, so UI regressions could reach main unnoticed. It needs the
+  # live stack because the specs self-seed through the real import pipeline.
+  l2-browser:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ebook_dev
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MIGRATOR_DATABASE_URL: postgres://ebook_migrator:ci-migrator@localhost:5432/ebook_dev
+      DATABASE_URL: postgres://ebook_api:ci-api@localhost:5432/ebook_dev
+      WORKER_DATABASE_URL: postgres://ebook_worker:ci-worker@localhost:5432/ebook_dev
+      DB_TLS: disable
+      STORAGE_ROOT: ./storage
+      # the vite proxy rewrites Host, so the API cannot match host against
+      # origin and needs the dev origin allowlisted (see apps/web/vite.config.ts)
+      CSRF_ALLOWED_ORIGINS: http://localhost:5173
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bootstrap roles and schemas
+        working-directory: server
+        run: psql postgres://postgres:ci@localhost:5432/ebook_dev -f db/init-ci.sql
+      - name: Migrate + grants
+        working-directory: server
+        run: pnpm db:migrate
+      - name: Install Playwright browser
+        # the config declares no projects, so only chromium is used
+        run: pnpm --filter web exec playwright install --with-deps chromium
+      - name: Start API, worker and web
+        run: |
+          mkdir -p /tmp/logs
+          pnpm dev:api    > /tmp/logs/api.log 2>&1 &
+          pnpm dev:worker > /tmp/logs/worker.log 2>&1 &
+          pnpm dev:web    > /tmp/logs/web.log 2>&1 &
+          # readiness, not a fixed sleep: a slow runner must not fail the job
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/readyz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/readyz || { echo '--- api ---'; cat /tmp/logs/api.log; exit 1; }
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:5173/ >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null http://localhost:5173/ || { echo '--- web ---'; cat /tmp/logs/web.log; exit 1; }
+      - name: Browser acceptance (READ/CAT/MEM UI)
+        run: pnpm --filter web test:browser
+      - name: Service logs on failure
+        if: failure()
+        run: |
+          echo '--- api ---';    tail -200 /tmp/logs/api.log    || true
+          echo '--- worker ---'; tail -200 /tmp/logs/worker.log || true
+          echo '--- web ---';    tail -200 /tmp/logs/web.log    || true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          if-no-files-found: ignore

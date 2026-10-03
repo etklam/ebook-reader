@@ -16,7 +16,9 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint .",
     "test": "pnpm -r test",
-    "maintenance": "pnpm --filter server maintenance"
+    "maintenance": "pnpm --filter server maintenance",
+    "perf:seed": "pnpm --filter server perf:seed",
+    "perf:measure": "pnpm --filter server perf:measure"
   },
   "devDependencies": {
     "eslint": "^10.11.0",
