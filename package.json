@@ -10,6 +10,8 @@
     "dev:api": "pnpm --filter server dev",
     "dev:worker": "pnpm --filter server dev:worker",
     "dev:web": "pnpm --filter web dev",
+    "dev:lan": "pnpm --filter web dev:lan",
+    "seed:l3": "pnpm --filter server seed:l3",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint .",

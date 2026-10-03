@@ -12,7 +12,8 @@
     "test:e2e": "node --env-file-if-exists=.env --test --test-concurrency=1 test/*.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate && node --env-file-if-exists=.env scripts/apply-grants.mjs",
-    "db:verify": "node --env-file-if-exists=.env scripts/db-verify.mjs"
+    "db:verify": "node --env-file-if-exists=.env scripts/db-verify.mjs",
+    "seed:l3": "node --env-file-if-exists=.env scripts/seed-l3.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.0",

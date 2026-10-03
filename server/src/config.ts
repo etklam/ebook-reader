@@ -6,6 +6,11 @@ export type TlsMode = 'verify-full' | 'disable';
 export interface ApiConfig {
   databaseUrl: string;
   port: number;
+  /** interface to bind. Default 0.0.0.0 because a container behind the reverse
+   *  proxy must accept connections from outside itself; a bare-metal
+   *  deployment fronted by a proxy on the same host should set 127.0.0.1 so
+   *  the API is not reachable directly. */
+  bindHost: string;
   storageRoot: string;
   maxTxtBytes: number;
   maxEpubBytes: number;
@@ -98,6 +103,7 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
   return {
     databaseUrl: requiredUrl(env, 'DATABASE_URL'),
     port: int(env, 'PORT', 3000, 1, 65535),
+    bindHost: env.BIND_HOST?.trim() || '0.0.0.0',
     storageRoot: env.STORAGE_ROOT?.trim() || './storage',
     // dev-plan §20 starting quotas; 1 GiB is the hard ceiling for overrides
     maxTxtBytes: int(env, 'IMPORT_MAX_TXT_BYTES', 30 * 1024 * 1024, 1, 1024 * 1024 * 1024),

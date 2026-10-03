@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:lan": "vite --host",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "node --test src/reader/unit.test.ts",

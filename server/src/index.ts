@@ -115,8 +115,8 @@ app.route('/', worksRoutes({ db }));
 // bind only when run as the entrypoint — test files import `app` without
 // grabbing a port (and colliding with a running dev server)
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-    console.log(`api listening on :${info.port}`);
+  const server = serve({ fetch: app.fetch, port: config.port, hostname: config.bindHost }, (info) => {
+    console.log(`api listening on ${config.bindHost}:${info.port}`);
   });
   const shutdown = async () => {
     server.close();
