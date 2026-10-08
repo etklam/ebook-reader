@@ -1,0 +1,10 @@
+**/node_modules
+**/.env
+**/.env.*
+.git
+.github
+server/storage
+server/backups
+m0/reader-poc/vendor
+**/playwright-report
+**/test-results

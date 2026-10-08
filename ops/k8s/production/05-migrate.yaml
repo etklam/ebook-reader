@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ebook-migrate
+  namespace: ebook-reader
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 604800
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: migrate
+          image: git.913555.xyz/etklam/ebook-reader-api:IMAGE_TAG
+          imagePullPolicy: IfNotPresent
+          command: ["pnpm", "--filter", "server", "db:migrate"]
+          env:
+            - name: MIGRATOR_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ebook-db-credentials
+                  key: migrator-url
+            - name: DB_TLS
+              value: verify-full
+            - name: DB_CA_FILE
+              value: /etc/ebook-db-tls/ca.crt
+          volumeMounts:
+            - name: database-tls
+              mountPath: /etc/ebook-db-tls
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 750m
+              memory: 768Mi
+      volumes:
+        - name: database-tls
+          secret:
+            secretName: ebook-db-tls

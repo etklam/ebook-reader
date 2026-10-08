@@ -1,0 +1,125 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - ".github/**"
+
+jobs:
+  release:
+    runs-on: hk
+    timeout-minutes: 45
+    env:
+      REGISTRY: git.913555.xyz
+      API_IMAGE: git.913555.xyz/etklam/ebook-reader-api
+      WEB_IMAGE: git.913555.xyz/etklam/ebook-reader-web
+      G2_HOST: 82.22.63.196
+      G2_USER: root
+      REGISTRY_USER: etklam
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Docker CLI
+        run: |
+          curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz \
+            | tar xz --strip-components=1 -C /usr/bin docker/docker
+          docker version
+
+      - name: Login to Forgejo Container Registry
+        env:
+          FORGEJO_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: printf '%s' "$FORGEJO_TOKEN" | docker login "$REGISTRY" --username "$REGISTRY_USER" --password-stdin
+
+      - name: Build and publish immutable images
+        env:
+          FORGEJO_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          SHA="${GITHUB_SHA}"
+          docker pull "$API_IMAGE:latest" || true
+          docker pull "$WEB_IMAGE:latest" || true
+          DOCKER_BUILDKIT=1 docker build --platform linux/amd64 --pull \
+            --cache-from "$API_IMAGE:latest" -f server/Dockerfile \
+            -t "$API_IMAGE:$SHA" -t "$API_IMAGE:latest" .
+          DOCKER_BUILDKIT=1 docker build --platform linux/amd64 --pull \
+            --cache-from "$WEB_IMAGE:latest" -f apps/web/Dockerfile \
+            -t "$WEB_IMAGE:$SHA" -t "$WEB_IMAGE:latest" .
+          docker push "$API_IMAGE:$SHA"
+          docker push "$WEB_IMAGE:$SHA"
+          docker push "$API_IMAGE:latest"
+          docker push "$WEB_IMAGE:latest"
+
+      - name: Configure SSH
+        env:
+          G2_SSH_KEY: ${{ secrets.G2_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$G2_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 0600 ~/.ssh/id_ed25519
+          cp .forgejo/known_hosts ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/known_hosts
+
+      - name: Pull exact images and render manifests
+        env:
+          FORGEJO_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          SHA="${GITHUB_SHA}"
+          for image in "$API_IMAGE:$SHA" "$WEB_IMAGE:$SHA"; do
+            printf '%s\n' "$FORGEJO_TOKEN" | ssh -i ~/.ssh/id_ed25519 "$G2_USER@$G2_HOST" \
+              "IFS= read -r token; k3s ctr images pull --platform linux/amd64 --user '$REGISTRY_USER:'\$token '$image' >/dev/null"
+          done
+          render="$RUNNER_TEMP/ebook-reader-k8s"
+          mkdir -p "$render"
+          cp ops/k8s/production/*.yaml "$render/"
+          for file in "$render"/*.yaml; do
+            sed -i "s/IMAGE_TAG/$SHA/g" "$file"
+          done
+          tar -C "$render" -czf - . | ssh -i ~/.ssh/id_ed25519 "$G2_USER@$G2_HOST" \
+            "mkdir -p /tmp/ebook-reader-$SHA && tar -xzf - -C /tmp/ebook-reader-$SHA"
+          echo "IMAGE_SHA=$SHA" >> "$GITHUB_ENV"
+
+      - name: Bootstrap database and run migrations
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 "$G2_USER@$G2_HOST" "SHA='$IMAGE_SHA' bash -se" <<'REMOTE'
+          set -euo pipefail
+          dir="/tmp/ebook-reader-$SHA"
+          kubectl apply -f "$dir/00-namespace.yaml"
+          kubectl apply -f "$dir/01-pvc.yaml"
+          kubectl apply -f "$dir/02-postgres.yaml"
+          kubectl -n ebook-reader rollout status deployment/ebook-db --timeout=600s
+          kubectl -n ebook-reader delete job ebook-migrate --ignore-not-found=true --wait=true
+          kubectl apply -f "$dir/05-migrate.yaml"
+          if ! kubectl -n ebook-reader wait --for=condition=complete job/ebook-migrate --timeout=900s; then
+            kubectl -n ebook-reader logs job/ebook-migrate --all-containers=true || true
+            kubectl -n ebook-reader describe job/ebook-migrate || true
+            exit 1
+          fi
+          REMOTE
+
+      - name: Roll out app and verify HTTPS
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 "$G2_USER@$G2_HOST" "SHA='$IMAGE_SHA' bash -se" <<'REMOTE'
+          set -euo pipefail
+          dir="/tmp/ebook-reader-$SHA"
+          kubectl apply -f "$dir/03-api-worker.yaml"
+          kubectl apply -f "$dir/04-web-ingress.yaml"
+          kubectl -n ebook-reader rollout status deployment/ebook-api --timeout=600s
+          kubectl -n ebook-reader rollout status deployment/ebook-worker --timeout=600s
+          kubectl -n ebook-reader rollout status deployment/ebook-web --timeout=600s
+          kubectl -n ebook-reader wait --for=condition=Ready certificate/ebook-reader-tls --timeout=600s
+          kubectl -n ebook-reader get pods -o wide
+          kubectl -n ebook-reader get deploy -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\n"}{end}'
+          REMOTE
+          curl --retry 12 --retry-all-errors --retry-delay 5 -fsS https://book.7182818.xyz/ -o "$RUNNER_TEMP/ebook-home.html"
+          grep -q '<div id="root"' "$RUNNER_TEMP/ebook-home.html"
+          curl --retry 12 --retry-all-errors --retry-delay 5 -fsS https://book.7182818.xyz/api/works -o "$RUNNER_TEMP/ebook-works.json"
+          curl -sS -o "$RUNNER_TEMP/ebook-auth.json" -w '%{http_code}' https://book.7182818.xyz/api/me/library > "$RUNNER_TEMP/ebook-auth.status"
+          test "$(cat "$RUNNER_TEMP/ebook-auth.status")" = 401
+          echo "Release verified: $IMAGE_SHA; homepage and catalog returned 200; protected API returned 401 without credentials."

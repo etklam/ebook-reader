@@ -1,0 +1,168 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ebook-api
+  namespace: ebook-reader
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: ebook-api
+  template:
+    metadata:
+      labels:
+        app: ebook-api
+    spec:
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: api
+          image: git.913555.xyz/etklam/ebook-reader-api:IMAGE_TAG
+          imagePullPolicy: IfNotPresent
+          command: ["pnpm", "--filter", "server", "start"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ebook-db-credentials
+                  key: api-url
+            - name: DB_TLS
+              value: verify-full
+            - name: DB_CA_FILE
+              value: /etc/ebook-db-tls/ca.crt
+            - name: STORAGE_ROOT
+              value: /data
+            - name: BIND_HOST
+              value: 0.0.0.0
+            - name: PORT
+              value: "3000"
+            - name: CSRF_ALLOWED_ORIGINS
+              value: https://book.7182818.xyz
+            - name: HSTS
+              value: "true"
+            - name: REGISTRATION_MODE
+              value: invite
+          ports:
+            - name: http
+              containerPort: 3000
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 750m
+              memory: 768Mi
+          volumeMounts:
+            - name: storage
+              mountPath: /data
+            - name: database-tls
+              mountPath: /etc/ebook-db-tls
+              readOnly: true
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: ebook-storage
+        - name: database-tls
+          secret:
+            secretName: ebook-db-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ebook-api
+  namespace: ebook-reader
+spec:
+  selector:
+    app: ebook-api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ebook-worker
+  namespace: ebook-reader
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: ebook-worker
+  template:
+    metadata:
+      labels:
+        app: ebook-worker
+    spec:
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: worker
+          image: git.913555.xyz/etklam/ebook-reader-api:IMAGE_TAG
+          imagePullPolicy: IfNotPresent
+          command: ["pnpm", "--filter", "server", "start:worker"]
+          env:
+            - name: WORKER_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ebook-db-credentials
+                  key: worker-url
+            - name: DB_TLS
+              value: verify-full
+            - name: DB_CA_FILE
+              value: /etc/ebook-db-tls/ca.crt
+            - name: STORAGE_ROOT
+              value: /data
+            - name: WORKER_POLL_MS
+              value: "1000"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 750m
+              memory: 768Mi
+          volumeMounts:
+            - name: storage
+              mountPath: /data
+            - name: database-tls
+              mountPath: /etc/ebook-db-tls
+              readOnly: true
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: ebook-storage
+        - name: database-tls
+          secret:
+            secretName: ebook-db-tls

@@ -1,0 +1,148 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ebook-db-init
+  namespace: ebook-reader
+data:
+  10-roles.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    for name in API_PASSWORD WORKER_PASSWORD MIGRATOR_PASSWORD; do
+      value="${!name:?missing $name}"
+      [[ "$value" =~ ^[a-f0-9]{48,}$ ]] || { echo "invalid $name" >&2; exit 1; }
+    done
+    psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --set ON_ERROR_STOP=1 <<SQL
+    CREATE ROLE ebook_migrator LOGIN PASSWORD '$MIGRATOR_PASSWORD';
+    CREATE ROLE ebook_api LOGIN PASSWORD '$API_PASSWORD';
+    CREATE ROLE ebook_worker LOGIN PASSWORD '$WORKER_PASSWORD';
+    ALTER DATABASE ebook OWNER TO ebook_migrator;
+    \connect ebook
+    CREATE SCHEMA app AUTHORIZATION ebook_migrator;
+    CREATE SCHEMA drizzle AUTHORIZATION ebook_migrator;
+    REVOKE CREATE ON SCHEMA app, drizzle FROM PUBLIC;
+    SQL
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ebook-db
+  namespace: ebook-reader
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ebook-db
+  template:
+    metadata:
+      labels:
+        app: ebook-db
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgres
+          image: postgres:18.0-bookworm@sha256:3f55f8895c4ed50603e2fbdfc72fffeeaba3173321fee5cb825bbbeb30d9d854
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "-ec"]
+          args:
+            - >-
+              install -d -m 0700 /tmp/pg-tls;
+              cp /tls/server.crt /tmp/pg-tls/server.crt;
+              cp /tls/server.key /tmp/pg-tls/server.key;
+              chown postgres:postgres /tmp/pg-tls/server.crt /tmp/pg-tls/server.key;
+              chmod 0600 /tmp/pg-tls/server.key;
+              exec docker-entrypoint.sh postgres
+              -c ssl=on
+              -c ssl_cert_file=/tmp/pg-tls/server.crt
+              -c ssl_key_file=/tmp/pg-tls/server.key
+              -c max_connections=50
+              -c shared_buffers=512MB
+              -c work_mem=4MB
+              -c maintenance_work_mem=64MB
+              -c timezone=UTC
+          env:
+            - name: POSTGRES_USER
+              value: ebook_bootstrap
+            - name: POSTGRES_DB
+              value: ebook
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ebook-db-credentials
+                  key: bootstrap-password
+            - name: API_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ebook-db-credentials
+                  key: api-password
+            - name: WORKER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ebook-db-credentials
+                  key: worker-password
+            - name: MIGRATOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ebook-db-credentials
+                  key: migrator-password
+          ports:
+            - name: postgres
+              containerPort: 5432
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-U", "ebook_bootstrap", "-d", "ebook"]
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "ebook_bootstrap", "-d", "ebook"]
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "ebook_bootstrap", "-d", "ebook"]
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 768Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          volumeMounts:
+            - name: database
+              mountPath: /var/lib/postgresql
+            - name: db-init
+              mountPath: /docker-entrypoint-initdb.d/10-roles.sh
+              subPath: 10-roles.sh
+              readOnly: true
+            - name: database-tls
+              mountPath: /tls
+              readOnly: true
+      volumes:
+        - name: database
+          persistentVolumeClaim:
+            claimName: ebook-db-data
+        - name: db-init
+          configMap:
+            name: ebook-db-init
+            defaultMode: 0555
+        - name: database-tls
+          secret:
+            secretName: ebook-db-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ebook-db
+  namespace: ebook-reader
+spec:
+  selector:
+    app: ebook-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+  type: ClusterIP
