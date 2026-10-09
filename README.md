@@ -36,7 +36,7 @@ M2 匯入 API（全部 Admin-only）：`POST /api/admin/imports`（上傳 TXT/EP
 - **可運維性**：`pnpm backup`／`restore:verify`（**還原演練已實際執行通過 8/8**，含真的用 API 讀出一章）、`pnpm maintenance`（session／孤立檔回收，storage 預設 dry-run）、`pnpm ops:check`、結構化 JSON 請求日誌、`pnpm perf:seed`／`perf:measure`、瀏覽器測試入 CI。
 
 **限流是單 process 的，不是分散式限流，也不是 DDoS 防護**（邊緣／proxy 責任，§16）。
-部署與運維請照 **[`docs/beta-runbook.md`](docs/beta-runbook.md)**；效能基線與索引決策見 [`docs/perf/`](docs/perf/)；後續計劃見 [`docs/development-plan.md`](docs/development-plan.md)。
+部署與運維請照 **[`docs/beta-runbook.md`](docs/beta-runbook.md)**；正式環境 Forgejo → K3s 部署步驟見 **[`docs/deployment.md`](docs/deployment.md)**；效能基線與索引決策見 [`docs/perf/`](docs/perf/)；後續計劃見 [`docs/development-plan.md`](docs/development-plan.md)。
 
 ```bash
 pnpm dev:lan          # vite --host，手機可連（跑真機 L3 用）

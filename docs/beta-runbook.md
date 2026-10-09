@@ -15,6 +15,7 @@
 
 | 要做的事 | 指令 |
 | --- | --- |
+| **正式部署** | [`docs/deployment.md`](deployment.md)（Forgejo Actions → g2 K3s） |
 | 起資料庫 | `pnpm db:up` |
 | 跑 migration＋grants | `pnpm db:migrate` |
 | 驗 schema／約束 | `pnpm db:verify` |
