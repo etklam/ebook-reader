@@ -47,10 +47,10 @@ spec:
           command: ["bash", "-ec"]
           args:
             - >-
-              install -d -m 0700 /tmp/pg-tls;
+              install -d -m 0755 /tmp/pg-tls;
               cp /tls/server.crt /tmp/pg-tls/server.crt;
               cp /tls/server.key /tmp/pg-tls/server.key;
-              chown postgres:postgres /tmp/pg-tls/server.crt /tmp/pg-tls/server.key;
+              chown -R postgres:postgres /tmp/pg-tls;
               chmod 0600 /tmp/pg-tls/server.key;
               exec docker-entrypoint.sh postgres
               -c ssl=on
