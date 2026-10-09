@@ -41,10 +41,11 @@ jobs:
           SHA="${GITHUB_SHA}"
           docker pull "$API_IMAGE:latest" || true
           docker pull "$WEB_IMAGE:latest" || true
-          DOCKER_BUILDKIT=1 docker build --platform linux/amd64 --pull \
+          # static Docker CLI has no buildx: legacy builder, no DOCKER_BUILDKIT
+          docker build --platform linux/amd64 --pull \
             --cache-from "$API_IMAGE:latest" -f server/Dockerfile \
             -t "$API_IMAGE:$SHA" -t "$API_IMAGE:latest" .
-          DOCKER_BUILDKIT=1 docker build --platform linux/amd64 --pull \
+          docker build --platform linux/amd64 --pull \
             --cache-from "$WEB_IMAGE:latest" -f apps/web/Dockerfile \
             -t "$WEB_IMAGE:$SHA" -t "$WEB_IMAGE:latest" .
           docker push "$API_IMAGE:$SHA"
