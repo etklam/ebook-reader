@@ -11,9 +11,6 @@ on:
 jobs:
   release:
     runs-on: hk
-    container:
-      image: node:lts
-      options: -v /var/run/docker.sock:/var/run/docker.sock
     timeout-minutes: 45
     env:
       REGISTRY: git.913555.xyz
