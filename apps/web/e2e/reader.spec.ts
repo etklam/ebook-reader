@@ -255,6 +255,117 @@ test('READ-02: text selection does not trigger page turn or chrome toggle', asyn
   await expect(page.locator('.reader-toolbar[data-visible]')).toHaveCount(0);
 });
 
+test('READ-01: keyboard moves through the chapter and the work; Escape closes one layer', async ({ page }) => {
+  await page.goto(`/read/${publicWork}`);
+  await expect(page.locator('[data-paragraph-index="0"]')).toBeVisible();
+  await page.mouse.click(195, 422);                       // chrome up, to read the label
+  const label = page.locator('.reader-chapter-label');
+  await expect(label).toHaveText(/序章/);
+
+  // scroll mode: ←/→ are chapter turns, PageDown is a screenful
+  await page.keyboard.press('ArrowRight');
+  await expect(label).toHaveText(/第12\.5章/);
+  await page.keyboard.press('ArrowLeft');
+  await expect(label).toHaveText(/序章/);
+
+  // Escape dismisses the sheet first, and only then the chrome
+  await page.mouse.click(195, 422);
+  await page.getByRole('button', { name: '設定' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(page.locator('.reader-toolbar[data-visible]')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.reader-toolbar[data-visible]')).toHaveCount(0);
+
+  // PageDown / Space move by a screenful — measured on the long chapter, which
+  // is guaranteed to have somewhere to go
+  await page.goto(`/read/${longWork}`);
+  await expect(page.locator('[data-paragraph-index="0"]')).toBeVisible({ timeout: 15_000 });
+  const scrollTop = () => page.locator('.reader-scroll').evaluate((el) => el.scrollTop);
+  await page.keyboard.press('PageDown');
+  await page.waitForTimeout(600);                         // smooth scroll settles
+  const afterPageDown = await scrollTop();
+  expect(afterPageDown).toBeGreaterThan(0);
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(600);
+  expect(await scrollTop()).toBeGreaterThan(afterPageDown);
+  await page.keyboard.press('PageUp');
+  await page.waitForTimeout(600);
+  expect(await scrollTop()).toBeLessThan(afterPageDown + 1);
+});
+
+test('READ-01: paginated mode turns pages on a touch swipe, not on a drag-select', async ({ page }) => {
+  await page.goto(`/read/${longWork}`);
+  await expect(page.locator('[data-paragraph-index="0"]')).toBeVisible({ timeout: 15_000 });
+  await page.mouse.click(195, 422);
+  await page.getByRole('button', { name: '設定' }).click();
+  await page.getByRole('button', { name: '分頁' }).click();
+  await expect(page.locator('[data-mode="paginated"]')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await page.mouse.click(195, 422);                       // chrome down
+  await page.waitForTimeout(300);
+
+  const readout = page.locator('.reader-pageinfo');
+  const first = await readout.textContent();
+  const vp = page.locator('[data-testid="reader-viewport"]');
+  const swipe = async (fromX: number, toX: number) => {
+    await vp.dispatchEvent('pointerdown', { pointerType: 'touch', clientX: fromX, clientY: 420, isPrimary: true });
+    await page.waitForTimeout(80);
+    await vp.dispatchEvent('pointerup', { pointerType: 'touch', clientX: toX, clientY: 428, isPrimary: true });
+    await page.waitForTimeout(250);
+  };
+  expect(first).toMatch(/^1 \/ \d+$/);
+  await swipe(330, 110);                                  // leftwards: forward
+  expect(await readout.textContent()).toMatch(/^2 \//);   // exactly one page
+  await swipe(110, 330);                                  // rightwards: back
+  expect(await readout.textContent()).toBe(first);
+
+  // a mouse drag is a selection gesture and must never turn the page (READ-02)
+  const box = await page.locator('[data-paragraph-index="0"]').boundingBox();
+  await page.mouse.move(box!.x + 6, box!.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width - 6, box!.y + 8, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(250);
+  expect(await readout.textContent()).toBe(first);
+});
+
+// The strip is translated by one "step" per page; if that step and the real
+// column pitch disagree, every turn drifts and text is clipped at the seam.
+test('READ-01: a page turn travels exactly one column pitch', async ({ page }) => {
+  await page.goto(`/read/${longWork}`);
+  await expect(page.locator('[data-paragraph-index="0"]')).toBeVisible({ timeout: 15_000 });
+  await page.mouse.click(195, 422);
+  await page.getByRole('button', { name: '設定' }).click();
+  await page.getByRole('button', { name: '分頁' }).click();
+  await expect(page.locator('[data-mode="paginated"]')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(400);
+
+  const geometry = () => page.evaluate(() => {
+    const vp = document.querySelector('.reader-viewport') as HTMLElement;
+    const strip = document.getElementById('reader-body') as HTMLElement;
+    const cs = getComputedStyle(strip);
+    const pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+    return {
+      pitch: strip.clientWidth - pad + (parseFloat(cs.columnGap) || 0),
+      offset: new DOMMatrixReadOnly(cs.transform).m41,
+      vpWidth: vp.clientWidth,
+    };
+  });
+
+  const first = await geometry();
+  expect(first.pitch).toBe(first.vpWidth + 48);     // one viewport + the gap
+  await page.getByRole('button', { name: '下一頁' }).click();
+  await page.waitForTimeout(300);
+  const second = await geometry();
+  expect(first.offset - second.offset).toBe(first.pitch);
+  await page.getByRole('button', { name: '下一頁' }).click();
+  await page.waitForTimeout(300);
+  expect(second.offset - (await geometry()).offset).toBe(first.pitch);
+});
+
 test('READ-02: bottom sheet dismissible via backdrop; focus returns', async ({ page }) => {
   await page.goto(`/read/${publicWork}`);
   await expect(page.locator('[data-paragraph-index="0"]')).toBeVisible();

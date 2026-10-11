@@ -13,11 +13,15 @@ export function BookmarksPage() {
   const { me, loading } = useMe();
   const [entries, setEntries] = useState<BookmarkEntry[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
 
   const refresh = useCallback(() => {
-    getBookmarks().then((r) => setEntries(r.bookmarks)).catch(() => setEntries([]));
+    setFailed(false);
+    // "還沒有書籤" after a failed fetch would tell a member their bookmarks
+    // are gone; the two states get different copy and different actions
+    return getBookmarks().then((r) => setEntries(r.bookmarks)).catch(() => setFailed(true));
   }, []);
-  useEffect(() => { if (me) refresh(); }, [me, refresh]);
+  useEffect(() => { if (me) void refresh(); }, [me, refresh]);
 
   if (loading) {
     return (
@@ -52,9 +56,17 @@ export function BookmarksPage() {
         </nav>
       </header>
 
-      {entries === null && <SkeletonRows count={3} label="載入書籤" />}
+      {entries === null && !failed && <SkeletonRows count={3} label="載入書籤" />}
 
-      {entries !== null && entries.length === 0 && (
+      {failed && (
+        <EmptyState
+          title="書籤暫時載不出來"
+          body="書籤存在帳號裡，沒有遺失——只是這次沒取到。重試一次通常就好。"
+          action={<button className="btn" onClick={() => void refresh()}>重試</button>}
+        />
+      )}
+
+      {!failed && entries !== null && entries.length === 0 && (
         <EmptyState
           title="還沒有書籤"
           body="閱讀時點一下正文叫出工具列，按「書籤」就會記下目前這一段。章節之後被修訂也找得回來——書籤會落在最接近的段落。"

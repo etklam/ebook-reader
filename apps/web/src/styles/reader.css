@@ -133,12 +133,18 @@
 }
 .reader-body p:last-child { margin-bottom: 0; }
 
-/* paginated strip fills the viewport height; columns flow horizontally */
+/* Paginated strip fills the viewport height; columns flow horizontally.
+   The side inset lives on the paragraphs, not on the strip: padding on the
+   multi-column box shrinks the column by 2×inset while the page step is one
+   viewport wide, so every turn drifted by that difference and clipped text at
+   the seam. With the strip's content box exactly one viewport wide, the column
+   pitch is viewport + gap — the step the reader actually translates by. */
 .reader-viewport .reader-body {
   height: 100%;
   max-width: none;
-  padding: 0 var(--sp-6);
+  padding: 0;
 }
+.reader-viewport .reader-body > p { padding-inline: var(--sp-6); }
 
 /* --- top chrome: running head + chapter position hairline ------------------ */
 .reader-top {
@@ -178,8 +184,11 @@
   position: absolute;
   left: 0; bottom: -1px;
   height: 2px;
+  width: 100%;
   background: var(--brand);
-  transition: width var(--dur-slow) var(--ease-out-quart);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur-slow) var(--ease-out-quart);
 }
 
 /* --- icon buttons inside chrome -------------------------------------------- */
@@ -328,12 +337,13 @@
   text-align: center;
   font-size: var(--text-xs);
   color: var(--ink-3);
-  z-index: 5;
+  z-index: var(--z-dropdown);
   pointer-events: none;
-  transition: opacity var(--dur-fast) var(--ease-out-quart);
+  transition: opacity var(--dur-fast) var(--ease-out-quart),
+              visibility var(--dur-fast) var(--ease-out-quart);
 }
 /* the toolbar's own page readout takes over once chrome is open */
-.reader[data-chrome-visible] .reader-pageinfo { opacity: 0; }
+.reader[data-chrome-visible] .reader-pageinfo { opacity: 0; visibility: hidden; }
 
 /* --- transient notices (they clear themselves; see ReaderPage) ------------- */
 .reader-notes {
@@ -387,7 +397,13 @@
   letter-spacing: var(--track-display);
 }
 .reader-msg p { color: var(--ink-2); max-width: 24em; text-wrap: pretty; }
-.reader-msg .msg-actions { display: flex; gap: var(--sp-3); margin-top: var(--sp-2); }
+.reader-msg .msg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-3);
+  margin-top: var(--sp-2);
+}
 .reader-err-code { font-size: var(--text-xs); color: var(--ink-3); font-family: ui-monospace, Menlo, monospace; }
 
 /* chapter-shaped loading placeholder — no centred spinner, no layout shift */

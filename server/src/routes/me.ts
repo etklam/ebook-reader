@@ -130,6 +130,8 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
         author: r.author,
         workType: r.workType,
         serialStatus: r.serialStatus,
+        following: r.lastSeenVersion !== null,
+        lastSeenVersion: r.lastSeenVersion,
         hasUpdate: r.lastSeenVersion !== null && r.latestVersion !== null && r.latestVersion > r.lastSeenVersion,
         newChapterCount: r.newChapters,
         continueChapterId: r.progressChapterId,

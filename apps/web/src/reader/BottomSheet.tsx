@@ -1,10 +1,16 @@
-// Mobile bottom sheet (§9.4) — the only modal pattern on the site. Dialog
-// semantics without a focus trap: Esc and backdrop close it, focus moves in on
-// open and returns to the opener on close, the page behind it stops scrolling,
-// and content scrolls inside. Drag-to-dismiss is deliberately absent.
+// Mobile bottom sheet (§9.4) — the only modal pattern on the site. Esc and
+// backdrop close it, focus moves in on open and returns to the opener on close,
+// Tab cycles inside it (aria-modal promises the rest of the page is out of
+// reach, so Tab must not walk into it), the page behind stops scrolling, and
+// content scrolls inside. Drag-to-dismiss is deliberately absent.
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { Icon } from '../components/Icon.tsx';
+
+const FOCUSABLE = [
+  'a[href]', 'button:not([disabled])', 'input:not([disabled])',
+  'select:not([disabled])', 'textarea:not([disabled])', '[tabindex]:not([tabindex="-1"])',
+].join(',');
 
 export function BottomSheet({
   open, title, onClose, children,
@@ -22,7 +28,28 @@ export function BottomSheet({
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     panelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // Escape closes exactly one layer: without this the reader's own
+        // Escape handler would hide the chrome in the same keystroke
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      // offsetParent skips anything display:none — a collapsed section inside
+      // the sheet must not become an invisible tab stop
+      const stops = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null);
+      const active = document.activeElement;
+      if (stops.length === 0) { e.preventDefault(); panel.focus(); return; }
+      const first = stops[0];
+      const last = stops[stops.length - 1];
+      if (!panel.contains(active)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); return; }
+      if (e.shiftKey && (active === first || active === panel)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+    };
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('keydown', onKey);

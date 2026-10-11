@@ -1,10 +1,12 @@
 // Public catalog (§21): mobile-first library home, set as an index of ruled
-// rows. Applied filter state lives in the URL (§22) so views are shareable and
-// back/forward restore them; the sheet edits a *draft* and only 套用 promotes it
-// (§03A C). Totals are never invented — the public API deliberately returns
-// total: null, so the header reports what is loaded.
+// rows. Applied filter state lives in the URL (§22) so a view is shareable and
+// a reload restores it; the sheet edits a *draft* and only 套用 promotes it
+// (§03A C). Totals are never invented: the list response deliberately returns
+// total: null, so the header's count comes from /api/works/count, which runs
+// the same predicate builder as the list and therefore always agrees with it
+// (§03A-F). If that request fails the header falls back to what is loaded.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getCatalog, getPublicTaxonomy } from '../api/client.ts';
+import { getCatalog, getCatalogCount, getPublicTaxonomy } from '../api/client.ts';
 import type { CatalogWork, TaxonomyItem } from '../api/types.ts';
 import { navigate } from '../App.tsx';
 import { WorkCard } from './WorkCard.tsx';
@@ -13,6 +15,7 @@ import { debounce } from '../reader/pagination.ts';
 import { Icon } from '../components/Icon.tsx';
 import { SkeletonRows } from '../components/Skeleton.tsx';
 import { EmptyState } from '../components/EmptyState.tsx';
+import { count } from '../lib/format.ts';
 
 export interface CatalogFilterState {
   q: string;
@@ -70,6 +73,7 @@ export function CatalogPage() {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [done, setDone] = useState(false);
+  const [total, setTotal] = useState<number | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [categories, setCategories] = useState<TaxonomyItem[]>([]);
@@ -79,6 +83,7 @@ export function CatalogPage() {
   const filterRef = useRef(filter);
   filterRef.current = filter;
   const seqRef = useRef(0);
+  const countSeqRef = useRef(0);
 
   // URL → state on back/forward
   useEffect(() => {
@@ -113,12 +118,25 @@ export function CatalogPage() {
     const seq = ++seqRef.current;
     setLoading(true);
     if (!append) setFailed(false);
-    getCatalog({
+    const query = {
       q: f.q || undefined, type: f.type || undefined,
       categoryIds: f.categoryIds, tagIds: f.tagIds, tagMode: f.tagMode,
-      serialStatus: f.serialStatus, sort: f.sort, limit: PAGE,
-      cursor: cursor ?? undefined,
-    }).then((r) => {
+      serialStatus: f.serialStatus, sort: f.sort,
+    };
+    // the count belongs to the condition set, not to the page: it is fetched
+    // once per condition change and left alone while paging deeper
+    if (!append) {
+      const countSeq = ++countSeqRef.current;
+      setTotal(null);
+      getCatalogCount(query)
+        .then((r) => {
+          // a count we cannot read is the same as no count: show the loaded
+          // figure rather than the word "undefined"
+          if (countSeq === countSeqRef.current) setTotal(typeof r.count === 'number' ? r.count : null);
+        })
+        .catch(() => undefined);
+    }
+    getCatalog({ ...query, limit: PAGE, cursor: cursor ?? undefined }).then((r) => {
       if (seq !== seqRef.current) return;   // a newer condition already won
       setWorks((prev) => (append ? [...prev, ...r.works] : r.works));
       setNextCursor(r.nextCursor);
@@ -168,14 +186,18 @@ export function CatalogPage() {
 
   const firstLoad = loading && works.length === 0;
 
+  // the head states the size of the shelf under these conditions; how much of
+  // it is on screen belongs to the 載入更多 button, where it is actionable
+  const headNote = firstLoad ? '載入中'
+    : total === null ? `已載入 ${count(works.length)} 部`
+    : `共 ${count(total)} 部`;
+
   return (
     <div className="catalog" data-testid="catalog">
       <header className="page-head">
         <div className="head-line">
           <h1>書庫</h1>
-          <span className="head-note">
-            {firstLoad ? '載入中' : `已載入 ${works.length} 部${done ? '' : '，可載入更多'}`}
-          </span>
+          <span className="head-note tnum">{headNote}</span>
         </div>
         <div className="seg" role="tablist" aria-label="作品類型">
           {TYPE_TABS.map((t) => (
@@ -265,7 +287,9 @@ export function CatalogPage() {
       {loading && works.length > 0 && <SkeletonRows count={2} label="載入更多" />}
 
       {!done && !loading && works.length > 0 && (
-        <button className="btn btn-block" onClick={() => load(filter, nextCursor, true)}>載入更多</button>
+        <button className="btn btn-block tnum" onClick={() => load(filter, nextCursor, true)}>
+          載入更多{total === null ? '' : `（${count(works.length)} / ${count(total)}）`}
+        </button>
       )}
 
       <BottomSheet open={sheetOpen} title="篩選" onClose={() => setSheetOpen(false)}>
@@ -362,7 +386,7 @@ function FilterSheet({ applied, categories, tags, onApply }: {
         </div>
       </div>
 
-      <p className="hint" style={{ marginTop: 'var(--sp-4)' }}>
+      <p className="hint sheet-hint">
         重設只清除面板內的分類、標籤與連載狀態，不會動到目前的類型與關鍵字。
       </p>
 

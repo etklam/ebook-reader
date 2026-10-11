@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, getCategories, getTags } from '../api/client.ts';
 import type { TaxonomyItem, TaxonomyListResponse } from '../api/types.ts';
+import { SkeletonLines } from '../components/Skeleton.tsx';
 
 const json = (method: string, body: unknown) => ({
   method,
@@ -69,13 +70,7 @@ export function TaxonomyPanel() {
       </div>
       {msg && <p className="form-error" role="alert">{msg}</p>}
 
-      {loading && items.length === 0 && (
-        <div role="status" aria-label="載入詞庫">
-          {Array.from({ length: 4 }, (_, i) => (
-            <div className="sk sk-line" key={i} style={{ height: '1.1em', margin: '16px 0' }} aria-hidden="true" />
-          ))}
-        </div>
-      )}
+      {loading && items.length === 0 && <SkeletonLines count={4} label="載入詞庫" />}
 
       {!loading && items.length === 0 && (
         <div className="empty">

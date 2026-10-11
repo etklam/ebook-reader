@@ -46,17 +46,23 @@ export function ReaderSettingsPanel({
     </div>
   );
 
+  // the ✓ is part of the chip's selected state everywhere else on the site
+  // (§21: never colour alone) — this panel used to signal it with colour and
+  // weight only
   const group = <T,>(items: Array<{ value: T; label: string }>, current: T, apply: (v: T) => void) =>
-    items.map((it) => (
-      <button
-        key={String(it.value)}
-        className={`chip${current === it.value ? ' selected' : ''}`}
-        aria-pressed={current === it.value}
-        onClick={() => apply(it.value)}
-      >
-        {it.label}
-      </button>
-    ));
+    items.map((it) => {
+      const selected = current === it.value;
+      return (
+        <button
+          key={String(it.value)}
+          className={`chip${selected ? ' selected' : ''}`}
+          aria-pressed={selected}
+          onClick={() => apply(it.value)}
+        >
+          {selected ? '✓ ' : ''}{it.label}
+        </button>
+      );
+    });
 
   return (
     <div data-testid="reader-settings">
@@ -100,8 +106,14 @@ export function ReaderSettingsPanel({
         (mode) => onLayoutChange({ mode }),
       ), '排版方式')}
 
-      <p className="hint" style={{ paddingTop: 'var(--sp-4)' }}>
+      <p className="hint sheet-hint">
         設定會記在這台裝置上；登入後也會同步到帳號。繁簡只影響顯示，原文內容不變。
+      </p>
+      {/* shown only where there is plausibly a keyboard — on a phone this line
+          is noise, and the gesture it would describe is a swipe */}
+      <p className="hint kbd-hint">
+        鍵盤：<kbd>←</kbd> <kbd>→</kbd> 翻頁或換章、<kbd>空白鍵</kbd> 捲動一屏、
+        <kbd>Home</kbd> <kbd>End</kbd> 到章首章尾、<kbd>Esc</kbd> 收起工具列。
       </p>
     </div>
   );

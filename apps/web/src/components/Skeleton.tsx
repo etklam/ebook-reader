@@ -24,6 +24,35 @@ export function SkeletonRows({ count = 5, label = '載入中' }: { count?: numbe
   );
 }
 
+// Evenly spaced lines, for lists whose rows are a single line of text (the
+// table of contents). Three surfaces hand-rolled this with inline styles;
+// one component keeps the rhythm identical in all of them.
+export function SkeletonLines({ count = 8, label = '載入中' }: { count?: number; label?: string }) {
+  return (
+    <div className="sk-lines" role="status" aria-label={label}>
+      {Array.from({ length: count }, (_, i) => (
+        <div className="sk sk-line" key={i} aria-hidden="true" />
+      ))}
+    </div>
+  );
+}
+
+// Colophon-shaped placeholder for the work page: title, author, then the
+// metadata rows, at the sizes the real content uses.
+export function SkeletonDetail() {
+  return (
+    <div className="sk-detail" role="status" aria-label="載入作品">
+      <div className="sk sk-line sk-title" style={{ width: '62%' }} aria-hidden="true" />
+      <div className="sk sk-line" style={{ width: '28%' }} aria-hidden="true" />
+      <div className="sk-lines" aria-hidden="true">
+        {['40%', '55%', '48%', '60%'].map((w) => (
+          <div className="sk sk-line" key={w} style={{ width: w }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Chapter-shaped placeholder for the reader: paragraph-length lines in the
 // prose measure, so the first real paragraph lands where the eye already is.
 export function SkeletonChapter() {

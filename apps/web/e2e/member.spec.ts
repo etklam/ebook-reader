@@ -81,6 +81,52 @@ test('MEM-UI: progress made on device A appears on device B; continue reading wo
   await ctxA.close();
 });
 
+// paragraph under the 30% anchor line — the same line the reader captures
+function visibleParagraph(page: import('@playwright/test').Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const c = document.querySelector('.reader-scroll');
+    if (!c) return null;
+    const r = c.getBoundingClientRect();
+    const line = r.top + r.height * 0.3;
+    for (const p of document.querySelectorAll<HTMLElement>('[data-paragraph-index]')) {
+      if (p.getBoundingClientRect().bottom > line) return p.getAttribute('data-paragraph-index');
+    }
+    return null;
+  });
+}
+
+test('MEM-UI: opening a bookmark lands on its paragraph, not on the resumed position', async ({ page }) => {
+  await login(page);
+  await page.goto(`/read/${work}`);
+  await expect(page.locator('[data-paragraph-index="0"]')).toBeVisible({ timeout: 15_000 });
+  // bookmark near the top: this chapter is short, and a mark taken further in
+  // cannot be told apart from the end-of-chapter position it is compared with
+  await page.waitForTimeout(700);
+  const marked = await visibleParagraph(page);
+  await page.mouse.click(195, 422);
+  await page.getByRole('button', { name: '加入書籤' }).click();
+  await expect(page.locator('.reader-note', { hasText: '已加入書籤' })).toBeVisible();
+
+  // read on, so the saved position and the bookmark disagree
+  await page.mouse.click(195, 422);
+  await page.locator('.reader-scroll').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await page.waitForTimeout(900);
+  const drifted = await visibleParagraph(page);
+  expect(Number(drifted)).toBeGreaterThan(Number(marked));
+
+  await page.goto('/me/bookmarks');
+  await page.locator('[data-testid="bookmark-card"]').first().getByRole('button', { name: '開啟' }).click();
+  await expect(page.locator('[data-paragraph-index="0"]')).toBeVisible({ timeout: 15_000 });
+  await page.waitForTimeout(900);
+  expect(await visibleParagraph(page)).toBe(marked);
+  // the anchor is consumed: no stale #p= left to override the next position
+  expect(page.url()).not.toContain('#');
+
+  await page.goto('/me/bookmarks');
+  await page.locator('[data-testid="bookmark-card"]').first().getByRole('button', { name: '刪除' }).click();
+  await expect(page.locator('[data-testid="bookmark-card"]')).toHaveCount(0);
+});
+
 test('MEM-UI: bookmark created in reader shows in bookmarks page and can be deleted', async ({ page }) => {
   await login(page);
   await page.goto(`/read/${work}`);

@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { getToc } from '../api/client.ts';
 import type { TocEntry } from '../api/types.ts';
+import { SkeletonLines } from '../components/Skeleton.tsx';
 
 const WINDOW = 100;
 
@@ -11,7 +12,8 @@ export function TableOfContents({
   workId, currentChapterId, onJump,
 }: {
   workId: string;
-  currentChapterId: string;
+  /** omitted on the work page, where no chapter is open */
+  currentChapterId?: string | null;
   onJump(chapterId: string): void;
 }) {
   const [entries, setEntries] = useState<TocEntry[]>([]);
@@ -23,6 +25,7 @@ export function TableOfContents({
 
   const loadMore = (offset: number) => {
     setLoading(true);
+    setError(false);
     getToc(workId, WINDOW, offset).then((r) => {
       setTotal(r.total);
       // keyed append; replaces on rewind (offset 0)
@@ -39,7 +42,9 @@ export function TableOfContents({
     currentRef.current.scrollIntoView({ block: 'center' });
   }, [entries]);
 
-  if (error) {
+  // a failure with nothing on screen is the whole surface; a failure while
+  // paging deeper keeps the chapters already listed and offers another go
+  if (error && entries.length === 0) {
     return (
       <div className="empty">
         <h2>目錄載不出來</h2>
@@ -49,15 +54,7 @@ export function TableOfContents({
     );
   }
 
-  if (loading && entries.length === 0) {
-    return (
-      <div role="status" aria-label="載入目錄">
-        {Array.from({ length: 9 }, (_, i) => (
-          <div className="sk sk-line" key={i} style={{ height: '1.1em', margin: '18px 0' }} aria-hidden="true" />
-        ))}
-      </div>
-    );
-  }
+  if (loading && entries.length === 0) return <SkeletonLines count={9} label="載入目錄" />;
 
   const exhausted = total !== null && entries.length >= total;
 
@@ -83,9 +80,12 @@ export function TableOfContents({
         })}
       </ol>
       {!exhausted && (
-        <button className="btn toc-more" onClick={() => loadMore(entries.length)} disabled={loading}>
-          {loading ? '載入中…' : `載入更多（已載入 ${entries.length}${total !== null ? ` / ${total}` : ''}）`}
-        </button>
+        <>
+          {error && <p className="form-error toc-error" role="alert">這一段目錄沒載到，再試一次。</p>}
+          <button className="btn toc-more" onClick={() => loadMore(entries.length)} disabled={loading}>
+            {loading ? '載入中…' : `${error ? '重試' : '載入更多'}（已載入 ${entries.length}${total !== null ? ` / ${total}` : ''}）`}
+          </button>
+        </>
       )}
     </nav>
   );

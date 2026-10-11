@@ -14,7 +14,7 @@ const mem: Store = {};
 };
 
 const { splitParagraphs } = await import('./paragraphs.ts');
-const { normalizeSettings, remapPosition, loadPosition, savePosition, loadSettings, DEFAULT_SETTINGS } = await import('./reader-state.ts');
+const { normalizeSettings, remapPosition, loadPosition, savePosition, loadSettings, parsePositionHash, DEFAULT_SETTINGS } = await import('./reader-state.ts');
 const { clampPage, pageStep, debounce } = await import('./pagination.ts');
 const { convertParagraphs } = await import('./conversion.ts');
 
@@ -67,6 +67,18 @@ test('remapPosition: same revision keeps paragraph; new revision clamps', () => 
 
 test('loadSettings returns defaults with empty storage', () => {
   assert.deepEqual(loadSettings(), DEFAULT_SETTINGS);
+});
+
+// a bookmark opens `/read/:work/:chapter#p=<index>&rev=<revision>`
+test('parsePositionHash: reads a bookmark anchor, rejects anything partial', () => {
+  assert.deepEqual(parsePositionHash('#p=12&rev=r1'), { paragraphIndex: 12, revisionId: 'r1' });
+  assert.deepEqual(parsePositionHash('p=0&rev=r1'), { paragraphIndex: 0, revisionId: 'r1' });
+  assert.equal(parsePositionHash(''), null);
+  assert.equal(parsePositionHash('#p=12'), null);          // no revision to compare
+  assert.equal(parsePositionHash('#rev=r1'), null);        // no paragraph
+  assert.equal(parsePositionHash('#p=-1&rev=r1'), null);
+  assert.equal(parsePositionHash('#p=1.5&rev=r1'), null);
+  assert.equal(parsePositionHash('#p=x&rev=r1'), null);
 });
 
 // --- pagination ----------------------------------------------------------------------

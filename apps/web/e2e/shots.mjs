@@ -85,6 +85,13 @@ async function mock(page) {
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 
     if (p === '/api/me') return json({ user: member ? { id: 'u1', role: ROLE } : null });
+    if (p === '/api/works/count') {
+      const q = url.searchParams.get('q') ?? '';
+      const type = url.searchParams.get('type') ?? '';
+      // a catalog bigger than the page, so the header reads like production
+      const matched = WORKS.filter((w) => (!q || w.title.includes(q)) && (!type || w.workType === type));
+      return json({ count: matched.length === WORKS.length ? 128 : matched.length });
+    }
     if (p === '/api/works') {
       const q = url.searchParams.get('q') ?? '';
       const type = url.searchParams.get('type') ?? '';
@@ -127,8 +134,8 @@ async function mock(page) {
     }
     if (p === '/api/me/library') {
       return json({ works: member ? [
-        { workId: '11111111-1111-4111-8111-111111111111', title: '重生之廚神', author: '林夕', workType: 'serial', serialStatus: 'ongoing', hasUpdate: true, newChapterCount: 3, continueChapterId: 'aaaaaaa3-0000-4000-8000-000000000003', continueParagraphIndex: 7, lastReadAt: new Date(Date.now() - 7200000).toISOString(), addedAt: new Date().toISOString() },
-        { workId: '33333333-3333-4333-8333-333333333333', title: '長夜將盡', author: '裴九', workType: 'serial', serialStatus: 'paused', hasUpdate: false, newChapterCount: 0, continueChapterId: null, continueParagraphIndex: null, lastReadAt: null, addedAt: new Date().toISOString() },
+        { workId: '11111111-1111-4111-8111-111111111111', title: '重生之廚神', author: '林夕', workType: 'serial', serialStatus: 'ongoing', following: true, lastSeenVersion: 11, hasUpdate: true, newChapterCount: 3, continueChapterId: 'aaaaaaa3-0000-4000-8000-000000000003', continueParagraphIndex: 7, lastReadAt: new Date(Date.now() - 7200000).toISOString(), addedAt: new Date().toISOString() },
+        { workId: '33333333-3333-4333-8333-333333333333', title: '長夜將盡', author: '裴九', workType: 'serial', serialStatus: 'paused', following: false, lastSeenVersion: null, hasUpdate: false, newChapterCount: 0, continueChapterId: null, continueParagraphIndex: null, lastReadAt: null, addedAt: new Date().toISOString() },
       ] : [] });
     }
     if (p === '/api/me/follows') {

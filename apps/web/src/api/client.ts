@@ -88,7 +88,8 @@ export const removeFromLibrary = (workId: string) => api<{ ok: true }>(`/api/me/
 export const getFollows = () => api<{ follows: FollowEntry[] }>('/api/me/follows');
 export const follow = (workId: string) => api<{ ok: true }>(`/api/me/follows/${workId}`, json('PUT', {}));
 export const unfollow = (workId: string) => api<{ ok: true }>(`/api/me/follows/${workId}`, { method: 'DELETE' });
-export const markFollowSeen = (workId: string) => api<{ ok: true }>(`/api/me/follows/${workId}/seen`, json('POST', {}));
+export const markFollowSeen = (workId: string, releaseVersion?: number) =>
+  api<{ ok: true }>(`/api/me/follows/${workId}/seen`, json('POST', releaseVersion === undefined ? {} : { releaseVersion }));
 
 export const getProgress = (workId: string) => api<{ progress: ServerProgress | null }>(`/api/me/progress/${workId}`);
 export const saveProgress = (workId: string, body: {

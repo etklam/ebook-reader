@@ -1,7 +1,8 @@
 // Work detail (§23): a colophon page — title, author, then the facts on a
-// tabular baseline, TOC (windowed), and the reachable bottom action bar the
-// mobile spec asks for (§04). For signed-in members: favourite/follow with
-// update state. Opening the detail marks followed updates seen (§38 policy).
+// tabular baseline, the newest chapters in reach, the full TOC (windowed), and
+// the reachable bottom action bar the mobile spec asks for (§04). For signed-in
+// members: favourite/follow with update state. Opening the detail marks
+// followed updates seen (§38 policy).
 import { useCallback, useEffect, useState } from 'react';
 import {
   addToLibrary, follow, getToc, getWorkDetail, getWorkMemberState,
@@ -10,19 +11,24 @@ import {
 import type { ServerProgress, TocEntry, WorkDetail } from '../api/types.ts';
 import { navigate } from '../App.tsx';
 import { useMe } from '../account/useMe.ts';
+import { refreshUpdates } from '../account/useUpdates.ts';
 import { BottomSheet } from '../reader/BottomSheet.tsx';
+import { TableOfContents } from '../reader/TableOfContents.tsx';
 import { Icon } from '../components/Icon.tsx';
 import { EmptyState } from '../components/EmptyState.tsx';
+import { SkeletonDetail, SkeletonLines } from '../components/Skeleton.tsx';
 import { STATUS_LABEL, TYPE_LABEL_LONG, count, relativeDay } from '../lib/format.ts';
+
+/** chapters shown inline; the rest stay one tap away in the TOC sheet */
+const LATEST = 5;
 
 export function WorkDetailPage({ workId }: { workId: string }) {
   const { me } = useMe();
   const [work, setWork] = useState<WorkDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [toc, setToc] = useState<TocEntry[]>([]);
-  const [tocTotal, setTocTotal] = useState(0);
+  const [latest, setLatest] = useState<TocEntry[] | null>(null);
+  const [latestFailed, setLatestFailed] = useState(false);
   const [tocOpen, setTocOpen] = useState(false);
-  const [tocLoading, setTocLoading] = useState(false);
   const [progress, setProgress] = useState<ServerProgress | null>(null);
   const [inLibrary, setInLibrary] = useState(false);
   const [following, setFollowing] = useState(false);
@@ -32,23 +38,29 @@ export function WorkDetailPage({ workId }: { workId: string }) {
   useEffect(() => {
     let cancelled = false;
     getWorkDetail(workId).then((w) => {
-      if (cancelled) return;
-      setWork(w);
-      // opening the detail marks followed updates seen (§38)
-      if (me) void markFollowSeen(workId).catch(() => undefined);
+      if (!cancelled) setWork(w);
     }).catch((e: { code?: string }) => {
       if (!cancelled) setError(e.code ?? 'work_not_found');
     });
     return () => { cancelled = true; };
   }, [workId]);
 
+  // The newest chapters are the tail of the editorial order, and the published
+  // chapter count is already in hand — so the window is one request, not a
+  // count request followed by a page request.
+  const loadLatest = useCallback((total: number) => {
+    setLatestFailed(false);
+    const tail = (n: number) => getToc(workId, LATEST, Math.max(0, n - LATEST));
+    return tail(total)
+      // counts can disagree if a release landed between the two reads
+      .then((r) => (r.chapters.length === 0 && r.total > 0 ? tail(r.total) : r))
+      .then((r) => setLatest([...r.chapters].reverse()))
+      .catch(() => setLatestFailed(true));
+  }, [workId]);
+
   useEffect(() => {
-    if (!tocOpen) return;
-    setTocLoading(true);
-    void getToc(workId, 200, 0)
-      .then((r) => { setToc(r.chapters); setTocTotal(r.total); })
-      .finally(() => setTocLoading(false));
-  }, [tocOpen, workId]);
+    if (work) void loadLatest(work.chapterCount);
+  }, [work, loadLatest]);
 
   useEffect(() => {
     if (!me) return;
@@ -58,19 +70,26 @@ export function WorkDetailPage({ workId }: { workId: string }) {
   // one request for this work's state: the library is keyset-paginated, so
   // scanning page 1 would report "not saved" for anything further down
   const refreshState = useCallback(() => {
-    if (!me) return;
-    void getWorkMemberState(workId)
+    if (!me) return Promise.resolve();
+    return getWorkMemberState(workId)
       .then((s) => {
         setInLibrary(s.inLibrary);
         setFollowing(s.following);
         setUpdateBadge(s.newChapterCount);
-      }).catch(() => undefined);
+      }).then(() => undefined).catch(() => undefined);
   }, [me, workId]);
   useEffect(() => { refreshState(); }, [refreshState]);
 
+  // Mark seen after the session is known, then refresh both the global badge
+  // and this page's follow count so neither races the write.
+  useEffect(() => {
+    if (!me) return;
+    void markFollowSeen(workId).then(() => refreshUpdates(true)).then(refreshState).catch(() => undefined);
+  }, [me, workId, refreshState]);
+
   const act = (p: Promise<unknown>) => {
     setBusy(true);
-    void p.then(refreshState).catch(() => undefined).finally(() => setBusy(false));
+    void p.then(refreshState).then(() => refreshUpdates(true)).catch(() => undefined).finally(() => setBusy(false));
   };
 
   if (error) {
@@ -86,19 +105,7 @@ export function WorkDetailPage({ workId }: { workId: string }) {
   }
 
   if (!work) {
-    return (
-      <div className="work-detail" role="status" aria-label="載入作品">
-        <div style={{ paddingTop: 'var(--sp-7)' }}>
-          <div className="sk sk-line" style={{ width: '62%', height: '1.6em' }} aria-hidden="true" />
-          <div className="sk sk-line" style={{ width: '28%' }} aria-hidden="true" />
-          <div style={{ marginTop: 'var(--sp-6)' }} aria-hidden="true">
-            {['40%', '55%', '48%', '60%'].map((w, i) => (
-              <div className="sk sk-line" key={i} style={{ width: w, height: '1em', margin: '14px 0' }} />
-            ))}
-          </div>
-        </div>
-      </div>
-    );
+    return <div className="work-detail"><SkeletonDetail /></div>;
   }
 
   const startReading = () => {
@@ -168,12 +175,43 @@ export function WorkDetailPage({ workId }: { workId: string }) {
 
       {work.description && <p className="detail-desc">{work.description}</p>}
 
+      {/* the sign-in offer belongs with the work's facts, above the chapter
+          list — under it, it is the last line of a long page */}
       {!me && (
-        <p className="head-note" style={{ marginTop: 'var(--sp-6)' }}>
+        <p className="head-note detail-note">
           未登入也能閱讀；<button className="linkish" onClick={() => navigate('/login')}>登入</button>
           後可收藏、追更，並跨裝置同步進度。
         </p>
       )}
+
+      {/* The newest chapters are the reason a follower opens this page, so they
+          are on it — not behind the sheet. The sheet still holds all 1,284. */}
+      <section className="detail-chapters" aria-labelledby="latest-head">
+        <div className="head-line">
+          <h2 id="latest-head">最新章節</h2>
+          <button className="linkish" onClick={() => setTocOpen(true)}>
+            全部 {count(work.chapterCount)} 章
+          </button>
+        </div>
+        {latest === null && !latestFailed && <SkeletonLines count={3} label="載入最新章節" />}
+        {latestFailed && (
+          <p className="muted">
+            章節列表暫時載不出來。{' '}
+            <button className="linkish" onClick={() => void loadLatest(work.chapterCount)}>重試</button>
+          </p>
+        )}
+        {latest?.length === 0 && <p className="muted">這個版本還沒有章節。</p>}
+        <ol className="toc-list">
+          {latest?.map((c) => (
+            <li key={c.id}>
+              <button className="toc-item" onClick={() => navigate(`/read/${workId}/${c.id}`)}>
+                <span className="toc-label">{c.labelRaw || '（無標籤）'}</span>
+                {c.title && <span className="toc-title">{c.title}</span>}
+              </button>
+            </li>
+          ))}
+        </ol>
+      </section>
 
       <div className="detail-cta">
         <button className="btn primary" onClick={startReading} disabled={!work.firstChapterId && !progress}>
@@ -182,29 +220,13 @@ export function WorkDetailPage({ workId }: { workId: string }) {
         <button className="btn" onClick={() => setTocOpen(true)}>目錄</button>
       </div>
 
-      <BottomSheet open={tocOpen} title={`目錄（${count(tocTotal)} 章）`} onClose={() => setTocOpen(false)}>
-        {tocLoading && toc.length === 0 && (
-          <div role="status" aria-label="載入目錄">
-            {Array.from({ length: 8 }, (_, i) => (
-              <div className="sk sk-line" key={i} style={{ height: '1.1em', margin: '18px 0' }} aria-hidden="true" />
-            ))}
-          </div>
-        )}
-        <ol className="toc-list">
-          {toc.map((c) => (
-            <li key={c.id}>
-              <button className="toc-item" onClick={() => { setTocOpen(false); navigate(`/read/${workId}/${c.id}`); }}>
-                <span className="toc-label">{c.labelRaw || '（無標籤）'}</span>
-                {c.title && <span className="toc-title">{c.title}</span>}
-              </button>
-            </li>
-          ))}
-        </ol>
-        {toc.length < tocTotal && (
-          <button className="btn toc-more" onClick={() => getToc(workId, 200, toc.length).then((r) => { setToc((prev) => [...prev, ...r.chapters]); })}>
-            載入更多（{toc.length} / {tocTotal}）
-          </button>
-        )}
+      {/* one TOC implementation for the whole site: the reader's. It windows,
+          survives a failed page, and keeps irregular labels verbatim. */}
+      <BottomSheet open={tocOpen} title={`目錄（${count(work.chapterCount)} 章）`} onClose={() => setTocOpen(false)}>
+        <TableOfContents
+          workId={workId}
+          onJump={(id) => { setTocOpen(false); navigate(`/read/${workId}/${id}`); }}
+        />
       </BottomSheet>
     </div>
   );

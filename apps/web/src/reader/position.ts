@@ -50,10 +50,25 @@ export function restoreScrollPosition(
 // Paginated mode: the content box is a horizontal column strip inside a fixed
 // viewport; columns advance by pageWidth + gap. Rect-based so it works under
 // the strip's translateX transform (offset compensated explicitly).
-export function columnGap(viewport: HTMLElement): number {
-  const gap = getComputedStyle(viewport).columnGap;
-  const px = Number.parseFloat(gap);
+//
+// The gap is a property of the multi-column strip, not of the viewport that
+// clips it. Reading it off the viewport returned `normal` → 0, so every column
+// index and the page count were computed against a step one gap too short —
+// an error that compounds with distance and lands a restore dozens of pages
+// away in a long chapter.
+export function columnGap(strip: HTMLElement): number {
+  const px = Number.parseFloat(getComputedStyle(strip).columnGap);
   return Number.isFinite(px) ? px : 0;
+}
+
+// One column plus one gap, measured off the strip's own content box rather
+// than off the viewport: those are the same width only while the strip carries
+// no horizontal padding, and silently disagreeing with the layout is how a
+// restore ends up pages away from where it aimed.
+export function columnStep(strip: HTMLElement, _viewport?: HTMLElement): number {
+  const cs = getComputedStyle(strip);
+  const pad = (Number.parseFloat(cs.paddingLeft) || 0) + (Number.parseFloat(cs.paddingRight) || 0);
+  return strip.clientWidth - pad + columnGap(strip);
 }
 
 export function columnIndexForParagraph(
@@ -64,26 +79,37 @@ export function columnIndexForParagraph(
 ): number {
   const el = getParagraphElement(root, index);
   if (!el) return 0;
-  const step = viewport.clientWidth + columnGap(viewport);
+  const step = columnStep(root, viewport);
+  if (step <= 0) return 0;
   const left = el.getBoundingClientRect().left - viewport.getBoundingClientRect().left + currentOffset;
   return Math.max(0, Math.round(left / step));
 }
 
 export function columnCount(strip: HTMLElement, viewport: HTMLElement): number {
-  const step = viewport.clientWidth + columnGap(viewport);
+  const step = columnStep(strip, viewport);
   if (step <= 0) return 1;
   return Math.max(1, Math.round(strip.scrollWidth / step));
 }
 
 // First paragraph visible in the current column (paginated mode): visibility
 // is horizontal here — earlier columns sit left of the viewport edge.
+//
+// The test is "does this paragraph still reach into the viewport", not "does it
+// start inside it". A paragraph long enough to fragment across columns leaves
+// the column it spills into with no paragraph *starting* in it; keying on the
+// start meant such a column matched nothing and fell through to the last
+// paragraph of the chapter, which both saved a wildly wrong reading position
+// and threw page turns to the end of a long chapter.
 export function captureColumnParagraph(root: HTMLElement, viewport: HTMLElement): number {
   const vpLeft = viewport.getBoundingClientRect().left;
   const vpRight = vpLeft + viewport.clientWidth;
   const paras = root.querySelectorAll<HTMLElement>(`[${PARA_ATTR}]`);
   for (const p of paras) {
-    const left = p.getBoundingClientRect().left;
-    if (left >= vpLeft - 1 && left < vpRight) return Number(p.getAttribute(PARA_ATTR));
+    // A fragmented element's rect spans its first and last fragment. Require
+    // intersection on both sides so a paragraph in a later column is not
+    // mistaken for one visible in this page.
+    const rect = p.getBoundingClientRect();
+    if (rect.right > vpLeft + 1 && rect.left < vpRight - 1) return Number(p.getAttribute(PARA_ATTR));
   }
   const final = paras[paras.length - 1];
   return final ? Number(final.getAttribute(PARA_ATTR)) : 0;

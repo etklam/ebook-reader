@@ -6,6 +6,7 @@ import { navigate } from '../App.tsx';
 import { PublishPanel } from './PublishPanel.tsx';
 import { TaxonomyPanel } from './TaxonomyPanel.tsx';
 import { count } from '../lib/format.ts';
+import { SkeletonLines } from '../components/Skeleton.tsx';
 
 // --- tiny API helpers ----------------------------------------------------------
 async function api(path: string, init?: RequestInit): Promise<{ status: number; body: any }> {
@@ -47,8 +48,8 @@ export function AdminApp() {
 
   if (me === null) {
     return (
-      <div className="app-main admin-shell" role="status" aria-label="載入中">
-        <div className="sk sk-line" style={{ width: '40%', height: '1.6em', marginTop: 32 }} />
+      <div className="app-main admin-shell">
+        <SkeletonLines count={1} label="載入管理介面" />
       </div>
     );
   }
@@ -492,15 +493,7 @@ function ChapterList({ importId }: { importId: string }) {
     api(`/api/admin/imports/${importId}/chapters?page=${page}&limit=50`).then(({ body }) => setData(body));
   }, [importId, page]);
 
-  if (!data) {
-    return (
-      <div role="status" aria-label="載入章節">
-        {Array.from({ length: 5 }, (_, i) => (
-          <div className="sk sk-line" key={i} style={{ height: '1.1em', margin: '16px 0' }} aria-hidden="true" />
-        ))}
-      </div>
-    );
-  }
+  if (!data) return <SkeletonLines count={5} label="載入章節" />;
 
   const pages = Math.max(1, Math.ceil(data.total / data.limit));
   return (
@@ -509,7 +502,7 @@ function ChapterList({ importId }: { importId: string }) {
         {data.chapters.map((c: any) => (
           <li className="row" key={c.position}>
             <div className="row-main">
-              <span className="row-title" style={{ fontSize: 'var(--text-base)' }}>
+              <span className="row-title row-title-sm">
                 {c.labelRaw || '（無標籤）'}{c.title ? `　${c.title}` : ''}
               </span>
               <div className="row-sub">
@@ -525,7 +518,7 @@ function ChapterList({ importId }: { importId: string }) {
           </li>
         ))}
       </ol>
-      <div className="row-actions" style={{ alignItems: 'center' }}>
+      <div className="row-actions pager">
         <button className="btn" disabled={page <= 1} onClick={() => setPage(page - 1)}>上一頁</button>
         <span className="hint tnum">第 {data.page} / {pages} 頁</span>
         <button className="btn" disabled={page >= pages} onClick={() => setPage(page + 1)}>下一頁</button>

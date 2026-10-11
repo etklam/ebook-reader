@@ -115,6 +115,8 @@ export interface LibraryEntry {
   author: string;
   workType: WorkType;
   serialStatus: SerialStatus;
+  following: boolean;
+  lastSeenVersion: number | null;
   hasUpdate: boolean;
   newChapterCount: number;
   continueChapterId: string | null;

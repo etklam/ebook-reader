@@ -1,0 +1,273 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-10T17:34:49Z",
+  "title": "Design System: 典藏",
+  "extensions": {
+    "colorMeta": {
+      "brand": {
+        "role": "primary",
+        "displayName": "Bronze Ink",
+        "canonical": "oklch(0.505 0.104 77)",
+        "tonalRamp": ["oklch(0.15 0.104 77)", "oklch(0.26 0.104 77)", "oklch(0.37 0.104 77)", "oklch(0.44 0.088 77)", "oklch(0.505 0.104 77)", "oklch(0.70 0.104 77)", "oklch(0.82 0.104 77)", "oklch(0.95 0.06 77)"]
+      },
+      "brand-hover": {
+        "role": "primary",
+        "displayName": "Deep Bronze",
+        "canonical": "oklch(0.44 0.088 77)",
+        "tonalRamp": ["oklch(0.15 0.088 77)", "oklch(0.26 0.088 77)", "oklch(0.37 0.088 77)", "oklch(0.44 0.088 77)", "oklch(0.56 0.088 77)", "oklch(0.70 0.088 77)", "oklch(0.82 0.088 77)", "oklch(0.95 0.055 77)"]
+      },
+      "brand-tint": {
+        "role": "primary",
+        "displayName": "Bronze Wash",
+        "canonical": "oklch(0.965 0.025 77)",
+        "tonalRamp": ["oklch(0.15 0.025 77)", "oklch(0.26 0.025 77)", "oklch(0.37 0.025 77)", "oklch(0.48 0.025 77)", "oklch(0.59 0.025 77)", "oklch(0.72 0.025 77)", "oklch(0.86 0.025 77)", "oklch(0.965 0.025 77)"]
+      },
+      "on-brand": {
+        "role": "primary",
+        "displayName": "Ink On Bronze",
+        "canonical": "oklch(0.995 0.004 77)",
+        "tonalRamp": ["oklch(0.15 0.004 77)", "oklch(0.26 0.004 77)", "oklch(0.37 0.004 77)", "oklch(0.48 0.004 77)", "oklch(0.62 0.004 77)", "oklch(0.76 0.004 77)", "oklch(0.88 0.004 77)", "oklch(0.995 0.004 77)"]
+      },
+      "danger": {
+        "role": "secondary",
+        "displayName": "Red Correction",
+        "canonical": "oklch(0.505 0.165 25)",
+        "tonalRamp": ["oklch(0.15 0.165 25)", "oklch(0.26 0.165 25)", "oklch(0.37 0.165 25)", "oklch(0.505 0.165 25)", "oklch(0.62 0.165 25)", "oklch(0.705 0.145 25)", "oklch(0.84 0.09 25)", "oklch(0.958 0.02 25)"]
+      },
+      "ok": {
+        "role": "secondary",
+        "displayName": "Field Green",
+        "canonical": "oklch(0.49 0.105 150)",
+        "tonalRamp": ["oklch(0.15 0.105 150)", "oklch(0.26 0.105 150)", "oklch(0.37 0.105 150)", "oklch(0.49 0.105 150)", "oklch(0.60 0.105 150)", "oklch(0.72 0.11 150)", "oklch(0.84 0.08 150)", "oklch(0.95 0.03 150)"]
+      },
+      "bg": {
+        "role": "neutral",
+        "displayName": "Page",
+        "canonical": "oklch(1 0 0)",
+        "tonalRamp": ["oklch(0.145 0 0)", "oklch(0.26 0 0)", "oklch(0.37 0 0)", "oklch(0.48 0 0)", "oklch(0.60 0 0)", "oklch(0.74 0 0)", "oklch(0.88 0 0)", "oklch(1 0 0)"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Chrome",
+        "canonical": "oklch(0.981 0.004 77)",
+        "tonalRamp": ["oklch(0.15 0.004 77)", "oklch(0.26 0.004 77)", "oklch(0.37 0.004 77)", "oklch(0.48 0.004 77)", "oklch(0.60 0.004 77)", "oklch(0.74 0.004 77)", "oklch(0.88 0.004 77)", "oklch(0.981 0.004 77)"]
+      },
+      "surface-2": {
+        "role": "neutral",
+        "displayName": "Inset",
+        "canonical": "oklch(0.962 0.006 77)",
+        "tonalRamp": ["oklch(0.15 0.006 77)", "oklch(0.26 0.006 77)", "oklch(0.37 0.006 77)", "oklch(0.48 0.006 77)", "oklch(0.60 0.006 77)", "oklch(0.74 0.006 77)", "oklch(0.88 0.006 77)", "oklch(0.962 0.006 77)"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Text Black",
+        "canonical": "oklch(0.225 0.014 77)",
+        "tonalRamp": ["oklch(0.15 0.014 77)", "oklch(0.225 0.014 77)", "oklch(0.37 0.014 77)", "oklch(0.48 0.014 77)", "oklch(0.60 0.014 77)", "oklch(0.74 0.014 77)", "oklch(0.88 0.014 77)", "oklch(0.95 0.014 77)"]
+      },
+      "ink-2": {
+        "role": "neutral",
+        "displayName": "Secondary Prose",
+        "canonical": "oklch(0.43 0.014 77)",
+        "tonalRamp": ["oklch(0.15 0.014 77)", "oklch(0.26 0.014 77)", "oklch(0.43 0.014 77)", "oklch(0.52 0.014 77)", "oklch(0.63 0.014 77)", "oklch(0.76 0.014 77)", "oklch(0.88 0.014 77)", "oklch(0.95 0.014 77)"]
+      },
+      "ink-3": {
+        "role": "neutral",
+        "displayName": "Metadata",
+        "canonical": "oklch(0.535 0.014 77)",
+        "tonalRamp": ["oklch(0.15 0.014 77)", "oklch(0.26 0.014 77)", "oklch(0.40 0.014 77)", "oklch(0.535 0.014 77)", "oklch(0.655 0.012 77)", "oklch(0.78 0.012 77)", "oklch(0.88 0.012 77)", "oklch(0.95 0.012 77)"]
+      },
+      "ink-faint": {
+        "role": "neutral",
+        "displayName": "Disabled",
+        "canonical": "oklch(0.665 0.012 77)",
+        "tonalRamp": ["oklch(0.15 0.012 77)", "oklch(0.26 0.012 77)", "oklch(0.40 0.012 77)", "oklch(0.52 0.012 77)", "oklch(0.665 0.012 77)", "oklch(0.78 0.012 77)", "oklch(0.88 0.012 77)", "oklch(0.95 0.012 77)"]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "oklch(0.905 0.006 77)",
+        "tonalRamp": ["oklch(0.15 0.006 77)", "oklch(0.285 0.005 77)", "oklch(0.40 0.006 77)", "oklch(0.52 0.006 77)", "oklch(0.64 0.006 77)", "oklch(0.78 0.006 77)", "oklch(0.905 0.006 77)", "oklch(0.96 0.006 77)"]
+      },
+      "rule-strong": {
+        "role": "neutral",
+        "displayName": "Rule",
+        "canonical": "oklch(0.835 0.008 77)",
+        "tonalRamp": ["oklch(0.15 0.008 77)", "oklch(0.38 0.006 77)", "oklch(0.48 0.008 77)", "oklch(0.60 0.008 77)", "oklch(0.72 0.008 77)", "oklch(0.835 0.008 77)", "oklch(0.91 0.008 77)", "oklch(0.96 0.008 77)"]
+      },
+      "sepia-bg": {
+        "role": "tertiary",
+        "displayName": "護眼 Paper",
+        "canonical": "oklch(0.945 0.027 86)",
+        "tonalRamp": ["oklch(0.15 0.027 86)", "oklch(0.285 0.022 62)", "oklch(0.40 0.027 86)", "oklch(0.52 0.027 86)", "oklch(0.65 0.027 86)", "oklch(0.80 0.026 86)", "oklch(0.915 0.026 86)", "oklch(0.965 0.022 86)"]
+      },
+      "dark-bg": {
+        "role": "tertiary",
+        "displayName": "Night Page",
+        "canonical": "oklch(0.145 0 0)",
+        "tonalRamp": ["oklch(0.145 0 0)", "oklch(0.195 0 0)", "oklch(0.245 0 0)", "oklch(0.38 0 0)", "oklch(0.52 0 0)", "oklch(0.655 0 0)", "oklch(0.78 0 0)", "oklch(0.925 0 0)"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "The work title on the detail page. One per page, never elsewhere." },
+      "headline": { "displayName": "Headline", "purpose": "Page titles — 書庫, 我的書庫, 我的書籤. text-wrap: balance." },
+      "title": { "displayName": "Title", "purpose": "Row titles in every ruled list, empty-state and panel headings." },
+      "prose": { "displayName": "Prose", "purpose": "Reader body text. Reader-set 14–28px, line-height 1.6/1.9/2.2, 2em first-line indent, justified inter-ideograph, 34em measure." },
+      "body": { "displayName": "Body", "purpose": "Descriptions, secondary prose, button labels." },
+      "form": { "displayName": "Form", "purpose": "Every input, pinned at 16px so iOS Safari never zooms on focus." },
+      "label": { "displayName": "Label", "purpose": "Metadata, counts, dates, status, nav labels. 12px is the CJK legibility floor; tabular figures throughout." }
+    },
+    "shadows": [
+      { "name": "none", "value": "none", "purpose": "The default and the doctrine. There is not a single drop shadow in the system; depth is a tonal step plus a hairline." },
+      { "name": "focus-ring-inset", "value": "inset 0 0 0 1px oklch(0.505 0.104 77)", "purpose": "The only box-shadow in the codebase. Thickens a focused input's border without moving layout; pairs with the bronze border colour." },
+      { "name": "scrim-light", "value": "background: oklch(0.225 0.014 77 / 0.42)", "purpose": "Backdrop behind the bottom sheet — the one element that leaves the plane. 62% black in dark mode." }
+    ],
+    "motion": [
+      { "name": "dur-fast", "value": "120ms", "purpose": "Colour and border transitions on buttons, chips, rows, icon buttons." },
+      { "name": "dur", "value": "180ms", "purpose": "Chrome slide (reader top bar and toolbar), backdrop fade." },
+      { "name": "dur-slow", "value": "260ms", "purpose": "Sheet slide-up, toast entrance, the chapter-position hairline." },
+      { "name": "ease-out-quart", "value": "cubic-bezier(0.25, 1, 0.5, 1)", "purpose": "Default easing for state transitions and chrome." },
+      { "name": "ease-out-expo", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Entrances that travel a distance: the sheet and the toast. No bounce, no elastic, anywhere." },
+      { "name": "reduced-motion", "value": "@media (prefers-reduced-motion: reduce) { transition-duration: 1ms; animation-duration: 1ms; }", "purpose": "Movement is removed, feedback is kept: the skeleton pulse becomes a static tint rather than disappearing." }
+    ],
+    "breakpoints": [
+      { "name": "phone", "value": "360px" },
+      { "name": "acceptance", "value": "390px" },
+      { "name": "wide", "value": "768px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one primary action on a surface; on phones it lives in the bottom third where the thumb is.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">開始閱讀</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 6px 12px; font-family: -apple-system, \"PingFang TC\", \"Noto Sans TC\", sans-serif; font-size: 0.9375rem; line-height: 1.3; white-space: nowrap; border: 1px solid oklch(0.835 0.008 77); border-radius: 4px; cursor: pointer; transition: background 120ms cubic-bezier(0.25,1,0.5,1), border-color 120ms cubic-bezier(0.25,1,0.5,1), color 120ms cubic-bezier(0.25,1,0.5,1); } .ds-btn-primary { font-weight: 600; color: oklch(0.995 0.004 77); background: oklch(0.505 0.104 77); border-color: oklch(0.505 0.104 77); } .ds-btn-primary:hover { background: oklch(0.44 0.088 77); border-color: oklch(0.44 0.088 77); } .ds-btn-primary:active { background: oklch(0.44 0.088 77); } .ds-btn-primary:focus-visible { outline: 2px solid oklch(0.505 0.104 77); outline-offset: 2px; } .ds-btn-primary:disabled { background: oklch(0.905 0.006 77); border-color: oklch(0.905 0.006 77); color: oklch(0.535 0.014 77); cursor: not-allowed; }"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button-default",
+      "description": "The outlined default: secondary actions, retries, 載入更多.",
+      "html": "<button class=\"ds-btn ds-btn-default\">目錄</button>",
+      "css": ".ds-btn-default { color: oklch(0.225 0.014 77); background: oklch(1 0 0); border-color: oklch(0.835 0.008 77); } .ds-btn-default:hover { background: oklch(0.962 0.006 77); border-color: oklch(0.665 0.012 77); } .ds-btn-default:active { background: oklch(0.225 0.014 77 / 0.05); } .ds-btn-default:focus-visible { outline: 2px solid oklch(0.505 0.104 77); outline-offset: 2px; } .ds-btn-default:disabled { color: oklch(0.665 0.012 77); border-color: oklch(0.905 0.006 77); cursor: not-allowed; }"
+    },
+    {
+      "name": "Quiet Button",
+      "kind": "button",
+      "refersTo": "button-quiet",
+      "description": "The third choice in a group — present without competing for the eye.",
+      "html": "<button class=\"ds-btn ds-btn-quiet\">回書庫</button>",
+      "css": ".ds-btn-quiet { color: oklch(0.43 0.014 77); background: none; border-color: transparent; } .ds-btn-quiet:hover { color: oklch(0.225 0.014 77); background: oklch(0.225 0.014 77 / 0.05); border-color: transparent; } .ds-btn-quiet:focus-visible { outline: 2px solid oklch(0.505 0.104 77); outline-offset: 2px; }"
+    },
+    {
+      "name": "Filter Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Compact multi-select control in the filter sheet and reader settings. Selected state carries a ✓ as well as colour.",
+      "html": "<div class=\"ds-chip-row\"><button class=\"ds-chip\" aria-pressed=\"false\">短篇</button><button class=\"ds-chip ds-chip-selected\" aria-pressed=\"true\">✓ 連載中</button></div>",
+      "css": ".ds-chip-row { display: flex; gap: 6px; font-family: -apple-system, \"PingFang TC\", \"Noto Sans TC\", sans-serif; } .ds-chip { display: inline-flex; align-items: center; min-height: 40px; padding: 6px 12px; font-size: 0.9375rem; color: oklch(0.43 0.014 77); background: oklch(1 0 0); border: 1px solid oklch(0.835 0.008 77); border-radius: 999px; white-space: nowrap; cursor: pointer; transition: background 120ms cubic-bezier(0.25,1,0.5,1), border-color 120ms cubic-bezier(0.25,1,0.5,1), color 120ms cubic-bezier(0.25,1,0.5,1); } .ds-chip:hover { color: oklch(0.225 0.014 77); border-color: oklch(0.665 0.012 77); } .ds-chip:focus-visible { outline: 2px solid oklch(0.505 0.104 77); outline-offset: 2px; } .ds-chip-selected, .ds-chip-selected:hover { font-weight: 600; color: oklch(0.505 0.104 77); background: oklch(0.965 0.025 77); border-color: oklch(0.505 0.104 77); }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Label above control, 16px text so iOS never zooms, bronze border plus an inset ring on focus.",
+      "html": "<div class=\"ds-field\"><label for=\"ds-q\">搜尋</label><input class=\"ds-input\" id=\"ds-q\" type=\"search\" placeholder=\"搜尋書名、作者、分類、標籤\"></div>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 4px; font-family: -apple-system, \"PingFang TC\", \"Noto Sans TC\", sans-serif; max-width: 420px; } .ds-field label { font-size: 0.8125rem; color: oklch(0.43 0.014 77); } .ds-input { width: 100%; min-height: 44px; padding: 10px 12px; font: inherit; font-size: 1rem; color: oklch(0.225 0.014 77); background: oklch(1 0 0); border: 1px solid oklch(0.835 0.008 77); border-radius: 4px; transition: border-color 120ms cubic-bezier(0.25,1,0.5,1); } .ds-input::placeholder { color: oklch(0.535 0.014 77); opacity: 1; } .ds-input:hover { border-color: oklch(0.665 0.012 77); } .ds-input:focus { border-color: oklch(0.505 0.104 77); outline: none; box-shadow: inset 0 0 0 1px oklch(0.505 0.104 77); }"
+    },
+    {
+      "name": "Ruled Row",
+      "kind": "card",
+      "refersTo": "row",
+      "description": "The signature list primitive — the answer to 'card' everywhere in this product. Title on the left edge, apparatus hanging under it, tabular status rail on the right.",
+      "html": "<button class=\"ds-row\"><span class=\"ds-row-main\"><span class=\"ds-row-title\">重生之廚神</span><span class=\"ds-row-sub\"><span class=\"ds-row-author\">林夕</span><span class=\"ds-row-desc\">他在爐火前死了一次，又在十六歲的夏天醒來。</span><span class=\"ds-row-meta\">都市 · 美食</span></span></span><span class=\"ds-row-rail\"><span class=\"ds-status-ongoing\">連載中</span><span class=\"ds-row-count\">1,284 章</span><span>今天</span></span></button>",
+      "css": ".ds-row { display: grid; grid-template-columns: minmax(0,1fr) auto; column-gap: 12px; align-items: start; width: 100%; padding: 12px 0; text-align: left; background: none; border: none; border-bottom: 1px solid oklch(0.905 0.006 77); font-family: -apple-system, \"PingFang TC\", \"Noto Sans TC\", sans-serif; color: oklch(0.225 0.014 77); cursor: pointer; transition: background 120ms cubic-bezier(0.25,1,0.5,1); } .ds-row:hover { background: oklch(0.962 0.006 77); } .ds-row:active { background: oklch(0.225 0.014 77 / 0.05); } .ds-row:focus-visible { outline: 2px solid oklch(0.505 0.104 77); outline-offset: -2px; } .ds-row-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; } .ds-row-sub { display: flex; flex-direction: column; gap: 2px; padding-left: 1.1em; } .ds-row-title { font-family: \"Noto Serif TC\", \"Songti TC\", serif; font-size: 1.125rem; font-weight: 600; line-height: 1.4; letter-spacing: 0.02em; } .ds-row-author { font-size: 0.8125rem; color: oklch(0.43 0.014 77); } .ds-row-desc { font-size: 0.8125rem; line-height: 1.65; color: oklch(0.43 0.014 77); } .ds-row-meta { font-size: 0.75rem; color: oklch(0.535 0.014 77); } .ds-row-rail { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; white-space: nowrap; font-size: 0.75rem; color: oklch(0.535 0.014 77); font-variant-numeric: tabular-nums; } .ds-status-ongoing { color: oklch(0.505 0.104 77); font-weight: 600; } .ds-row-count { font-size: 0.8125rem; color: oklch(0.43 0.014 77); }"
+    },
+    {
+      "name": "Chapter Row",
+      "kind": "custom",
+      "refersTo": "row",
+      "description": "The table-of-contents row. Irregular chapter labels are preserved verbatim, never normalised; the current chapter is named in words as well as colour.",
+      "html": "<ol class=\"ds-toc\"><li><button class=\"ds-toc-item\"><span class=\"ds-toc-label\">第12.5章</span><span class=\"ds-toc-title\">岔路</span></button></li><li><button class=\"ds-toc-item ds-toc-current\" aria-current=\"true\"><span class=\"ds-toc-label\">第12.10章</span><span class=\"ds-toc-title\">補遺</span><span class=\"ds-toc-here\">閱讀中</span></button></li></ol>",
+      "css": ".ds-toc { margin: 0; padding: 0; list-style: none; } .ds-toc-item { display: flex; gap: 8px; align-items: baseline; width: 100%; min-height: 44px; padding: 12px 6px; text-align: left; font-family: -apple-system, \"PingFang TC\", \"Noto Sans TC\", sans-serif; font-size: 0.9375rem; color: oklch(0.225 0.014 77); background: none; border: none; border-bottom: 1px solid oklch(0.905 0.006 77); cursor: pointer; transition: background 120ms cubic-bezier(0.25,1,0.5,1); } .ds-toc-item:hover { background: oklch(0.225 0.014 77 / 0.05); } .ds-toc-item:focus-visible { outline: 2px solid oklch(0.505 0.104 77); outline-offset: -2px; } .ds-toc-label { font-family: \"Noto Serif TC\", \"Songti TC\", serif; letter-spacing: 0.02em; white-space: nowrap; } .ds-toc-title { flex: 1; min-width: 0; font-size: 0.8125rem; color: oklch(0.535 0.014 77); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-toc-current { color: oklch(0.505 0.104 77); font-weight: 600; } .ds-toc-current::before { content: '▸'; margin-right: -2px; } .ds-toc-here { flex: 0 0 auto; padding: 1px 6px; font-size: 0.75rem; font-weight: 600; color: oklch(0.505 0.104 77); border: 1px solid oklch(0.505 0.104 77); border-radius: 999px; }"
+    },
+    {
+      "name": "Bottom Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "Fixed, labelled, safe-area padded. The current item is bronze with a tick above the icon; the update badge reads as a sentence to assistive technology, never as a bare number.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"主導覽\"><button class=\"ds-nav-item ds-nav-current\" aria-current=\"page\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 4.5h5v15H5zM14 4.5h5v15h-5z\"/><path d=\"M5 9h5M14 9h5\"/></svg>書庫</button><button class=\"ds-nav-item\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 7.2c-1.9-1.6-4.2-2.2-7-2.2v12c2.8 0 5.1.6 7 2.2 1.9-1.6 4.2-2.2 7-2.2V5c-2.8 0-5.1.6-7 2.2z\"/><path d=\"M12 7.2V19\"/></svg>我的<span class=\"ds-nav-badge\" aria-label=\"追更中有 3 本更新\">3</span></button></nav>",
+      "css": ".ds-nav { display: flex; background: oklch(0.981 0.004 77); border-top: 1px solid oklch(0.905 0.006 77); font-family: -apple-system, \"PingFang TC\", \"Noto Sans TC\", sans-serif; } .ds-nav-item { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: 56px; padding: 6px 0; font-size: 0.75rem; color: oklch(0.535 0.014 77); background: none; border: none; cursor: pointer; transition: color 120ms cubic-bezier(0.25,1,0.5,1); } .ds-nav-item svg { width: 20px; height: 20px; } .ds-nav-item:hover { color: oklch(0.225 0.014 77); } .ds-nav-item:focus-visible { outline: 2px solid oklch(0.505 0.104 77); outline-offset: -3px; } .ds-nav-current { color: oklch(0.505 0.104 77); font-weight: 600; } .ds-nav-current::before { content: ''; position: absolute; top: 0; left: 50%; width: 20px; height: 2px; transform: translateX(-50%); background: oklch(0.505 0.104 77); } .ds-nav-badge { position: absolute; top: 4px; left: 50%; margin-left: 6px; min-width: 16px; padding: 0 4px; font-size: 10px; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; color: oklch(1 0 0); background: oklch(0.505 0.165 25); border-radius: 999px; }"
+    },
+    {
+      "name": "Undo Toast",
+      "kind": "custom",
+      "refersTo": "toast",
+      "description": "Confirms an action that already happened and carries its undo. This is the system's answer to a confirmation dialog.",
+      "html": "<p class=\"ds-toast\" role=\"status\"><span class=\"ds-toast-text\">已移出書庫《長夜將盡》</span><button class=\"ds-toast-action\">復原</button><button class=\"ds-toast-close\" aria-label=\"關閉通知\">×</button></p>",
+      "css": ".ds-toast { display: flex; align-items: center; gap: 8px; max-width: 420px; margin: 0; padding: 4px 4px 4px 16px; font-family: -apple-system, \"PingFang TC\", \"Noto Sans TC\", sans-serif; font-size: 0.8125rem; color: oklch(0.225 0.014 77); background: oklch(0.981 0.004 77); border: 1px solid oklch(0.835 0.008 77); border-radius: 999px; } .ds-toast-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-toast-action { flex: 0 0 auto; min-height: 44px; padding: 0 12px; font: inherit; font-weight: 600; color: oklch(0.505 0.104 77); background: none; border: 1px solid oklch(0.505 0.104 77); border-radius: 999px; cursor: pointer; transition: background 120ms cubic-bezier(0.25,1,0.5,1); } .ds-toast-action:hover { background: oklch(0.965 0.025 77); } .ds-toast-action:focus-visible { outline: 2px solid oklch(0.505 0.104 77); outline-offset: 2px; } .ds-toast-close { flex: 0 0 auto; width: 44px; height: 44px; font-size: 16px; line-height: 1; color: oklch(0.535 0.014 77); background: none; border: none; border-radius: 999px; cursor: pointer; } .ds-toast-close:hover { color: oklch(0.225 0.014 77); background: oklch(0.225 0.014 77 / 0.05); }"
+    },
+    {
+      "name": "Reader Running Head",
+      "kind": "custom",
+      "refersTo": "sheet",
+      "description": "The reader's top chrome: where you are in the chapter and in the work, over a bronze hairline whose width is the position in the chapter. Hidden until summoned by a tap.",
+      "html": "<header class=\"ds-reader-top\"><span class=\"ds-reader-title\"><span class=\"ds-reader-chapter\">第一章 那道湯</span><span class=\"ds-reader-work\">重生之廚神</span></span><span class=\"ds-reader-rule\" aria-hidden=\"true\"></span></header>",
+      "css": ".ds-reader-top { position: relative; display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 6px 12px; background: oklch(0.981 0.004 77); border-bottom: 1px solid oklch(0.905 0.006 77); font-family: -apple-system, \"PingFang TC\", \"Noto Sans TC\", sans-serif; } .ds-reader-title { display: flex; flex-direction: column; min-width: 0; gap: 1px; } .ds-reader-chapter { font-family: \"Noto Serif TC\", \"Songti TC\", serif; font-size: 0.9375rem; font-weight: 600; letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-reader-work { font-size: 0.75rem; color: oklch(0.535 0.014 77); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-reader-rule { position: absolute; left: 0; bottom: -1px; width: 38%; height: 2px; background: oklch(0.505 0.104 77); transition: width 260ms cubic-bezier(0.25,1,0.5,1); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Reference Edition",
+    "overview": "This is the visual system of a well-made reference edition — the kind of book whose typography you never notice and whose index you trust on sight. Ruled lists, running heads, metadata on a tabular baseline, one bronze ink accent against a true-white page. Crisp, not soft. The register is archival, exact, quiet: the interface states facts and counts things, and has nothing to sell, because there is one curator and a finite shelf.\n\nTwo surfaces, one vocabulary. The catalog is an index to be scanned in daylight on a commute — dense ruled rows, aligned counts, comparisons down a column. The reader is a book at 1am — chrome that appears on demand and leaves no residue, and a page whose only job is to be legible and to stay exactly where it was left. Every shared primitive is written once against the token vocabulary and re-pointed by theme, so the reader's 護眼 page and the admin's import table are the same system under different light.\n\nWhat this system rejects is as load-bearing as what it is. No cards. No shadows as decoration. No rounded-corner grid of equal tiles. No gradient, no glass, no hero metric. Density is a feature here, and familiarity is the point: a reader should be able to use this on the first night without learning anything.",
+    "keyCharacteristics": [
+      "Phone-first. 360–430px is the priority viewport, 390×844 is the acceptance viewport. Desktop widens the measure (720px → 820px at ≥768px); it never dictates the phone layout and never introduces columns.",
+      "Ruled rows, not cards. Catalog, library, bookmarks, TOC and the work page's latest-chapters list are one primitive: a full-bleed row with a 1px bottom rule, a hanging indent for the apparatus, a right rail of tabular counts.",
+      "One accent, under 10%. Bronze marks primary action, current selection and focus. Nothing else is coloured.",
+      "Spacing with rhythm, not uniformity. The 4→48px scale is used tight inside a row and generous between sections; equal gaps everywhere is the tell of a system nobody tuned.",
+      "Motion is state. 120/180/260ms, ease-out only, transform and opacity only. No page-load choreography, no scroll reveal. Reader content is never animated — position anchoring has to stay measurable.",
+      "WCAG 2.2 AA is a floor, verified numerically in all five colour contexts, with 44×44px targets and a complete keyboard path."
+    ],
+    "rules": [
+      { "name": "The Chrome Is a Guest Rule", "body": "Every reader surface earns its pixels or hides. Open chrome pushes text instead of covering it; dismissed chrome leaves nothing behind — no bar, no inset, no residue.", "section": "overview" },
+      { "name": "The Spoken State Rule", "body": "Selection, status and updates carry a glyph or a word as well as a colour: ✓ on a selected chip, ▌ before 有更新, 閱讀中 on the current TOC row. Colour alone is prohibited — it fails for colour-blind readers and it fails again in the reader's three themes.", "section": "overview" },
+      { "name": "The One Accent Rule", "body": "Bronze appears on under 10% of any screen and only where it means action, selection, or focus. If a surface needs a second colour to be legible, the hierarchy is wrong, not the palette.", "section": "colors" },
+      { "name": "The Zero-Chroma Dark Rule", "body": "Dark surfaces carry chroma exactly 0. The hue lives in the accent; a tinted dark grey is how a product starts looking like a theme instead of a page.", "section": "colors" },
+      { "name": "The No-Warning-Hue Rule", "body": "77° is the brand, so there is no amber warning. Warnings are a brand-tinted surface plus a ⚠ glyph plus a word. Red is reserved for errors and the update marker.", "section": "colors" },
+      { "name": "The Verified Pair Rule", "body": "Every foreground/background pair in use is checked numerically in all five contexts (light shell, dark shell, reader light, 護眼, reader dark). A pair that has not been checked is not in the system.", "section": "colors" },
+      { "name": "The Positive Tracking Rule", "body": "CJK display headings take positive tracking (+0.02em). Han glyphs at size want air. The Latin display convention of tight tracking — and the −0.04em floor that guards it — is irrelevant here and is never applied to Chinese text.", "section": "typography" },
+      { "name": "The Two-Character Indent Rule", "body": "Reader paragraphs are set text-indent: 2em with text-align: justify and text-justify: inter-ideograph. The two-full-width-character first-line indent is the Chinese prose convention and is the single strongest signal that this is a book and not a web page. Measure is capped at 34em (≈68 CJK characters).", "section": "typography" },
+      { "name": "The Tabular Column Rule", "body": "Every count, date, page indicator, chapter number and admin figure sets font-variant-numeric: tabular-nums, so a reader scanning forty works compares chapter counts straight down a column. text-wrap: balance on page titles, text-wrap: pretty on descriptions.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "If an element needs a shadow to read as separate, it needs a rule, a tonal step, or more space — in that order. A shadow is never the answer. Audit test: if it looks like a card could be dragged, it is wrong.", "section": "elevation" },
+      { "name": "The No-Ghost-Card Rule", "body": "A 1px border and a soft wide drop shadow on the same element is forbidden outright. Pick the border. Round corners stay at 2/4/6/10px and pill; nothing in this product is rounded past 10px.", "section": "elevation" },
+      { "name": "The Page Step Rule", "body": "The paginated strip carries no horizontal padding — the side inset belongs to the paragraphs. A padded multi-column box is narrower than the viewport it is paged across, and the step would no longer equal the column pitch: every turn drifts by the difference and clips text at the seam. column width + gap === viewport width + gap === one page step, covered by an acceptance test.", "section": "components" },
+      { "name": "The Unambiguous Input Rule", "body": "The reader takes the same movement from every device and a gesture is never ambiguous with a selection. Tap: outer quarters turn the page, middle toggles chrome, suppressed over a selection or a control. Swipe: horizontal flick, touch pointers only (a mouse drag is a selection gesture and can never turn a page), 44px of travel inside 700ms. Keyboard: ←/→ turn page or chapter, Space/PageUp/PageDown move a screenful, Home/End reach the ends, Esc dismisses chrome — bindings are listed in the settings sheet wherever any-pointer: fine implies a keyboard.", "section": "components" },
+      { "name": "The Sacred Position Rule", "body": "Any visual change that affects layout must preserve the anchored paragraph: typography is a correctness concern here, not taste. The anchor is captured before a layout-changing setting applies and re-applied two frames later. And nothing undoes the reader's own movement — if they scrolled or turned a page while a restore was still pending, the queued anchor is dropped rather than applied on top of them.", "section": "components" }
+    ],
+    "dos": [
+      "Do reach for the ruled row first. Catalog, library, bookmarks, TOC and latest-chapters are all .row or .toc-item; a new list is one of them.",
+      "Do put the primary action in the bottom third on phones, and let desktop release it into the flow (.detail-cta goes static at ≥768px).",
+      "Do state the number. 共 128 部, 180 章, 第 48 段, 版本 v1 — this product counts things, and a count is better copy than an adjective.",
+      "Do pair every colour signal with a glyph or a word: ✓ selected, ▌ 有更新, ⚠ warning, 閱讀中 current.",
+      "Do keep all seven interaction states on every control, and keep the focus-visible ring (2px bronze, 2px offset) exactly as it is everywhere.",
+      "Do give failure its own copy and its own retry, separate from emptiness.",
+      "Do honour env(safe-area-inset-*) on every fixed element, and keep touch targets at 44×44px (40px is permitted only for an inline filter chip).",
+      "Do verify a new colour pair numerically in all five contexts before using it, and add it to the frontmatter rather than inlining a value.",
+      "Do keep motion at 120/180/260ms on ease-out curves, and give prefers-reduced-motion: reduce a real alternative — feedback stays, movement goes — never a removal of the feedback itself."
+    ],
+    "donts": [
+      "Don't regress to default-framework styling: Tailwind's stock palette (#2563eb, #6b7280, #e5e7eb, #d1d5db), uniform 8–10px rounded card grids, system sans at one weight for everything, no tokens, no interaction states. That is the pre-redesign state the user called \"too AI\"; it is the thing being fixed.",
+      "Don't borrow from commercial web-novel portals (起點/番茄-style): red-orange saturation, ranking badges, VIP chrome, carousels, \"hot\" counters, density as noise.",
+      "Don't introduce a cream/sand/parchment \"digital paper\" body background. The warm near-white is the saturated generated-design default. Warm paper belongs to exactly one place here — the reader's 護眼 theme, where the reader asked for it by name.",
+      "Don't build decorated card grids: equal-sized cards with icon + title + two lines of text, soft wide drop shadows paired with 1px borders, gradient accents. There are no cards in the member surfaces at all.",
+      "Don't add a drop shadow. There are none; depth is tonal steps, hairlines and one scrim.",
+      "Don't use a colour-only state, a bare number as an accessible name, or opacity: 0 to hide something from assistive technology.",
+      "Don't put text on ink-faint (3.1:1) or any lighter neutral, and don't let a muted grey carry body copy on a tinted surface.",
+      "Don't animate reader content, ever — position anchoring must stay measurable — and don't animate layout properties anywhere else.",
+      "Don't reach for a modal. The bottom sheet is the only one, and a confirmation dialog is never the answer where an undo toast will do.",
+      "Don't reinvent a native form control, add a custom scrollbar, or round a card past 10px.",
+      "Don't write an arbitrary z-index. The six-step named scale is the whole vocabulary.",
+      "Don't hard-code a spacing, radius or colour value in a component. If it isn't in the frontmatter, it isn't in the system yet."
+    ]
+  }
+}

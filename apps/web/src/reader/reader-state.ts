@@ -86,6 +86,19 @@ export function savePosition(workId: string, pos: ReadingPosition): void {
   localStorage.setItem(posKey(workId), JSON.stringify(pos));
 }
 
+// A deep link into a paragraph: `#p=<index>&rev=<uuid>` (written by the
+// bookmarks list). The revision is carried so the reader can tell an exact
+// landing from an approximate one after the chapter was revised.
+export function parsePositionHash(hash: string): { paragraphIndex: number; revisionId: string } | null {
+  const p = new URLSearchParams(hash.replace(/^#/, ''));
+  const raw = p.get('p');
+  const revisionId = p.get('rev');
+  if (raw === null || !revisionId) return null;   // Number(null) is 0, not absent
+  const index = Number(raw);
+  if (!Number.isInteger(index) || index < 0) return null;
+  return { paragraphIndex: index, revisionId };
+}
+
 // Revision changed under the same chapter: keep the paragraph if it still
 // exists, else clamp (§06) — approximate restoration is detectable because
 // callers compare pos.revisionId with the loaded revisionId.

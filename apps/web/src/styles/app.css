@@ -40,6 +40,12 @@
 .btn.primary:active:not(:disabled) { background: var(--brand-hover); }
 .btn.primary:disabled { background: var(--rule); border-color: var(--rule); color: var(--ink-3); }
 
+/* quiet: the third choice in a group, present but not competing for the eye */
+.btn.quiet { color: var(--ink-2); background: none; border-color: transparent; }
+.btn.quiet:hover:not(:disabled) { color: var(--ink); background: var(--press); border-color: transparent; }
+.btn.quiet:active:not(:disabled) { background: var(--press); }
+.btn.quiet:disabled { color: var(--ink-faint); border-color: transparent; }
+
 .btn[aria-busy='true'] { color: var(--ink-3); cursor: progress; }
 .btn-block { width: 100%; margin-top: var(--sp-5); }
 /* an inline SVG with no intrinsic size collapses inside a flex row */
@@ -186,6 +192,10 @@ button.row-title:hover { color: var(--brand); text-decoration: underline; text-u
 .row-count { font-size: var(--text-sm); color: var(--ink-2); }
 .row-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-3); }
 .row-actions .chip { min-height: var(--tap); }
+/* prev / position / next sit on one baseline rather than on the row's start */
+.row-actions.pager { align-items: center; }
+/* a chapter label inside an admin list is data, not a work title */
+.row-title-sm { font-size: var(--text-base); }
 
 /* status + update markers carry a word or glyph, not just a hue */
 .status { font-size: var(--text-xs); color: var(--ink-3); }
@@ -272,6 +282,11 @@ input[type='file'].input { padding: 10px var(--sp-3); font-size: var(--text-sm);
 /* --- skeleton: mirrors real row geometry, so arrival shifts nothing ------- */
 .sk { background: var(--surface-2); border-radius: var(--r-xs); }
 .sk-line { height: 0.75em; margin: 0.28em 0; animation: sk-pulse 1.4s var(--ease-out-quart) infinite; }
+/* single-line list rows (TOC, colophon): one line per row at row rhythm */
+.sk-lines .sk-line { height: 1.1em; margin: 18px 0; }
+.sk-detail { padding-top: var(--sp-7); }
+.sk-detail .sk-title { height: 1.6em; }
+.sk-detail .sk-lines { margin-top: var(--sp-6); }
 @keyframes sk-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) {
   .sk-line { animation: none; opacity: 0.8; }
@@ -307,6 +322,63 @@ input[type='file'].input { padding: 10px var(--sp-3); font-size: var(--text-sm);
   text-decoration-thickness: 1px;
 }
 .linkish:hover { color: var(--brand-hover); }
+
+/* --- toast: confirmation + undo, above the nav, never over the content --- */
+.toast-layer {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 56px + var(--sp-4));
+  display: flex;
+  justify-content: center;
+  padding: 0 var(--sp-5);
+  z-index: var(--z-toast);
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  max-width: var(--measure-form);
+  padding: var(--sp-1) var(--sp-1) var(--sp-1) var(--sp-5);
+  font-size: var(--text-sm);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-pill);
+  pointer-events: auto;
+  animation: toast-in var(--dur-slow) var(--ease-out-expo);
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.toast-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toast-action {
+  flex: 0 0 auto;
+  min-height: var(--tap);
+  padding: 0 var(--sp-4);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--brand);
+  background: none;
+  border: 1px solid var(--brand);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out-quart);
+}
+.toast-action:hover { background: var(--brand-tint); }
+.toast-close {
+  flex: 0 0 auto;
+  width: var(--tap); height: var(--tap);
+  font-size: 16px;
+  line-height: 1;
+  color: var(--ink-3);
+  background: none;
+  border: none;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+}
+.toast-close:hover { color: var(--ink); background: var(--press); }
 
 /* --- bottom sheet (the only modal pattern) -------------------------------- */
 .sheet-backdrop {
@@ -381,6 +453,27 @@ input[type='file'].input { padding: 10px var(--sp-3); font-size: var(--text-sm);
 .setting-label { flex: 0 0 4em; font-size: var(--text-sm); color: var(--ink-3); }
 .setting-control { flex: 1; display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .setting-value { font-size: var(--text-sm); color: var(--ink-2); min-width: 46px; text-align: center; }
+/* the closing note under a sheet's controls — what the settings above mean */
+.sheet-hint { padding-top: var(--sp-4); }
+
+/* keyboard help: only where a keyboard is plausible (any-pointer:fine covers a
+   laptop trackpad and a desktop mouse; a touch phone gets the swipe instead) */
+.kbd-hint { display: none; }
+@media (any-pointer: fine) {
+  .kbd-hint { display: block; padding-top: var(--sp-3); line-height: 1.9; }
+}
+kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 1px var(--sp-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  text-align: center;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-xs);
+}
 
 /* ================================================================= shell === */
 .app-shell {
@@ -505,6 +598,7 @@ input[type='file'].input { padding: 10px var(--sp-3); font-size: var(--text-sm);
   color: var(--ink-2);
 }
 .detail-colophon { margin-top: var(--sp-6); }
+.detail-note { display: block; margin-top: var(--sp-6); }
 .detail-desc {
   margin-top: var(--sp-6);
   font-family: var(--font-serif);
@@ -515,6 +609,27 @@ input[type='file'].input { padding: 10px var(--sp-3); font-size: var(--text-sm);
   text-wrap: pretty;
   white-space: pre-wrap;
 }
+
+/* newest chapters, inline: a ruled list like every other index on the site.
+   The fixed CTA sits 56–124px off the bottom, so the page clears it. */
+.detail-chapters { margin-top: var(--sp-8); padding-bottom: 76px; }
+.detail-chapters .head-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding-bottom: var(--sp-2);
+}
+.detail-chapters h2 {
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: var(--track-display);
+}
+.detail-chapters .head-line .linkish { font-size: var(--text-sm); white-space: nowrap; }
+.detail-chapters .toc-list { border-top: 1px solid var(--rule); }
+.detail-chapters .toc-item { padding-inline: 0; }
+.detail-chapters .muted { padding: var(--sp-4) 0; }
 
 /* primary CTA lives in the reachable bottom area (dev-plan §04) */
 .detail-cta {
@@ -551,6 +666,8 @@ input[type='file'].input { padding: 10px var(--sp-3); font-size: var(--text-sm);
 
 .subnav { display: flex; gap: var(--sp-5); padding-bottom: var(--sp-4); }
 .subnav .linkish { font-size: var(--text-sm); }
+/* the one action that leaves, pushed to the opposite end of the row */
+.subnav .subnav-end { margin-inline-start: auto; }
 
 /* ================================================================= admin === */
 .admin-shell { padding-bottom: var(--sp-10); }
@@ -639,6 +756,7 @@ input[type='file'].input { padding: 10px var(--sp-3); font-size: var(--text-sm);
     border-top: none;
   }
   .detail-cta .primary { flex: 0 0 auto; min-width: 180px; }
+  .detail-chapters { padding-bottom: 0; }
   .sheet { max-width: 560px; margin: 0 auto; border-radius: var(--r-lg); bottom: var(--sp-8); }
   /* the nav belongs over the content column, not stretched across the display */
   .bottom-nav { justify-content: center; gap: var(--sp-8); }
