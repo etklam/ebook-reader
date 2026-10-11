@@ -52,7 +52,7 @@ export function LoginPage() {
         </button>
       </form>
       <p className="auth-foot">
-        還沒有帳號？<button className="linkish" onClick={() => navigate('/register')}>使用邀請註冊</button>
+        還沒有帳號？<button className="linkish" onClick={() => navigate('/register')}>建立帳戶</button>
         <br />忘記密碼目前無法自助重設，請聯絡管理員。
       </p>
     </div>

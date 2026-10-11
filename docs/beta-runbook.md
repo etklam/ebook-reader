@@ -257,8 +257,7 @@ curl -X POST https://<host>/api/admin/invites \
   -H 'content-type: application/json' -b "$ADMIN_COOKIE" -d '{"expiresInDays":7}'
 ```
 
-**`open` 不要開。** 沒有 email 驗證就開放註冊，等於接受任意地址註冊且無法確認擁有權。
-§6.3 的 Admin 補發機制提供了復原路徑，但那不是 email 驗證的替代品。
+**`open` is enabled for this release at the owner's direction.** Accounts can be created without proving email ownership; explain this limitation and provide an admin recovery contact. Before enabling `open` in other environments, assess abuse controls and account-recovery support. `invite` remains the safer default for a private Beta.
 
 ### 6.2 會員自助
 

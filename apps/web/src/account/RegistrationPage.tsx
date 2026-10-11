@@ -1,5 +1,4 @@
-// Controlled Beta registration (§25): invite-based. If the server runs
-// closed mode the attempt fails with registration_closed and we say so.
+// Open Beta registration: no invite code is required.
 import { useState } from 'react';
 import { ApiRequestError, register } from '../api/client.ts';
 import { navigate } from '../App.tsx';
@@ -47,7 +46,7 @@ export function RegistrationPage() {
   return (
     <div className="auth-page" data-testid="register">
       <h1>註冊</h1>
-      <p className="auth-lede">Beta 期間採邀請制：需要一組管理員發出的邀請碼。</p>
+      <p className="auth-lede">建立帳戶後可以收藏、追更，並讓閱讀進度跨裝置接續。</p>
       <form className="auth-form" onSubmit={submit}>
         <div className="field">
           <label htmlFor="reg-username">暱稱</label>
@@ -69,8 +68,8 @@ export function RegistrationPage() {
           <span className="hint" id="reg-password-hint">至少 8 個字元。目前沒有自助重設，請記牢。</span>
         </div>
         <div className="field">
-          <label htmlFor="reg-invite">邀請碼</label>
-          <input className="input input-mono" id="reg-invite" value={invite} required
+          <label htmlFor="reg-invite">邀請碼（可留空）</label>
+          <input className="input input-mono" id="reg-invite" value={invite}
             aria-invalid={code.startsWith('invite') || undefined}
             onChange={(e) => setInvite(e.target.value)} />
         </div>

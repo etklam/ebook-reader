@@ -47,7 +47,7 @@ spec:
             - name: HSTS
               value: "true"
             - name: REGISTRATION_MODE
-              value: invite
+              value: open
           ports:
             - name: http
               containerPort: 3000
