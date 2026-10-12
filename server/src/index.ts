@@ -21,8 +21,12 @@ import { adminImportRoutes } from './routes/admin-imports.ts';
 import { adminWorkRoutes } from './routes/admin-works.ts';
 import { readerRoutes } from './routes/reader.ts';
 import { worksRoutes } from './routes/works.ts';
+import { rankingRoutes } from './routes/rankings.ts';
 import { opsRoutes } from './routes/ops.ts';
 import { meRoutes } from './routes/me.ts';
+import { adminChapterRoutes } from './routes/admin-chapters.ts';
+import { searchExportRoutes } from './routes/search-export.ts';
+import { readingStatsRoutes } from './routes/reading-stats.ts';
 
 export const apiConfig = loadApiConfig();
 const config = apiConfig;
@@ -58,6 +62,11 @@ app.use('*', securityHeaders({ hsts: config.hsts }));
 // accept more than a few hundred KiB, and without a cap a single request could
 // make the process buffer arbitrary memory before any validation runs.
 app.use('/api/*', async (c, next) => {
+  if (c.req.path.startsWith('/api/admin/chapter-editor')) {
+    return bodyLimit({ maxSize: 8 * 1024 * 1024,
+      onError: (ctx) => ctx.json({ error: 'payload_too_large', maxBytes: 8 * 1024 * 1024 }, 413),
+    })(c, next);
+  }
   if (c.req.path.startsWith('/api/admin/imports')) return next();
   return bodyLimit({
     maxSize: config.maxJsonBytes,
@@ -144,9 +153,13 @@ app.route('/', healthRoutes(pool));
 app.route('/', authRoutes({ db, config }));
 app.route('/', accountRoutes({ db, config }));
 app.route('/', meRoutes({ db }));
+app.route('/', readingStatsRoutes({ db }));
 app.route('/', adminImportRoutes({ db, storage: localStorage(config.storageRoot), config }));
+app.route('/', adminChapterRoutes({ db, storage: localStorage(config.storageRoot) }));
 app.route('/', adminWorkRoutes({ db, storage: localStorage(config.storageRoot) }));
+app.route('/', searchExportRoutes({ db, storage: localStorage(config.storageRoot) }));
 app.route('/', readerRoutes({ db, storage: localStorage(config.storageRoot) }));
+app.route('/', rankingRoutes({ db, trustProxy: config.trustProxy }));
 app.route('/', worksRoutes({ db }));
 app.route('/', opsRoutes({ db }));
 

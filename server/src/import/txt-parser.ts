@@ -1,7 +1,7 @@
+import { extractTxtMetadata, type ImportMetadata } from './metadata.ts';
 // TXT chapter splitting (dev-plan §07). Deterministic, explainable heuristics:
-// a heading must sit on its own short line, be preceded by a blank line (or
-// file start), and carry no sentence-ending punctuation. Prose mentioning
-// 「第十二章」 mid-paragraph never matches (anchor + blank-line + length).
+// a heading must sit on its own short line and carry no sentence-ending
+// punctuation. Prose mentioning 「第十二章」 mid-paragraph never matches (anchor + length).
 // Text is never discarded: leading content becomes a review-flagged item, and
 // a file with no headings at all becomes one whole-document item.
 import { parseLabel, type ParsedLabel } from './parse-label.ts';
@@ -22,24 +22,32 @@ export interface StagedChapter {
 }
 
 export interface ParsedTxt {
+  metadata: ImportMetadata;
   chapters: StagedChapter[];
   warnings: string[]; // document-level warnings
 }
 
 // label portion of a heading line: marker + number + optional （上） sub-part
 const HEADING_RE = new RegExp(
-  '^(第[0-9０-９.．]+[章回節节]' + // 第12.5章 / 第012章
-  '|第[零一二兩三四五六七八九十百千]+[章回節节]' + // 第十二章
+  '^([第卷][0-9０-９.．一二三四五六七八九十零〇百千两兩]*[章回幕部節节集卷]' +
   '|序章|序幕|楔子|引子' + // front matter
-  '|終章|尾聲|後記|大結局' + // end matter
-  '|番外[0-9０-９.．]*|外傳[0-9０-９.．]*|附錄[0-9０-９.．]*)' + // extras w/ optional number
+  '|終章|终章|尾聲|尾声|後記|后记|終曲|终曲|大結局|大结局' + // end matter
+  '|番外[0-9０-９.．]*|外[傳传][0-9０-９.．]*|附[錄录][0-9０-９.．]*)' + // extras w/ optional number
   '(\\s*[（(][^（）()]{1,12}[）)])?' + // （上）/（下） sub-part
   '\\s*(.*)$',
 );
 
-const VOLUME_RE = /^\s*(第[0-9０-９零一二兩三四五六七八九十百千]+[卷集部][^\n]{0,20})\s*$/;
+const VOLUME_RE = /^\s*((?:第|卷)[0-9０-９零〇一二兩两三四五六七八九十百千]+[卷集部][^\n]{0,20})\s*$/;
 const SENTENCE_END = /[。！？…；：，、]$/;
 const MAX_HEADING_LEN = 60;
+
+export function validChapterPattern(source: string): boolean {
+  if (!source || source.length > 200 || /\([^)]*[+*][^)]*\)[+*{]/.test(source)) return false;
+  try {
+    const pattern = new RegExp(source, 'i');
+    return !pattern.test('');
+  } catch { return false; }
+}
 
 function looksLikeMarkerHeading(line: string): { label: string; title: string } | null {
   if (line.length > MAX_HEADING_LEN) return null;
@@ -60,8 +68,9 @@ function looksLikeBareTitle(line: string): boolean {
   return s.length > 0 && s.length <= 30 && !SENTENCE_END.test(s) && !/[.!?,;:]$/.test(s);
 }
 
-export function parseTxt(rawText: string): ParsedTxt {
+export function parseTxt(rawText: string, options: { chapterPattern?: string } = {}): ParsedTxt {
   const warnings: string[] = [];
+  const customHeading = options.chapterPattern ? new RegExp(options.chapterPattern, 'i') : null;
   const text = rawText.replace(/\r\n?/g, '\n');
   const lines = text.split('\n');
 
@@ -86,8 +95,13 @@ export function parseTxt(rawText: string): ParsedTxt {
       continue;
     }
 
-    const marker = looksLikeMarkerHeading(trimmed);
-    if (marker && prevBlank) {
+    const marker = customHeading ? (() => {
+      if (trimmed.length > MAX_HEADING_LEN) return null;
+      const match = customHeading.exec(trimmed);
+      if (!match || match.index !== 0 || !match[0]) return null;
+      return { label: (match[1] ?? match[0]).trim(), title: (match[2] ?? trimmed.slice(match[0].length)).trim() };
+    })() : looksLikeMarkerHeading(trimmed);
+    if (marker) {
       sawMarkerHeading = true;
       if (current.paraLines.length > 0 || current.label || current.marker) chapters.push(current);
       current = { volumeLabel, label: marker.label, title: marker.title, paraLines: [], marker: true };
@@ -109,7 +123,7 @@ export function parseTxt(rawText: string): ParsedTxt {
   if (current.paraLines.length > 0 || current.label || current.marker) chapters.push(current);
 
   if (chapters.length === 0) {
-    return { chapters: [], warnings: ['empty_source'] };
+    return { chapters: [], warnings: ['empty_source'], metadata: {} };
   }
 
   // no marker heading and only one bare candidate → treat whole file as one
@@ -120,6 +134,7 @@ export function parseTxt(rawText: string): ParsedTxt {
       return {
         chapters: [{ position: 0, volumeLabel: null, labelRaw: '', parsed: null, title: '', body: chapters[0].label, warnings: ['no_headings'], needsReview: true }],
         warnings: ['no_reliable_chapter_boundaries'],
+        metadata: extractTxtMetadata(text),
       };
     }
     warnings.push('no_reliable_chapter_boundaries');
@@ -155,5 +170,5 @@ export function parseTxt(rawText: string): ParsedTxt {
   });
 
   if (staged.length === 1 && sawMarkerHeading) warnings.push('single_heading');
-  return { chapters: staged, warnings };
+  return { chapters: staged, warnings, metadata: extractTxtMetadata(text) };
 }

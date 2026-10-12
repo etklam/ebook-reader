@@ -1,3 +1,4 @@
+import type { ImportMetadata } from './metadata.ts';
 // PostgreSQL-backed durable import queue (dev-plan §16: no Redis/BullMQ).
 // Claim uses FOR UPDATE SKIP LOCKED with a lease; the active worker renews
 // the lease with a heartbeat, every write is fenced on lease_owner, and an
@@ -38,6 +39,7 @@ export interface JobRow {
   status: string;
   attemptCount: number;
   requestedEncoding: string | null;
+  requestedChapterPattern: string | null;
 }
 
 // Operator-facing error detail: class + message with storage paths / cwd stripped
@@ -196,7 +198,7 @@ export async function processImportJob(
   // visible job errors, never silent partial imports
   let stagedChapters: StagedChapter[];
   let detectedEncoding: string | null = null;
-  let encodingResult: { confidence: string; reason: string; warnings: string[] } | null = null;
+  let encodingResult: { confidence: string; reason: string; warnings: string[]; metadata?: ImportMetadata } | null = null;
   let extractedResources: ExtractedResource[] = [];
 
   if (isEpub) {
@@ -212,7 +214,7 @@ export async function processImportJob(
     }
     stagedChapters = parsed.chapters;
     extractedResources = parsed.resources;
-    encodingResult = { confidence: 'n/a', reason: 'EPUB 內部 XML 為 UTF-8', warnings: parsed.warnings };
+    encodingResult = { confidence: 'n/a', reason: 'EPUB 內部 XML 為 UTF-8', warnings: parsed.warnings, metadata: parsed.metadata };
   } else {
     let decoded;
     try {
@@ -227,7 +229,7 @@ export async function processImportJob(
       }
       throw e;
     }
-    const parsed = parseTxt(decoded.text);
+    const parsed = parseTxt(decoded.text, { chapterPattern: job.requestedChapterPattern ?? undefined });
     if (parsed.chapters.length === 0) {
       await failJob(db, jobId, opts.owner, 'EMPTY_SOURCE', '檔案沒有可匯入的內容');
       return;
@@ -238,6 +240,7 @@ export async function processImportJob(
       confidence: decoded.confidence,
       reason: decoded.reason,
       warnings: decoded.warnings,
+      metadata: parsed.metadata,
     };
   }
 

@@ -19,7 +19,7 @@ process.env.STORAGE_ROOT ??= './storage';
 
 const { makeDb } = await import('../src/db/client.ts');
 const { localStorage } = await import('../src/storage.ts');
-const { sweepSessions, sweepPasswordResets, sweepStorage } = await import('../src/maintenance/reclaim.ts');
+const { sweepSessions, sweepPasswordResets, sweepStorage, sweepWorkClicks } = await import('../src/maintenance/reclaim.ts');
 
 // the worker role is correct here: DML only, no DDL
 const pool = new Pool({ connectionString: process.env.WORKER_DATABASE_URL, max: 2 });
@@ -30,6 +30,11 @@ const want = (name) => only === 'all' || only === name;
 let failed = false;
 
 try {
+  if (want('clicks')) {
+    const r = await sweepWorkClicks(db);
+    console.log(`work_clicks: deleted ${r.deleted} old row(s)`);
+  }
+
   if (want('sessions')) {
     const r = await sweepSessions(db, { graceDays });
     console.log(`sessions: deleted ${r.deleted} expired/revoked row(s) older than ${graceDays}d`);

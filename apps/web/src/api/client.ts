@@ -122,3 +122,14 @@ export const getPublishPreview = (workId: string) =>
   api<PublishPreviewResponse>(`/api/admin/works/${workId}/publish-preview`);
 export const publishWork = (workId: string, idempotencyKey: string, note = '') =>
   api<PublishResponse>(`/api/admin/works/${workId}/publish`, json('POST', { note }, { headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey } }));
+
+export const getRankings = (period: import('./types.ts').RankingPeriod) =>
+  api<import('./types.ts').RankingResponse>(`/api/rankings?period=${period}`);
+export const recordWorkClick = (workId: string) =>
+  api<{ counted: boolean }>(`/api/works/${workId}/click`, json('POST', {}));
+
+// --- import monitoring ---------------------------------------------------------
+export const getImportJob = (id: string, signal?: AbortSignal) =>
+  api<import('./import-types.ts').ImportJob>(`/api/admin/imports/${id}`, { signal });
+export const getImportQuality = (id: string, signal?: AbortSignal) =>
+  api<import('./import-types.ts').ImportQuality>(`/api/admin/imports/${id}/quality`, { signal });

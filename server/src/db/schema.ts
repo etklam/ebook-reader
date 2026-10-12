@@ -1,7 +1,7 @@
 // Core schema (M1 subset + M6 publishing/member tables). Canonical column
 // names per §16A-C — chapters use label_raw / editorial_position /
 // head_revision_id; do not invent duplicates.
-import { pgSchema, uuid, text, integer, timestamp, boolean, jsonb, real, index, unique, primaryKey, foreignKey, check } from 'drizzle-orm/pg-core';
+import { pgSchema, uuid, text, integer, timestamp, date, boolean, jsonb, real, index, unique, primaryKey, foreignKey, check } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 export const app = pgSchema('app');
@@ -80,6 +80,16 @@ export const works = app.table('works', {
   check('works_visibility_ck', sql`${t.visibility} in ('draft','public','unlisted','removed')`),
 ]);
 
+// Anonymous, daily deduplicated work-detail clicks. No IP or account IDs.
+export const workClicks = app.table('work_clicks', {
+  workId: uuid('work_id').notNull().references(() => works.id, { onDelete: 'cascade' }),
+  visitorHash: text('visitor_hash').notNull(),
+  day: date('day').notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.workId, t.visitorHash, t.day] }),
+  index('work_clicks_day_work_idx').on(t.day, t.workId),
+]);
+
 export const volumes = app.table('volumes', {
   id: uuid('id').primaryKey().defaultRandom(),
   workId: uuid('work_id').notNull().references(() => works.id),
@@ -145,12 +155,18 @@ export const chapters = app.table('chapters', {
   // (head_revision_id, id) → chapter_revisions(id, chapter_id) so a revision
   // can never be pointed at from another chapter (§16A-C)
   headRevisionId: uuid('head_revision_id'),
+  // Absorbed chapter identity and revision history remain immutable.
+  mergedIntoChapterId: uuid('merged_into_chapter_id'),
   createdAt: createdAt(),
 }, (t) => [
   // chapters_work_position_uq is DEFERRABLE INITIALLY DEFERRED in the
   // migration SQL (§16A-C) — mid-sequence insertions shift a range in one tx
   unique('chapters_work_position_uq').on(t.workId, t.editorialPosition),
   index('chapters_work_position_idx').on(t.workId, t.editorialPosition),
+  unique('chapters_id_work_uq').on(t.id, t.workId),
+  index('chapters_merged_into_idx').on(t.mergedIntoChapterId),
+  foreignKey({ name: 'chapters_merged_into_fk', columns: [t.mergedIntoChapterId, t.workId], foreignColumns: [t.id, t.workId] }),
+  check('chapters_merged_nonself_ck', sql`${t.mergedIntoChapterId} is null or ${t.mergedIntoChapterId} <> ${t.id}`),
   // composite FK: (volume_id, work_id) → volumes(id, work_id). NULL volume_id
   // passes (MATCH SIMPLE); a non-null volume must belong to the same work.
   foreignKey({ columns: [t.volumeId, t.workId], foreignColumns: [volumes.id, volumes.workId] }),
@@ -256,6 +272,7 @@ export const importJobs = app.table('import_jobs', {
   status: text('status').notNull().default('queued'),
   detectedFormat: text('detected_format', { enum: ['txt', 'epub'] }),
   requestedEncoding: text('requested_encoding'),
+  requestedChapterPattern: text('requested_chapter_pattern'),
   detectedEncoding: text('detected_encoding'),
   // { confidence, reason, warnings, candidates } — why we picked the encoding
   encodingResult: jsonb('encoding_result'),
@@ -428,6 +445,17 @@ export const userChapterReads = app.table('user_chapter_reads', {
 }, (t) => [
   primaryKey({ columns: [t.userId, t.chapterId] }),
   index('user_chapter_reads_user_idx').on(t.userId, t.lastReadAt),
+]);
+
+// Active foreground reading time, accumulated once per member and UTC day.
+export const userReadingActivity = app.table('user_reading_activity', {
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  activityDate: date('activity_date').notNull(),
+  activeSeconds: integer('active_seconds').notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  primaryKey({ columns: [t.userId, t.activityDate] }),
+  check('user_reading_activity_seconds_ck', sql`${t.activeSeconds} between 0 and 86400`),
 ]);
 
 export const bookmarks = app.table('bookmarks', {

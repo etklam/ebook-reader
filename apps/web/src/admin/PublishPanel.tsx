@@ -1,92 +1,290 @@
-// Admin publish panel (§49): publish preview (validation + diff), explicit
-// confirm, and Idempotency-Key retry safety. Publish is NEVER bundled into
-// the import apply action.
-import { useState } from 'react';
-import { getPublishPreview, publishWork } from '../api/client.ts';
-import type { PublishPreviewResponse } from '../api/types.ts';
+// Draft review uses editorial HEAD; readers see only explicitly published releases.
+import { useEffect, useState } from 'react';
+import { api, getCategories, getPublishPreview, publishWork } from '../api/client.ts';
+import type { PublishPreviewResponse, TaxonomyItem } from '../api/types.ts';
 import { count } from '../lib/format.ts';
+import { navigate } from '../App.tsx';
 
-export function PublishPanel() {
-  const [workId, setWorkId] = useState('');
+type WorkOption = { id: string; title: string; author: string; activeReleaseId: string | null };
+type Draft = {
+  work: { title: string; author: string; description: string; serialStatus: string | null; workType: string };
+  chapters: { id: string; labelRaw: string; title: string | null }[];
+};
+type Chapter = { chapterId: string; labelRaw: string; title: string; body: string };
+
+export function PublishPanel({ workId, onWorkChange, refreshVersion = 0, onPublished }: {
+  workId: string; onWorkChange(id: string): void; refreshVersion?: number; onPublished?(): void;
+}) {
+  const [works, setWorks] = useState<WorkOption[]>([]);
+  const [query, setQuery] = useState('');
+  const [listError, setListError] = useState('');
+  const [listBusy, setListBusy] = useState(false);
   const [preview, setPreview] = useState<PublishPreviewResponse | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [chapterId, setChapterId] = useState('');
+  const [chapter, setChapter] = useState<Chapter | null>(null);
+  const [chapterError, setChapterError] = useState('');
+  const [showChapter, setShowChapter] = useState(false);
+  const [samples, setSamples] = useState<Chapter[]>([]);
+  const [sampleError, setSampleError] = useState('');
   const [msg, setMsg] = useState('');
   const [ok, setOk] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [refresh, setRefresh] = useState(0);
 
-  const loadPreview = async () => {
-    setBusy(true); setMsg(''); setOk(false); setPreview(null);
-    try {
-      setPreview(await getPublishPreview(workId.trim()));
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : '載入失敗');
-    } finally {
-      setBusy(false);
-    }
-  };
+  useEffect(() => {
+    let active = true;
+    setListBusy(true); setListError('');
+    api<{ works: WorkOption[] }>(`/api/admin/works?q=${encodeURIComponent(query)}`)
+      .then((data) => { if (active) setWorks(data.works); })
+      .catch(() => { if (active) setListError('無法載入作品。請重新整理頁面再試。'); })
+      .finally(() => { if (active) setListBusy(false); });
+    return () => { active = false; };
+  }, [query, refresh, refreshVersion]);
 
-  const doPublish = async () => {
-    if (!preview) return;
+  useEffect(() => {
+    let active = true;
+    setPreview(null); setDraft(null); setChapterId(''); setChapter(null); setShowChapter(false); setSamples([]); setMsg(''); setOk(false);
+    if (!workId) { setBusy(false); return; }
+    setBusy(true);
+    Promise.all([
+      getPublishPreview(workId),
+      api<Draft>(`/api/admin/preview/works/${workId}/chapters`),
+    ]).then(([result, content]) => {
+      if (!active) return;
+      setPreview(result); setDraft(content); setChapterId(content.chapters[0]?.id ?? '');
+    }).catch(() => {
+      if (active) setMsg('無法載入草稿。請重新選擇作品，或按「重新載入」。');
+    }).finally(() => { if (active) setBusy(false); });
+    return () => { active = false; };
+  }, [workId, refresh, refreshVersion]);
+
+  useEffect(() => {
+    let active = true;
+    setChapter(null); setChapterError('');
+    if (!chapterId || !showChapter) return;
+    api<Chapter>(`/api/admin/preview/works/${workId}/chapters/${chapterId}`)
+      .then((data) => { if (active) setChapter(data); })
+      .catch(() => { if (active) setChapterError('無法讀取此章內容，請重新載入草稿再試。'); });
+    return () => { active = false; };
+  }, [workId, chapterId, refresh, showChapter]);
+
+  useEffect(() => {
+    let active = true;
+    setSamples([]); setSampleError('');
+    if (!draft?.chapters.length) return;
+    const indices = [...new Set([0, Math.floor(draft.chapters.length / 2), draft.chapters.length - 1])];
+    Promise.all(indices.map((index) => api<Chapter>(`/api/admin/preview/works/${workId}/chapters/${draft.chapters[index].id}`)))
+      .then((items) => { if (active) setSamples(items.map((item) => ({ ...item, body: item.body.slice(0, 240) }))); })
+      .catch(() => { if (active) setSampleError('抽樣內容暫時無法載入，可重新載入或展開完整預覽。'); });
+    return () => { active = false; };
+  }, [draft, workId]);
+
+  const doPublish = async (afterSave = false) => {
+    if (busy || !preview || preview.workId !== workId || (!afterSave && !preview.valid)) return;
     setBusy(true); setMsg(''); setOk(false);
     try {
-      const key = `ui-publish-${workId.trim()}-${Date.now()}`;
-      const r = await publishWork(workId.trim(), key);
+      const result = await publishWork(workId, `ui-publish-${workId}-${Date.now()}`);
+      // Keep the successful publication visible even if the subsequent preview refresh fails.
+      setPreview((current) => current && { ...current, valid: true, problems: [],
+        previousRelease: { id: result.releaseId, version: result.version, chapterCount: result.chapterCount },
+        diff: { newChapterIds: [], updatedChapterIds: [], reorderedChapterIds: [] },
+      });
       setOk(true);
-      setMsg(`已發布 v${r.version}：新章 ${r.diff.newChapterIds.length}、修訂章 ${r.diff.updatedChapterIds.length}。`);
-      setPreview(await getPublishPreview(workId.trim()));
+      setMsg(`已發布 v${result.version}，共 ${count(result.chapterCount)} 章。讀者現在可以閱讀這個版本。`);
+      onPublished?.();
     } catch (e) {
       const err = e as { code?: string; body?: { problems?: string[] } };
       setMsg(err.code === 'publish_validation_failed'
-        ? `驗證失敗：${err.body?.problems?.join('、')}`
-        : `發布失敗：${err.code ?? '未知錯誤'}`);
-    } finally {
-      setBusy(false);
-    }
+        ? `發布前檢查未通過：${err.body?.problems?.map(problemText).join('、')}。請修正來源並重新匯入。`
+        : '發布失敗。草稿已保留，請重新載入檢查後再試。');
+    } finally { setBusy(false); }
   };
 
+  const chapterIndex = draft?.chapters.findIndex((item) => item.id === chapterId) ?? -1;
+  const hasChanges = !!preview && (!preview.previousRelease ||
+    preview.diff.newChapterIds.length + preview.diff.updatedChapterIds.length + preview.diff.reorderedChapterIds.length > 0);
+
+  const needsSetup = !!preview?.problems.some((problem) => ['title_required', 'serial_status_required', 'category_required_for_first_publication'].includes(problem));
+  const contentBlocked = !!preview?.problems.some((problem) => !['title_required', 'serial_status_required', 'category_required_for_first_publication'].includes(problem));
+
   return (
-    <section className="admin-panel" data-testid="publish-panel">
-      <h2>發布</h2>
-      <p className="muted">
-        發布把目前的編輯內容拍成不可變快照，並切換公開版本。匯入與套用都不會自動發布——
-        在按下確認之前，讀者看到的仍是上一個版本。
-      </p>
-      <div className="form-row">
-        <input className="input input-mono" placeholder="作品 UUID" value={workId}
-          aria-label="作品 UUID" onChange={(e) => setWorkId(e.target.value)} />
-        <button className="btn" onClick={loadPreview} disabled={busy || !workId.trim()}>
-          載入預覽
-        </button>
+    <section className="admin-panel admin-publish" data-testid="publish-panel">
+      <h2>草稿與發布</h2>
+      <p className="muted">確認作品資料及章數即可發布。系統會檢查內容是否齊全，抽查文字是可選操作。</p>
+      <details open={!workId}><summary>選擇其他作品</summary>
+      <div className="field">
+        <label htmlFor="publish-search">搜尋作品名稱或作者</label>
+        <input className="input" id="publish-search" type="search" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <span className="hint">顯示最新 50 部符合搜尋的作品；找不到時請輸入更完整的名稱。</span>
       </div>
+      {listError && <p className="form-error" role="alert">{listError}</p>}
+      <div className="field">
+        <label htmlFor="publish-work">選擇作品</label>
+        <select className="input" id="publish-work" value={workId} disabled={busy}
+          onChange={(e) => onWorkChange(e.target.value)}>
+          <option value="">請選擇作品</option>
+          {workId && !works.some((w) => w.id === workId) && <option value={workId}>{draft?.work.title ?? '指定作品'}</option>}
+          {works.map((work) => <option key={work.id} value={work.id}>
+            {work.title}{work.author ? `／${work.author}` : ''} · {work.activeReleaseId ? '已有發布版本' : '尚未發布'}
+          </option>)}
+        </select>
+      </div>
+      </details>
+      {listBusy && <p className="hint" role="status">載入作品中…</p>}
+      {!listBusy && !listError && !works.length && <p className="hint">{query ? '沒有符合搜尋的作品。請修改關鍵字。' : '尚未有作品。請先在「匯入」建立草稿。'}</p>}
+      <div className="row-actions">
+        <button className="btn" onClick={() => setRefresh((value) => value + 1)} disabled={busy}>重新載入</button>
+      </div>
+      {busy && <p className="hint" role="status">{draft ? '發布中…' : '載入草稿及發布檢查…'}</p>}
       {msg && <p className={ok ? 'form-ok' : 'form-error'} role="status">{msg}</p>}
-      {preview && (
-        <>
-          <dl className="meta-grid">
-            <dt>編輯章數</dt>
-            <dd>{count(preview.chapterCount)} 章</dd>
-            <dt>目前公開</dt>
-            <dd>
-              {preview.previousRelease
-                ? `v${preview.previousRelease.version}（${count(preview.previousRelease.chapterCount)} 章）`
-                : '尚未發布'}
-            </dd>
-          </dl>
-          <div className="tally">
-            <div><b>{preview.diff.newChapterIds.length}</b>新章</div>
-            <div><b>{preview.diff.updatedChapterIds.length}</b>修訂章</div>
-            <div><b>{preview.diff.reorderedChapterIds.length}</b>重排章</div>
+      {ok && <div className="row-actions">
+        <button className="btn primary" onClick={() => navigate(`/read/${workId}`)}>閱讀已發布作品</button>
+        <button className="btn" onClick={() => navigate(`/works/${workId}`)}>查看作品頁</button>
+      </div>}
+      <div className="publish-summary">
+      {draft && <div className="publish-work-summary">
+        <h3>{draft.work.title}</h3>
+        <dl className="meta-grid">
+          <dt>作者</dt><dd>{draft.work.author || '未填寫'}</dd>
+          <dt>狀態</dt><dd>{({ ongoing: '未完結', completed: '完結', paused: '暫停連載' } as Record<string, string>)[draft.work.serialStatus ?? ''] ?? '未設定'}</dd>
+          <dt>簡介</dt><dd className="draft-description">{draft.work.description || '未填寫'}</dd>
+        </dl>
+        <details open={needsSetup}>
+          <summary>{needsSetup ? '補齊發布所需資料' : '修改作品資料與分類（可選）'}</summary>
+          <DraftSettings key={workId} workId={workId} work={draft.work} publishOnSave={needsSetup && !contentBlocked}
+            onSaved={async (publish) => {
+              if (publish) {
+                const content = await api<Draft>(`/api/admin/preview/works/${workId}/chapters`);
+                setDraft(content);
+                await doPublish(true);
+              } else setRefresh((value) => value + 1);
+            }} />
+        </details>
+      </div>}
+      {preview && <div className="publish-checks">
+        <h3>發布前檢查</h3>
+        <dl className="meta-grid">
+          <dt>草稿章數</dt><dd>{count(preview.chapterCount)} 章</dd>
+          <dt>目前公開</dt><dd>{preview.previousRelease ? `v${preview.previousRelease.version}（${count(preview.previousRelease.chapterCount)} 章）` : '尚未發布'}</dd>
+        </dl>
+        <div className="tally">
+          <div><b>{preview.diff.newChapterIds.length}</b>新章</div>
+          <div><b>{preview.diff.updatedChapterIds.length}</b>修訂章</div>
+          <div><b>{preview.diff.reorderedChapterIds.length}</b>重排章</div>
+        </div>
+        {preview.valid ? <>
+          <p className={hasChanges ? 'form-ok' : 'hint'}>{hasChanges ? '發布檢查通過。確認後，讀者會看到以上草稿內容。' : '目前沒有待發布的章節變更。'}</p>
+          <button className="btn primary btn-block" onClick={() => void doPublish()} disabled={busy || !hasChanges} aria-busy={busy || undefined}>
+            {busy ? '發布中…' : '確認發布，讓讀者閱讀'}
+          </button>
+        </> : <p className="form-error" role="alert">無法發布：{preview.problems.map(problemText).join('、')}。請先補齊上方作品資料及分類；內容問題則需修正來源再匯入。</p>}
+      </div>}
+      </div>
+      {draft && <details>
+        <summary>抽樣文字：開頭、中段、結尾（可選）</summary>
+        <p className="hint">每處顯示最多 240 字，方便確認編碼與分段。</p>
+        {sampleError ? <p className="form-warn">{sampleError}</p> : samples.length ? samples.map((item) =>
+          <section key={item.chapterId}><h3>{item.labelRaw} {item.title || '（無標題）'}</h3>
+            <p className="draft-description">{item.body || '（沒有內容）'}</p></section>) : <p className="hint">載入抽樣內容中…</p>}
+      </details>}
+      {draft && <>
+        {draft.chapters.length > 0 ? <details onToggle={(e) => setShowChapter(e.currentTarget.open)}>
+          <summary>完整章節預覽（可選）</summary>
+          <div className="field">
+            <label htmlFor="draft-chapter">預覽章節</label>
+            <select className="input" id="draft-chapter" value={chapterId} onChange={(e) => setChapterId(e.target.value)}>
+              {draft.chapters.map((item, index) => <option key={item.id} value={item.id}>
+                {index + 1}. {item.labelRaw} {item.title || '（無標題）'}
+              </option>)}
+            </select>
           </div>
-          {preview.valid ? (
-            <>
-              <p className="form-ok">通過驗證，可以發布。</p>
-              <button className="btn primary btn-block" onClick={doPublish} disabled={busy} aria-busy={busy || undefined}>
-                {busy ? '發布中…' : '確認發布'}
-              </button>
-            </>
-          ) : (
-            <p className="form-error" role="alert">無法發布：{preview.problems.join('、')}</p>
-          )}
-        </>
-      )}
+          <div className="row-actions pager">
+            <button className="btn" disabled={chapterIndex <= 0} onClick={() => setChapterId(draft.chapters[chapterIndex - 1].id)}>上一章</button>
+            <span className="hint">{chapterIndex + 1} / {count(draft.chapters.length)} 章</span>
+            <button className="btn" disabled={chapterIndex < 0 || chapterIndex >= draft.chapters.length - 1}
+              onClick={() => setChapterId(draft.chapters[chapterIndex + 1].id)}>下一章</button>
+          </div>
+          {chapterError ? <p className="form-error" role="alert">{chapterError}</p> : chapter ?
+            <article className="draft-body" aria-label="草稿章節內容">{chapter.body || '（本章沒有內容）'}</article> :
+            <p className="hint" role="status">載入章節內容…</p>}
+        </details> : <p className="form-warn">草稿沒有章節，請先匯入內容。</p>}
+      </>}
     </section>
   );
+}
+
+function problemText(problem: string): string {
+  const messages: Record<string, string> = {
+    title_required: '請填寫作品名稱', serial_status_required: '請選擇連載狀態',
+    category_required_for_first_publication: '請選擇至少一個有效分類', no_chapters: '作品尚未有章節',
+    work_removed: '作品已移除，不能發布', invalid_work_type: '作品類型不正確', work_not_found: '找不到作品',
+  };
+  if (messages[problem]) return messages[problem];
+  if (problem.endsWith('_chapters_missing_revision')) return '部分章節缺少修訂內容';
+  if (problem.endsWith('_content_objects_missing')) return '部分章節正文遺失，請重新匯入';
+  if (problem.endsWith('_resource_objects_missing')) return '部分章節圖片遺失，請重新匯入';
+  return `檢查未通過（${problem}）`;
+}
+
+function DraftSettings({ workId, work, onSaved, publishOnSave }: { workId: string; work: Draft['work']; publishOnSave: boolean; onSaved(publish: boolean): Promise<void> }) {
+  const [title, setTitle] = useState(work.title);
+  const [author, setAuthor] = useState(work.author);
+  const [description, setDescription] = useState(work.description);
+  const [status, setStatus] = useState(work.serialStatus ?? '');
+  const [categories, setCategories] = useState<TaxonomyItem[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [tagIds, setTagIds] = useState<string[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    Promise.all([getCategories(), api<{ categories: TaxonomyItem[]; tags: TaxonomyItem[] }>(`/api/admin/works/${workId}/taxonomy`)])
+      .then(([list, assignment]) => {
+        if (!active) return;
+        setCategories([...list.items, ...assignment.categories.filter((item) => !list.items.some((available) => available.id === item.id))]);
+        setSelected(assignment.categories.map((item) => item.id));
+        setTagIds(assignment.tags.map((item) => item.id)); setLoaded(true);
+      }).catch(() => { if (active) setError('無法載入分類，請按「重新載入」再試。'); });
+    return () => { active = false; };
+  }, [workId]);
+  async function save(e: React.FormEvent) {
+    e.preventDefault(); setBusy(true); setError('');
+    const json = (method: string, body: unknown) => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    try {
+      await api(`/api/admin/works/${workId}`, json('PATCH', { title, author, description, serialStatus: status || null }));
+      await api(`/api/admin/works/${workId}/taxonomy`, json('PUT', { categoryIds: selected, tagIds }));
+      await onSaved(publishOnSave);
+    } catch { setError('未能儲存全部資料。請重新載入，確認已儲存的內容後再試。'); }
+    finally { setBusy(false); }
+  }
+  return <>
+    <h3>補齊作品資料與分類</h3>
+    <p className="hint">發布前需要作品名稱、長篇的連載狀態及至少一個分類。作品資料與分類儲存後立即生效；章節內容需另外確認發布。</p>
+    <form className="form-grid draft-settings" onSubmit={save}>
+      <div className="field"><label htmlFor="draft-title">作品名稱（必填）</label>
+        <input className="input" id="draft-title" value={title} required maxLength={300} onChange={(e) => setTitle(e.target.value)} /></div>
+      <div className="field"><label htmlFor="draft-author">作者</label>
+        <input className="input" id="draft-author" value={author} maxLength={300} onChange={(e) => setAuthor(e.target.value)} /></div>
+      <div className="field field-wide"><label htmlFor="draft-description">簡介</label>
+        <textarea className="input" id="draft-description" rows={3} value={description} maxLength={5000} onChange={(e) => setDescription(e.target.value)} /></div>
+      {work.workType === 'serial' && <div className="field"><label htmlFor="draft-status">連載狀態（必填）</label>
+        <select className="input" id="draft-status" value={status} required onChange={(e) => setStatus(e.target.value)}>
+          <option value="">請選擇</option><option value="ongoing">未完結</option>
+          <option value="completed">完結</option><option value="paused">暫停連載</option>
+        </select></div>}
+      <fieldset className="draft-categories"><legend>分類（至少一個，最多五個）</legend>
+        {!loaded ? <p className="hint">載入分類中…</p> : categories.length ? categories.map((category) =>
+          <label className="check-line" key={category.id}>
+            <input type="checkbox" checked={selected.includes(category.id)}
+              disabled={busy || (!selected.includes(category.id) && selected.length >= 5)}
+              onChange={(e) => setSelected((ids) => e.target.checked ? [...ids, category.id] : ids.filter((id) => id !== category.id))} />
+            {category.displayName}{!category.isActive ? '（已停用，請取消並選擇其他分類）' : ''}
+          </label>) : <p className="form-warn">尚未有分類。請先到「分類標籤」建立分類，再回此頁重新載入。</p>}
+      </fieldset>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <button className="btn" disabled={busy || !loaded || !selected.length}>{busy ? '儲存中…' : publishOnSave ? '儲存並發布' : '儲存資料'}</button>
+    </form>
+  </>;
 }

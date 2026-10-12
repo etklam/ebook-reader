@@ -8,16 +8,17 @@ import { Icon } from './Icon.tsx';
 export function BottomNav({ active }: { active: string }) {
   const { me } = useMe();
   const updates = useUpdateCount(Boolean(me));
+  const activeKey = ['library', 'bookmarks', 'reading-stats'].includes(active) ? 'library' : active;
   const item = (
     target: string,
     label: string,
     key: string,
-    icon: 'shelf' | 'me' | 'admin',
+    icon: 'shelf' | 'me' | 'admin' | 'ranking',
     badge?: number,
   ) => (
     <button
       className="nav-item"
-      aria-current={active === key ? 'page' : undefined}
+      aria-current={activeKey === key ? 'page' : undefined}
       aria-label={badge ? `${label}，追更中有 ${badge} 本更新` : undefined}
       onClick={() => navigate(target)}
     >
@@ -29,6 +30,7 @@ export function BottomNav({ active }: { active: string }) {
   return (
     <nav className="bottom-nav" aria-label="主導覽">
       {item('/', '書庫', 'catalog', 'shelf')}
+      {item('/rankings', '排行', 'rankings', 'ranking')}
       {me
         ? item('/me/library', '我的', 'library', 'me', updates ?? 0)
         : item('/login', '我的', 'library', 'me')}

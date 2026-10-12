@@ -29,6 +29,9 @@ import {
 import { createBookmark } from '../api/client.ts';
 import { SkeletonChapter } from '../components/Skeleton.tsx';
 import { count } from '../lib/format.ts';
+import { FullTextSearch } from './FullTextSearch.tsx';
+import { SpeechControls, useSpeechReader } from './SpeechControls.tsx';
+import { useReadingTimeTracker } from '../account/reading-time.ts';
 
 type LoadState =
   | { phase: 'loading' }
@@ -96,6 +99,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   const [approxRestore, setApproxRestore] = useState(false);
   const [member, setMember] = useState<MemberEntry | null>(null);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  useReadingTimeTracker(Boolean(member?.isMember && state.phase === 'ready' && chapter));
   // bumped by 重試: re-runs the whole entry resolution, which is the only
   // recovery available when the first load failed before any chapter existed
   const [reloadToken, setReloadToken] = useState(0);
@@ -463,6 +467,10 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     void loadChapter(chapterId, saved?.chapterId === chapterId ? saved : null);
   }, [loadChapter, workId]);
 
+  const speech = useSpeechReader({ chapterId: chapter?.chapterId ?? null,
+    text: converted?.join('\n\n') ?? '', hasNextChapter: !!chapter?.nextChapterId,
+    onNextChapter: () => goChapter(chapter?.nextChapterId ?? null) });
+
   const turnPage = useCallback((dir: 1 | -1): 'moved' | 'chapter-end' | 'chapter-start' => {
     const next = page + dir;
     if (next >= pageCount) return 'chapter-end';
@@ -707,6 +715,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
       />
 
       <BottomSheet open={sheet === 'toc'} title={`目錄（${count(work.chapterCount)} 章）`} onClose={() => setSheet(null)}>
+        <FullTextSearch workId={workId} />
         <TableOfContents
           workId={workId}
           currentChapterId={chapter.chapterId}
@@ -714,6 +723,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         />
       </BottomSheet>
       <BottomSheet open={sheet === 'settings'} title="閱讀設定" onClose={() => setSheet(null)}>
+        <SpeechControls controller={speech} />
         <ReaderSettingsPanel settings={settings} onChange={updateSettings} onLayoutChange={changeLayout} />
       </BottomSheet>
     </div>

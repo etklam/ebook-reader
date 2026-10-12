@@ -8,7 +8,7 @@
 // unlisted = readable by direct URL, never listed; removed = 404.
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, isNull, asc, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import {
   chapters, chapterRevisions, chapterRevisionResources, releaseItems, resources,
@@ -77,14 +77,14 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
     if (source === 'head') {
       // draft preview: editorial counts (M5 semantics, Admin only)
       const [counts] = await db.select({ n: sql<number>`count(*)::int` })
-        .from(chapters).where(eq(chapters.workId, id));
+        .from(chapters).where(and(eq(chapters.workId, id), isNull(chapters.mergedIntoChapterId)));
       let firstChapterId: string | null = null;
       let latestChapterId: string | null = null;
       if (counts.n > 0) {
         const ends = await db.select({
           first: sql<string>`(array_agg(${chapters.id} order by ${chapters.editorialPosition} asc))[1]`,
           latest: sql<string>`(array_agg(${chapters.id} order by ${chapters.editorialPosition} desc))[1]`,
-        }).from(chapters).where(eq(chapters.workId, id));
+        }).from(chapters).where(and(eq(chapters.workId, id), isNull(chapters.mergedIntoChapterId)));
         firstChapterId = ends[0].first;
         latestChapterId = ends[0].latest;
       }
@@ -150,7 +150,7 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
     }
     if (source === 'head') {
       const [total] = await db.select({ n: sql<number>`count(*)::int` })
-        .from(chapters).where(eq(chapters.workId, id));
+        .from(chapters).where(and(eq(chapters.workId, id), isNull(chapters.mergedIntoChapterId)));
       const rows = await db.select({
         id: chapters.id,
         volumeId: chapters.volumeId,
@@ -160,7 +160,7 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
         revisionId: chapters.headRevisionId,
       }).from(chapters)
         .leftJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
-        .where(eq(chapters.workId, id))
+        .where(and(eq(chapters.workId, id), isNull(chapters.mergedIntoChapterId)))
         .orderBy(asc(chapters.editorialPosition))
         .limit(limit).offset(offset);
       return c.json({ total: total.n, limit, offset, chapters: rows });
@@ -228,16 +228,16 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
         headRevisionId: chapters.headRevisionId,
         labelRaw: chapters.labelRaw,
         editorialPosition: chapters.editorialPosition,
-      }).from(chapters).where(eq(chapters.id, id)).limit(1);
+      }).from(chapters).where(and(eq(chapters.id, id), isNull(chapters.mergedIntoChapterId))).limit(1);
       if (!head) return c.json({ error: 'chapter_not_found' }, 404);
       const neighbors = await db.select({
         prev: sql<string | null>`(select c2.id from app.chapters c2
-          where c2.work_id = ${work.id} and c2.editorial_position < ${head.editorialPosition}
+          where c2.work_id = ${work.id} and c2.merged_into_chapter_id is null and c2.editorial_position < ${head.editorialPosition}
           order by c2.editorial_position desc limit 1)`,
         next: sql<string | null>`(select c2.id from app.chapters c2
-          where c2.work_id = ${work.id} and c2.editorial_position > ${head.editorialPosition}
+          where c2.work_id = ${work.id} and c2.merged_into_chapter_id is null and c2.editorial_position > ${head.editorialPosition}
           order by c2.editorial_position asc limit 1)`,
-      }).from(chapters).where(eq(chapters.id, id)).limit(1);
+      }).from(chapters).where(and(eq(chapters.id, id), isNull(chapters.mergedIntoChapterId))).limit(1);
       revisionId = head.headRevisionId;
       labelRaw = head.labelRaw;
       previousChapterId = neighbors[0].prev;

@@ -102,3 +102,14 @@ test('87.5 insertion chapter parses with multi-part number', () => {
   assert.equal(chapters[87].labelRaw, '第87.5章');
   assert.equal(chapters[88].labelRaw, '第88章');
 });
+
+test('custom chapter rules retain heading labels and titles', () => {
+  const { chapters } = parseTxt('CHAPTER 1 Opening\n正文。\nCHAPTER 2 Ending\n結尾。', { chapterPattern: '^CHAPTER\\s+(\\d+)\\s*' });
+  assert.deepEqual(chapters.map((chapter) => [chapter.labelRaw, chapter.title]), [['1', 'Opening'], ['2', 'Ending']]);
+});
+
+test('simplified end matter and extras are recognized without changing raw labels', () => {
+  const { chapters } = parseTxt('第一章 开端\n正文。\n终章 结局\n结尾。\n外传1 后续\n后续正文。');
+  assert.deepEqual(chapters.map((chapter) => chapter.labelRaw), ['第一章', '终章', '外传1']);
+  assert.deepEqual(chapters.map((chapter) => chapter.parsed?.kind), ['numbered', 'end', 'extra']);
+});

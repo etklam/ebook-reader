@@ -62,7 +62,7 @@ export async function collectOpsStatus(db: NodePgDatabase): Promise<OpsStatus> {
       (select count(*)::int from app.works) works,
       (select count(*)::int from app.works
         where visibility = 'public' and active_release_id is not null) published_works,
-      (select count(*)::int from app.chapters) chapters,
+      (select count(*)::int from app.chapters where merged_into_chapter_id is null) chapters,
       (select count(*)::int from app.resources) resources`)).rows as unknown as Array<{
       works: number; published_works: number; chapters: number; resources: number;
     }>;

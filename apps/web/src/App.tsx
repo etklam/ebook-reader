@@ -8,12 +8,14 @@
 import { useEffect, useState } from 'react';
 import { AdminApp } from './admin/AdminApp.tsx';
 import { ReaderPage } from './reader/ReaderPage.tsx';
+import { RankingsPage } from './catalog/RankingsPage.tsx';
 import { CatalogPage } from './catalog/CatalogPage.tsx';
 import { WorkDetailPage } from './catalog/WorkDetailPage.tsx';
 import { LoginPage } from './account/LoginPage.tsx';
 import { RegistrationPage } from './account/RegistrationPage.tsx';
 import { LibraryPage } from './account/LibraryPage.tsx';
 import { BookmarksPage } from './account/BookmarksPage.tsx';
+import { ReadingStatsPage } from './account/ReadingStatsPage.tsx';
 import { BottomNav } from './components/BottomNav.tsx';
 
 export interface ReaderRoute { workId: string; chapterId: string | null }
@@ -24,20 +26,24 @@ export function parsePath(path: string):
   | { page: 'reader'; route: ReaderRoute }
   | { page: 'work'; workId: string }
   | { page: 'catalog' }
+  | { page: 'rankings' }
   | { page: 'login' }
   | { page: 'register' }
   | { page: 'library' }
   | { page: 'bookmarks' }
+  | { page: 'reading-stats' }
   | { page: 'admin' } {
   let m: RegExpMatchArray | null;
   if ((m = path.match(new RegExp(`^/read/${UUID}(?:/(${UUID}))?$`)))) {
     return { page: 'reader', route: { workId: m[1], chapterId: m[2] ?? null } };
   }
   if ((m = path.match(new RegExp(`^/works/${UUID}$`)))) return { page: 'work', workId: m[1] };
+  if (path === '/rankings') return { page: 'rankings' };
   if (path === '/login') return { page: 'login' };
   if (path === '/register') return { page: 'register' };
   if (path === '/me/library') return { page: 'library' };
   if (path === '/me/bookmarks') return { page: 'bookmarks' };
+  if (path === '/me/reading-stats') return { page: 'reading-stats' };
   if (path.startsWith('/admin')) return { page: 'admin' };
   return { page: 'catalog' };
 }
@@ -72,11 +78,13 @@ export function App() {
 
   let page: React.ReactNode;
   switch (route.page) {
+    case 'rankings': page = <RankingsPage />; break;
     case 'work': page = <WorkDetailPage key={route.workId} workId={route.workId} />; break;
     case 'login': page = <LoginPage />; break;
     case 'register': page = <RegistrationPage />; break;
     case 'library': page = <LibraryPage />; break;
     case 'bookmarks': page = <BookmarksPage />; break;
+    case 'reading-stats': page = <ReadingStatsPage />; break;
     default: page = <CatalogPage />;
   }
 

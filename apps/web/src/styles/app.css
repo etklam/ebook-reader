@@ -249,6 +249,7 @@ button.row-title:hover { color: var(--brand); text-decoration: underline; text-u
 .input:disabled { background: var(--surface-2); color: var(--ink-3); }
 .input[aria-invalid='true'] { border-color: var(--danger); }
 .input-mono { font-variant-numeric: tabular-nums; letter-spacing: 0.08em; }
+textarea.input { line-height: 1.6; resize: vertical; }
 /* native select chrome is kept on purpose — product register bans reinvented
    form controls, and the native arrow follows color-scheme for free */
 select.input { padding-right: var(--sp-3); }
@@ -766,3 +767,88 @@ kbd {
 /* a sub-section inside a panel: spacing, not another bordered box (never nest) */
 .admin-sub { margin-top: var(--sp-7); }
 .admin-sub h3:first-child { margin-top: 0; }
+
+/* Editorial preview keeps source paragraph boundaries visible. */
+.draft-description { white-space: pre-wrap; overflow-wrap: anywhere; }
+.draft-body {
+  margin: var(--sp-4) 0;
+  padding: var(--sp-4);
+  border: 1px solid var(--rule);
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-serif);
+  font-size: var(--text-base);
+  line-height: 1.9;
+}
+.draft-categories { border: 1px solid var(--rule); padding: var(--sp-3); }
+.draft-categories legend { padding: 0 var(--sp-2); }
+.draft-categories .check-line { display: flex; align-items: center; gap: var(--sp-2); min-height: var(--tap); }
+
+/* Admin uses the desktop workspace width instead of the reading measure. */
+.import-source, .import-metadata, .import-actions { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.admin-shell details { margin: var(--sp-3) 0; }
+.admin-shell summary { cursor: pointer; padding: var(--sp-2) 0; color: var(--ink-2); }
+.admin-shell summary:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+.admin-shell details[open] > summary { margin-bottom: var(--sp-3); }
+.import-actions > .btn { align-self: flex-start; }
+.import-actions details[open] > .field + .field { margin-top: var(--sp-4); }
+@media (min-width: 960px) {
+  .app-main.admin-shell { max-width: 1160px; }
+  .admin-shell .head-line { align-items: center; }
+  .import-form { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: var(--sp-6) var(--sp-8); align-items: start; }
+  .import-source { padding-right: var(--sp-8); border-right: 1px solid var(--rule); }
+  .import-source textarea { min-height: 20rem; }
+  .import-metadata, .draft-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); align-items: start; }
+  .import-metadata > .field-wide, .draft-settings > .field-wide, .draft-settings > fieldset, .draft-settings > .form-error { grid-column: 1 / -1; }
+  .import-actions { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; align-items: flex-start; border-top: 1px solid var(--rule); padding-top: var(--sp-4); }
+  .import-actions > details { flex: 1; max-width: 42rem; margin: 0; }
+  .import-actions > .btn { flex: 0 0 auto; }
+  .admin-shell .btn-block { width: auto; min-width: 14rem; }
+  .admin-publish > .meta-grid, .admin-publish > .tally { max-width: 48rem; }
+  .admin-publish > details > .field { max-width: 42rem; }
+  .draft-settings > .btn { justify-self: start; grid-column: 1 / -1; }
+  .draft-categories { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--sp-4); }
+  .draft-body { max-width: 75ch; }
+  .admin-publish .draft-description { max-width: 75ch; }
+}
+
+.publish-summary { margin: var(--sp-6) 0; }
+.publish-summary h3:first-child { margin-top: 0; }
+@media (min-width: 960px) {
+  .publish-summary { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: var(--sp-8); align-items: start; }
+  .publish-work-summary, .publish-checks { min-width: 0; }
+  .publish-checks { border-left: 1px solid var(--rule); padding-left: var(--sp-8); }
+  .publish-work-summary .draft-settings { grid-template-columns: 1fr; }
+  .publish-work-summary .draft-settings > * { grid-column: 1; }
+}
+/* Rankings share the catalog's ruled index rows. */
+.ranking-list { list-style: none; padding: 0; margin: 0; }
+.ranking-row { grid-template-columns: 2.5ch minmax(0, 1fr) auto; gap: var(--sp-4); }
+.ranking-position { width: 2.5ch; text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.rankings-page .head-note { margin-top: var(--sp-4); }
+
+.batch-drop { margin: var(--sp-4) 0; padding: var(--sp-4) 0; border-block: 1px dashed var(--rule-strong); }
+.admin-panel > .head-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.admin-shell .page-head .head-line { flex-wrap: wrap; }
+.admin-shell .head-note { overflow-wrap: anywhere; }
+.admin-shell summary { min-height: var(--tap); }
+.batch-drop.is-dragging { background: var(--brand-tint); }
+.batch-list { list-style: none; margin: var(--sp-5) 0; padding: 0; }
+.batch-row { padding: var(--sp-4) 0; border-top: 1px solid var(--rule); }
+.batch-row-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.batch-row-head .check-line, .speech-controls .check-line { display: flex; align-items: center; gap: var(--sp-2); min-height: var(--tap); min-width: 0; }
+.batch-filename { overflow-wrap: anywhere; }
+.batch-metadata { display: grid; gap: var(--sp-3); margin-top: var(--sp-3); }
+.batch-rule-options { border: 0; padding: 0; margin: var(--sp-4) 0; }
+.batch-rule-options legend { margin-bottom: var(--sp-2); font-size: var(--text-sm); font-weight: 600; }
+.batch-rule-options .check-line { display: flex; align-items: center; min-height: var(--tap); gap: var(--sp-2); }
+.tidy-preview { display: grid; gap: var(--sp-4); margin: var(--sp-3) 0; }
+.tidy-preview pre { max-height: 16rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: var(--sp-3); background: var(--surface-2); border: 1px solid var(--rule); font: var(--text-sm)/1.6 var(--font-serif); }
+.tidy-preview h3 { margin: 0 0 var(--sp-2); font-size: var(--text-sm); }
+@media (min-width: 960px) {
+  .batch-metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .batch-metadata .field-wide { grid-column: 1 / -1; }
+  .tidy-preview { grid-template-columns: 1fr 1fr; }
+}

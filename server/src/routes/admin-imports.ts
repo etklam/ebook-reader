@@ -16,6 +16,8 @@ import { commitImport } from '../import/commit.ts';
 import { applyIncremental, diffImport } from '../import/apply-incremental.ts';
 import { reanalyzeImport } from '../import/reanalyze.ts';
 import { revertPlan, revertImport } from '../import/revert.ts';
+import { inspectImport } from '../import/quality.ts';
+import { validChapterPattern } from '../import/txt-parser.ts';
 import type {
   ImportJobResponse, ImportChapterPageResponse, ImportUploadResponse,
 } from './dto.ts';
@@ -78,6 +80,9 @@ export function adminImportRoutes(deps: ImportRoutesDeps): Hono<{ Variables: { u
     }
     const rawEncoding = field('encoding');
     const requestedEncoding = rawEncoding ? rawEncoding.toLowerCase() : null;
+    const rawChapterPattern = field('chapterPattern')?.trim() ?? '';
+    if (rawChapterPattern && ext !== '.txt') return c.json({ error: 'chapter_pattern_txt_only' }, 400);
+    if (rawChapterPattern && !validChapterPattern(rawChapterPattern)) return c.json({ error: 'invalid_chapter_pattern' }, 400);
 
     const buf = Buffer.from(await file.arrayBuffer());
     const mimeType = ext === '.epub' ? 'application/epub+zip' : 'text/plain';
@@ -97,6 +102,7 @@ export function adminImportRoutes(deps: ImportRoutesDeps): Hono<{ Variables: { u
       sourceFileId: src.id,
       requestedByUserId: c.get('userId'),
       requestedEncoding,
+      requestedChapterPattern: rawChapterPattern || null,
       detectedFormat: ext === '.epub' ? 'epub' : 'txt',
       processorVersion: processorVersion(ext === '.epub' ? 'epub' : 'txt'),
     }).returning({ id: importJobs.id });
@@ -177,12 +183,36 @@ export function adminImportRoutes(deps: ImportRoutesDeps): Hono<{ Variables: { u
     return c.json(body);
   });
 
+  // Read-only quality summary for an import. The source and staged chapters
+  // remain untouched; positions refer to the original parsed order.
+  app.get('/api/admin/imports/:id/quality', async (c) => {
+    const id = routeId(c);
+    const [job] = await db.select({ id: importJobs.id, status: importJobs.status })
+      .from(importJobs).where(eq(importJobs.id, id)).limit(1);
+    if (!job) return c.json({ error: 'not_found' }, 404);
+    if (!['ready', 'review_required', 'committed', 'applied'].includes(job.status)) {
+      return c.json({ error: 'import_not_ready' }, 409);
+    }
+    const items = await db.select({
+      position: importItems.position,
+      volumeLabel: importItems.volumeLabel,
+      labelRaw: importItems.labelRaw,
+      title: importItems.title,
+      parsedLabel: importItems.parsedLabel,
+      bodyHash: importItems.bodyHash,
+    }).from(importItems).where(eq(importItems.importJobId, id)).orderBy(asc(importItems.position));
+    return c.json(inspectImport(items as Parameters<typeof inspectImport>[0]));
+  });
+
   app.post('/api/admin/imports/:id/commit', async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const result = await commitImport(db, routeId(c), {
       workId: typeof body.workId === 'string' ? body.workId : undefined,
       title: typeof body.title === 'string' ? body.title : undefined,
       workType: typeof body.workType === 'string' ? body.workType : undefined,
+      author: typeof body.author === 'string' ? body.author : undefined,
+      description: typeof body.description === 'string' ? body.description : undefined,
+      serialStatus: body.serialStatus === null || typeof body.serialStatus === 'string' ? body.serialStatus : undefined,
     });
     if (!result.ok) return c.json({ error: result.error, detail: result.detail }, result.status);
     const { ok: _ok, status: _status, ...resp } = result;
@@ -243,8 +273,10 @@ export function adminImportRoutes(deps: ImportRoutesDeps): Hono<{ Variables: { u
   // preview→review loop from dev-plan §07)
   app.post('/api/admin/imports/:id/reanalyze', async (c) => {
     const body = await c.req.json().catch(() => ({}));
-    const encoding = typeof body.encoding === 'string' && body.encoding ? body.encoding.toLowerCase() : null;
-    const result = await reanalyzeImport(db, storage, routeId(c), encoding, config.maxAttempts);
+    const encoding = typeof body.encoding === 'string' ? body.encoding.toLowerCase() || null : undefined;
+    const chapterPattern = typeof body.chapterPattern === 'string' ? body.chapterPattern.trim() || null : undefined;
+    if (chapterPattern && !validChapterPattern(chapterPattern)) return c.json({ error: 'invalid_chapter_pattern' }, 400);
+    const result = await reanalyzeImport(db, storage, routeId(c), encoding, config.maxAttempts, chapterPattern);
     if (!result.ok) return c.json({ error: result.error, detail: result.detail }, result.status);
     return c.json({ ok: true });
   });

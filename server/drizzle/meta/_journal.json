@@ -57,6 +57,27 @@
       "when": 1791022334332,
       "tag": "0007_m7_resources",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791767798236,
+      "tag": "0008_work_click_rankings",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791771578000,
+      "tag": "0009_reading_stats",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791802717857,
+      "tag": "0010_lyrical_brood",
+      "breakpoints": true
     }
   ]
 }

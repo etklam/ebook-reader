@@ -98,6 +98,7 @@ export function LibraryPage() {
         </div>
         <nav className="subnav" aria-label="會員頁面">
           <button className="linkish" onClick={() => navigate('/me/bookmarks')}>我的書籤</button>
+          <button className="linkish" onClick={() => navigate('/me/reading-stats')}>閱讀紀錄</button>
           <button className="linkish" onClick={() => navigate('/')}>到書庫找書</button>
           <button className="linkish subnav-end"
             onClick={() => void logout()

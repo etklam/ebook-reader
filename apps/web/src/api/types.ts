@@ -202,3 +202,12 @@ export interface PublishResponse {
   diff: { newChapterIds: string[]; updatedChapterIds: string[]; reorderedChapterIds: string[] };
   alreadyPublished: boolean;
 }
+
+export type RankingPeriod = 'week' | 'month' | 'year';
+export interface RankingResponse {
+  period: RankingPeriod;
+  days: number;
+  timezone: string;
+  works: Array<{ id: string; title: string; author: string; workType: WorkType;
+    serialStatus: SerialStatus; chapterCount: number; clicks: number }>;
+}

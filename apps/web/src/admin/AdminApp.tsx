@@ -7,16 +7,27 @@ import { PublishPanel } from './PublishPanel.tsx';
 import { TaxonomyPanel } from './TaxonomyPanel.tsx';
 import { count } from '../lib/format.ts';
 import { SkeletonLines } from '../components/Skeleton.tsx';
+import { BatchImportPanel } from './BatchImportPanel.tsx';
+import { ChapterEditor } from './ChapterEditor.tsx';
+import { ExportPanel } from './ExportPanel.tsx';
+import { api as request, ApiRequestError, getMe, login, logout } from '../api/client.ts';
+import type { Me } from '../api/types.ts';
+import type { ImportJob, ImportQuality, ImportChapterPage } from '../api/import-types.ts';
+import { useImportMonitor } from './useImportMonitor.ts';
 
-// --- tiny API helpers ----------------------------------------------------------
+// Older incremental actions inspect HTTP error bodies to display resolution details.
+// Keep that contract while sharing credentials, parsing and transport errors.
 async function api(path: string, init?: RequestInit): Promise<{ status: number; body: any }> {
-  const res = await fetch(path, { credentials: 'same-origin', ...init });
-  return { status: res.status, body: await res.json().catch(() => ({})) };
+  try { return { status: 200, body: await request(path, init) }; }
+  catch (error) {
+    if (error instanceof ApiRequestError) return { status: error.status, body: error.body };
+    throw error;
+  }
 }
 
 const STATUS_TEXT: Record<string, string> = {
-  queued: '排隊中', processing: '解析中', review_required: '需要人工覆核',
-  ready: '可提交', failed: '失敗', cancelled: '已取消', committed: '已提交', applied: '已套用增量',
+  queued: '排隊中', processing: '解析中', review_required: '解析完成，有提示',
+  ready: '解析完成', failed: '失敗', cancelled: '已取消', committed: '已儲存草稿', applied: '已套用增量',
 };
 
 // status drives a dot colour *and* the word — never colour alone
@@ -36,17 +47,17 @@ function Status({ status }: { status: string }) {
 
 // --- app ------------------------------------------------------------------------
 export function AdminApp() {
-  const [me, setMe] = useState<any>(null);
+  const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api('/api/me').then(({ body }) => setMe(body.user));
+    getMe().then(({ user }) => setMe(user)).catch(() => setMe(null));
   }, []);
 
-  if (me === null) {
+  if (me === undefined) {
     return (
       <div className="app-main admin-shell">
         <SkeletonLines count={1} label="載入管理介面" />
@@ -62,15 +73,14 @@ export function AdminApp() {
           <p className="auth-lede">匯入、發布與分類管理需要管理員帳號。</p>
           <form className="auth-form" onSubmit={async (e) => {
             e.preventDefault();
-            setBusy(true);
-            const { status: st } = await api('/api/auth/login', {
-              method: 'POST', headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ email, password }),
-            });
-            setBusy(false);
-            if (st !== 200) { setLoginError('登入失敗，請確認帳號與密碼'); return; }
-            const me2 = await api('/api/me');
-            setMe(me2.body.user);
+            setBusy(true); setLoginError('');
+            try {
+              await login(email, password);
+              const result = await getMe();
+              setMe(result.user);
+            } catch (error) {
+              setLoginError(error instanceof ApiRequestError ? '登入失敗，請確認帳號與密碼' : '網絡連線失敗，請重試');
+            } finally { setBusy(false); }
           }}>
             <div className="field">
               <label htmlFor="admin-email">電子郵件</label>
@@ -98,10 +108,11 @@ export function AdminApp() {
         <div className="empty">
           <h2>這個帳號不是管理員</h2>
           <p>管理後台只開放給管理員帳號。可以改用其他帳號登入，或回書庫繼續閱讀。</p>
+          {loginError && <p className="form-error" role="alert">{loginError}</p>}
           <div className="row-actions">
             <button className="btn" onClick={async () => {
-              await api('/api/auth/logout', { method: 'POST' });
-              setMe(null);
+              try { await logout(); setMe(null); }
+              catch { setLoginError('登出失敗，請重試'); }
             }}>登出</button>
             <button className="btn" onClick={() => navigate('/')}>回書庫</button>
           </div>
@@ -110,11 +121,25 @@ export function AdminApp() {
     );
   }
 
-  return <AdminHome email={me.email || email || 'admin'} onLogout={() => setMe(null)} />;
+  return <AdminHome email={email || 'admin'} onLogout={() => setMe(null)} />;
 }
 
 function AdminHome({ email, onLogout }: { email: string; onLogout(): void }) {
-  const [tab, setTab] = useState<'import' | 'publish' | 'taxonomy'>('import');
+  const params = new URLSearchParams(location.search);
+  const initialTab = params.get('tab');
+  const [tab, setTab] = useState<'import' | 'publish' | 'taxonomy'>(initialTab === 'publish' || initialTab === 'taxonomy' ? initialTab : 'import');
+  const [selectedWorkId, setSelectedWorkId] = useState(params.get('work') ?? '');
+  const [batchMode, setBatchMode] = useState(false);
+  const [workspaceRevision, setWorkspaceRevision] = useState(0);
+  const [exportRevision, setExportRevision] = useState(0);
+  const [logoutError, setLogoutError] = useState('');
+  useEffect(() => {
+    const query = new URLSearchParams();
+    query.set('tab', tab);
+    if (selectedWorkId) query.set('work', selectedWorkId);
+    history.replaceState(null, '', `/admin?${query}`);
+  }, [tab, selectedWorkId]);
+  function continueToPublish(id: string) { setSelectedWorkId(id); setTab('publish'); }
   return (
     <main className="app-main admin-shell">
       <header className="page-head">
@@ -124,15 +149,15 @@ function AdminHome({ email, onLogout }: { email: string; onLogout(): void }) {
             {email}
             {'　'}
             <button className="linkish" onClick={async () => {
-              await api('/api/auth/logout', { method: 'POST' });
-              onLogout();
+              try { await logout(); onLogout(); }
+              catch { setLogoutError('登出失敗，請重試'); }
             }}>登出</button>
           </span>
         </div>
         <div className="seg" role="tablist" aria-label="管理功能">
           {([
             ['import', '匯入'],
-            ['publish', '發布'],
+            ['publish', '草稿與發布'],
             ['taxonomy', '分類標籤'],
           ] as const).map(([v, label]) => (
             <button key={v} role="tab" aria-selected={tab === v} className="seg-item"
@@ -142,20 +167,20 @@ function AdminHome({ email, onLogout }: { email: string; onLogout(): void }) {
           ))}
         </div>
       </header>
-      {tab === 'import' && <ImportPanel />}
-      {tab === 'publish' && <PublishPanel />}
+      {logoutError && <p className="form-error" role="alert">{logoutError}</p>}
+      <div hidden={tab !== 'import'}>{batchMode
+        ? <BatchImportPanel onBack={() => setBatchMode(false)} onOpenWork={(id) => { setBatchMode(false); continueToPublish(id); }} />
+        : <ImportPanel onContinue={continueToPublish} onBatch={() => setBatchMode(true)} />}</div>
+      {tab === 'publish' && <>
+        <PublishPanel workId={selectedWorkId} onWorkChange={setSelectedWorkId} refreshVersion={workspaceRevision}
+          onPublished={() => setExportRevision((value) => value + 1)} />
+        <ChapterEditor workId={selectedWorkId} onChanged={() => setWorkspaceRevision((value) => value + 1)} />
+        <ExportPanel workId={selectedWorkId} refresh={exportRevision} />
+      </>}
       {tab === 'taxonomy' && <TaxonomyPanel />}
     </main>
   );
 }
-
-type Job = {
-  id: string; status: string; workId: string | null; detected_encoding: string | null;
-  detectedEncoding?: string | null; chapter_count: number | null;
-  encodingResult: any; errorCode: string | null; errorDetail: string | null;
-  stagedChapters: number; stagedNeedsReview: number; sourceFile: any;
-  committedWorkId: string | null;
-};
 
 const ENCODINGS = [
   { v: '', label: '自動偵測' },
@@ -166,110 +191,139 @@ const ENCODINGS = [
   { v: 'gb18030', label: 'GB18030' },
 ];
 
-function ImportPanel() {
+function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; onBatch(): void }) {
   const [file, setFile] = useState<File | null>(null);
+  const [pastedText, setPastedText] = useState('');
+  const [jobUsesPastedText, setJobUsesPastedText] = useState(false);
   const [title, setTitle] = useState('');
   const [workType, setWorkType] = useState('serial');
+  const [author, setAuthor] = useState('');
+  const [description, setDescription] = useState('');
+  const [serialStatus, setSerialStatus] = useState('');
   const [encoding, setEncoding] = useState('');
   const [workId, setWorkId] = useState('');
-  const [job, setJob] = useState<Job | null>(null);
+  const [job, setJob] = useState<ImportJob | null>(null);
+  const [quality, setQuality] = useState<ImportQuality | null>(null);
   const [diff, setDiff] = useState<any>(null);
   const [applyResult, setApplyResult] = useState<any>(null);
   const [importId, setImportId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [commitResult, setCommitResult] = useState<any>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
-
-  function poll(id: string) {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      const { status, body } = await api(`/api/admin/imports/${id}`);
-      if (status !== 200) return;
-      setJob(body);
-      if (!['queued', 'processing'].includes(body.status) && pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    }, 1500);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const metadataAppliedRef = useRef(false);
+  const monitor = useImportMonitor((_id, { job: nextJob, quality: nextQuality, error: nextError }) => {
+    if (nextJob) setJob(nextJob);
+    if (nextQuality) setQuality(nextQuality);
+    setError(nextError ?? '');
+    const metadata = nextJob?.encodingResult?.metadata;
+    if (metadata && !metadataAppliedRef.current) {
+      metadataAppliedRef.current = true;
+      setTitle((value) => value || metadata.title || '');
+      setAuthor((value) => value || metadata.author || '');
+      setDescription((value) => value || metadata.description || '');
+      setSerialStatus((value) => value || metadata.serialStatus || '');
+    }
+  });
+  const poll = monitor.watch;
+  async function runImportAction(operation: () => Promise<void>) {
+    setBusy(true); setError('');
+    try { await operation(); }
+    catch (error) { setError(error instanceof ApiRequestError ? error.code : '網絡連線失敗，請重試'); }
+    finally { setBusy(false); }
   }
+  const submit = (e: React.FormEvent) => runImportAction(() => submitRequest(e));
+  const reanalyze = (enc = '') => runImportAction(() => reanalyzeRequest(enc));
+  const commit = () => runImportAction(commitRequest);
+  const loadDiff = () => runImportAction(loadDiffRequest);
+  const applyIncremental = (mode: 'incremental' | 'overwrite', confirmAppend = false) =>
+    runImportAction(() => applyIncrementalRequest(mode, confirmAppend));
+  const doRevert = () => runImportAction(doRevertRequest);
 
-  async function submit(e: React.FormEvent) {
+  async function submitRequest(e: React.FormEvent) {
     e.preventDefault();
-    if (!file) return;
-    setBusy(true); setError(''); setCommitResult(null); setJob(null); setDiff(null); setApplyResult(null);
+    const isPastedText = pastedText.trim().length > 0;
+    const source = isPastedText ? new File([pastedText], 'pasted.txt', { type: 'text/plain' }) : file;
+    if (!source) return;
+    monitor.stop();
+    metadataAppliedRef.current = false;
+    setImportId(null);
+    setError(''); setJob(null); setQuality(null); setDiff(null); setApplyResult(null);
+    setJobUsesPastedText(false);
     const form = new FormData();
-    form.append('file', file);
+    form.append('file', source);
     if (title) form.append('title', title); // display hint only; real title goes to commit
-    if (encoding) form.append('encoding', encoding);
+    if (encoding && !isPastedText) form.append('encoding', encoding);
     if (workId) form.append('workId', workId);
     const { status, body } = await api('/api/admin/imports', { method: 'POST', body: form });
-    setBusy(false);
-    if (status !== 201) { setError(body.error ?? '上傳失敗'); return; }
+    if (status !== 200) { setError(body.error ?? '提交失敗'); return; }
+    setJobUsesPastedText(isPastedText);
+    if (isPastedText) setPastedText('');
     setImportId(body.importId);
     poll(body.importId);
   }
 
-  async function reanalyze(enc = '') {
+  async function reanalyzeRequest(enc = '') {
     if (!importId) return;
-    setBusy(true);
-    const { status, body } = await api(`/api/admin/imports/${importId}/reanalyze`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(enc ? { encoding: enc } : {}),
-    });
-    setBusy(false);
-    if (status !== 200) { setError(body.error ?? '重新解析失敗'); return; }
-    setJob((j) => j && { ...j, status: 'queued' });
-    poll(importId);
+    monitor.stop(importId);
+    setQuality(null);
+    try {
+      const { status, body } = await api(`/api/admin/imports/${importId}/reanalyze`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(enc ? { encoding: enc } : {}),
+      });
+      if (status !== 200) { setError(body.error ?? '重新解析失敗'); return; }
+      setJob((j) => j && { ...j, status: 'queued' });
+    } finally {
+      // The server may have accepted a POST whose response was lost. Reconcile either way.
+      poll(importId);
+    }
   }
 
-  async function commit() {
+  async function commitRequest() {
     if (!importId) return;
-    setBusy(true); setError('');
+    monitor.stop(importId);
+    setError('');
     const { status, body } = await api(`/api/admin/imports/${importId}/commit`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title: title || '未命名作品', workType }),
+      body: JSON.stringify({ title: title || '未命名作品', workType, author, description,
+        serialStatus: workType === 'serial' ? serialStatus || null : null }),
     });
-    setBusy(false);
     if (status !== 200) { setError(`${body.error ?? 'commit 失敗'}${body.detail ? `：${body.detail}` : ''}`); return; }
-    setCommitResult(body);
     const refreshed = await api(`/api/admin/imports/${importId}`);
     if (refreshed.status === 200) setJob(refreshed.body);
+    onContinue(body.workId);
   }
 
-  async function loadDiff() {
+  async function loadDiffRequest() {
     if (!importId) return;
-    setBusy(true); setError('');
+    setError('');
     const { status, body } = await api(`/api/admin/imports/${importId}/diff`);
-    setBusy(false);
     if (status !== 200) { setError(body.error ?? '比對失敗'); return; }
     setDiff(body);
   }
 
-  async function applyIncremental(mode: 'incremental' | 'overwrite', confirmAppend = false) {
+  async function applyIncrementalRequest(mode: 'incremental' | 'overwrite', confirmAppend = false) {
     if (!importId || !diff) return;
-    setBusy(true); setError('');
+    monitor.stop(importId);
+    setError('');
     const key = `ui-${importId}-${mode}-${Date.now()}`;
     const { status, body } = await api(`/api/admin/imports/${importId}/apply`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': key },
       body: JSON.stringify({ baseEditVersion: diff.editVersion, mode, confirmAppend }),
     });
-    setBusy(false);
     if (status !== 200) { setError(`${body.error ?? '套用失敗'}${body.unresolved?.length ? `（${body.unresolved.length} 項待決：${body.unresolved.map((u: any) => u.labelRaw).join('、')}）` : ''}`); return; }
     setApplyResult(body);
     const refreshed = await api(`/api/admin/imports/${importId}`);
     if (refreshed.status === 200) setJob(refreshed.body);
   }
 
-  async function doRevert() {
+  async function doRevertRequest() {
     if (!importId || !diff) return;
-    setBusy(true); setError('');
+    monitor.stop(importId);
+    setError('');
     const plan = await api(`/api/admin/imports/${importId}/revert-plan`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
     });
     if (plan.status !== 200 || !plan.body.canRevert) {
-      setBusy(false);
       setError(`無法回復：${plan.body?.reason ?? plan.body?.error ?? '未知原因'}`);
       return;
     }
@@ -277,7 +331,6 @@ function ImportPanel() {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ baseEditVersion: plan.body.plan.editVersionFrom }),
     });
-    setBusy(false);
     if (status !== 200) { setError(body.error ?? '回復失敗'); return; }
     setApplyResult({ summary: null, reverted: body });
     const refreshed = await api(`/api/admin/imports/${importId}`);
@@ -285,8 +338,8 @@ function ImportPanel() {
   }
 
   const enc = job?.encodingResult;
-  const detected = job?.detectedEncoding ?? job?.detected_encoding;
-  const openReader = job?.committedWorkId;
+  const detected = job?.detectedEncoding;
+  const draftWorkId = job?.committedWorkId ?? (job?.status === 'applied' ? job.workId : null);
   const cls = (k: string) => diff?.match.items.filter((i: any) => i.itemClass === k).length ?? 0;
   const pending = diff
     ? diff.match.items.filter((i: any) => ['ambiguous', 'structural_conflict'].includes(i.itemClass)).length
@@ -295,32 +348,60 @@ function ImportPanel() {
   return (
     <>
       <section className="admin-panel">
-        <h2>匯入</h2>
+        <div className="head-line"><h2>匯入作品</h2><button className="linkish" onClick={onBatch}>批量匯入多本</button></div>
+        <p className="hint">流程：匯入 → 快速確認 → 發布</p>
         <p className="muted">
-          上傳 TXT 或 EPUB 建立新作品，或指定既有作品做增量／覆蓋。提交只會產生草稿——
+          上傳 TXT／EPUB 檔案或貼上 TXT 文字建立新作品，也可指定既有作品做增量／覆蓋。提交只會產生草稿——
           公開內容在「發布」頁才會變動。
         </p>
 
-        {openReader && (
-          <p className="form-ok">
-            作品 <code className="mono">{openReader}</code> 已就緒。{' '}
-            <button className="linkish" onClick={() => navigate(`/read/${openReader}`)}>開啟閱讀器</button>
-          </p>
-        )}
 
-        <form className="form-grid" onSubmit={submit}>
+
+        <form className="form-grid import-form" onSubmit={submit}>
+          <div className="import-source">
           <div className="field">
             <label htmlFor="imp-file">來源檔案</label>
-            <input className="input" id="imp-file" type="file" accept=".txt,.epub" required
+            <input ref={fileInputRef} className="input" id="imp-file" type="file" accept=".txt,.epub" disabled={busy}
               aria-describedby="imp-file-hint"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+              onChange={(e) => {
+                const nextFile = e.target.files?.[0] ?? null;
+                setFile(nextFile);
+                if (nextFile) setPastedText('');
+              }} />
             <span className="hint" id="imp-file-hint">TXT 上限 30 MiB，EPUB 上限 50 MiB。</span>
           </div>
+          <div className="field">
+            <label htmlFor="imp-text">或貼上 TXT 內容</label>
+            <textarea className="input" id="imp-text" rows={8} value={pastedText} disabled={busy}
+              aria-describedby="imp-text-hint"
+              placeholder="在此貼上文字內容…"
+              onChange={(e) => {
+                const text = e.target.value;
+                setPastedText(text);
+                if (text.length > 0) {
+                  setFile(null);
+                  if (fileInputRef.current) fileInputRef.current.value = '';
+                  setEncoding('');
+                }
+              }} />
+            <span className="hint" id="imp-text-hint">TXT 上限 30 MiB；貼上內容以 UTF-8 匯入，請與來源檔案擇一。</span>
+          </div>
+          </div>
+          <div className="import-metadata">
           <div className="field">
             <label htmlFor="imp-title">作品名稱</label>
             <input className="input" id="imp-title" value={title} placeholder="例如：長夜將盡"
               aria-describedby="imp-title-hint" onChange={(e) => setTitle(e.target.value)} />
-            <span className="hint" id="imp-title-hint">提交為草稿時建立；增量匯入可留空。</span>
+            <span className="hint" id="imp-title-hint">解析後會自動填入來源中的作品資料；可修改。以下資料只用於建立新作品。</span>
+          </div>
+          <div className="field">
+            <label htmlFor="imp-author">作者</label>
+            <input className="input" id="imp-author" value={author} onChange={(e) => setAuthor(e.target.value)} />
+          </div>
+          <div className="field field-wide">
+            <label htmlFor="imp-description">簡介</label>
+            <textarea className="input" id="imp-description" rows={4} value={description}
+              onChange={(e) => setDescription(e.target.value)} />
           </div>
           <div className="field">
             <label htmlFor="imp-type">作品類型</label>
@@ -330,6 +411,19 @@ function ImportPanel() {
             </select>
           </div>
           <div className="field">
+            <label htmlFor="imp-status">連載狀態</label>
+            <select className="input" id="imp-status" value={serialStatus} disabled={workType !== 'serial'}
+              aria-describedby="imp-status-hint" onChange={(e) => setSerialStatus(e.target.value)}>
+              <option value="">待確認</option>
+              <option value="ongoing">未完結</option>
+              <option value="completed">完結</option>
+            </select>
+            <span className="hint" id="imp-status-hint">來源沒有註明時請自行選擇；短篇小說不設定連載狀態。</span>
+          </div>
+          </div>
+          <div className="import-actions">
+          <details><summary>進階匯入設定（更新既有作品／指定編碼）</summary>
+          <div className="field">
             <label htmlFor="imp-work">目標作品 ID</label>
             <input className="input input-mono" id="imp-work" value={workId} placeholder="work UUID"
               aria-describedby="imp-work-hint" onChange={(e) => setWorkId(e.target.value)} />
@@ -337,14 +431,17 @@ function ImportPanel() {
           </div>
           <div className="field">
             <label htmlFor="imp-enc">文字編碼</label>
-            <select className="input" id="imp-enc" value={encoding} onChange={(e) => setEncoding(e.target.value)}>
+            <select className="input" id="imp-enc" value={encoding} disabled={jobUsesPastedText || pastedText.trim().length > 0}
+              onChange={(e) => setEncoding(e.target.value)}>
               {ENCODINGS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
             </select>
-            <span className="hint">偵測結果不對時再指定，然後重新解析。</span>
+            <span className="hint">{jobUsesPastedText ? '貼上內容以 UTF-8 儲存。' : '偵測結果不對時再指定，然後重新解析。'}</span>
           </div>
-          <button className="btn primary" type="submit" disabled={busy || !file} aria-busy={busy || undefined}>
-            {busy ? '處理中…' : '上傳並解析'}
+          </details>
+          <button className="btn primary" type="submit" disabled={busy || (!file && !pastedText.trim())} aria-busy={busy || undefined}>
+            {busy ? '處理中…' : '提交並解析'}
           </button>
+          </div>
         </form>
 
         {error && <p className="form-error" role="alert">{error}</p>}
@@ -370,7 +467,7 @@ function ImportPanel() {
             </dl>
           )}
 
-          {enc?.warnings?.length > 0 && (
+          {enc && enc.warnings.length > 0 && (
             <ul>
               {enc.warnings.map((w: string, i: number) => <li key={i} className="form-warn">{w}</li>)}
             </ul>
@@ -460,24 +557,39 @@ function ImportPanel() {
             <>
               <h3>
                 偵測章節 {count(job.stagedChapters)} 章
-                {job.stagedNeedsReview > 0 && <span className="form-warn">　{job.stagedNeedsReview} 章需要覆核</span>}
+                {job.stagedNeedsReview > 0 && <span className="form-warn">　{job.stagedNeedsReview} 章有解析提示</span>}
               </h3>
-              <ChapterList importId={importId!} />
+              <p className="hint">確認章數及作品資料即可繼續；有疑問時才展開章節清單抽查。</p>
+              {quality && <div className={quality.issueCount ? 'form-warn' : 'form-ok'}>
+                <p>章節異常檢查：空章 {quality.counts.empty}、重複章 {quality.counts.duplicates}、章號跳號 {quality.counts.gaps}。</p>
+                {quality.issues.length > 0 && <details><summary>查看 {quality.issueCount} 項異常位置</summary>
+                  <ul>{quality.issues.map((issue, index) => <li key={`${issue.type}-${index}`}>
+                    {issue.message}：{issue.positions.map((position: number, i: number) => `第 ${position + 1} 項${issue.labels[i] ? `（${issue.labels[i]}）` : ''}`).join('、')}
+                  </li>)}</ul>
+                </details>}
+              </div>}
+              <details><summary>查看章節清單與解析提示（可選）</summary>
+                <ChapterList key={importId} importId={importId!} />
+              </details>
               {!job.workId && (
                 <button className="btn primary btn-block" onClick={commit} disabled={busy}>
-                  {job.status === 'review_required' ? '覆核後提交為草稿' : '提交為草稿'}
+                  {busy ? '儲存中…' : '繼續發布'}
                 </button>
               )}
             </>
           )}
 
-          {job.status === 'committed' && commitResult && (
-            <p className="form-ok">
-              已提交：作品 <span className="mono">{commitResult.workId}</span>，
-              共 {count(commitResult.chapterCount)} 章（草稿，未公開）。{' '}
-              <button className="linkish" onClick={() => navigate(`/read/${commitResult.workId}`)}>開啟閱讀器</button>
-            </p>
+          {draftWorkId && (
+            <div role="status">
+              <h3>{job.status === 'applied' ? '修改已儲存' : '草稿已建立'}</h3>
+              <p>內容已儲存，可直接前往快速確認及發布。</p>
+              <div className="row-actions">
+                <button className="btn primary" onClick={() => onContinue(draftWorkId)}>繼續發布</button>
+              </div>
+              <p className="hint">稍後也可在「草稿與發布」按作品名稱找到它。</p>
+            </div>
           )}
+
         </section>
       )}
     </>
@@ -485,21 +597,27 @@ function ImportPanel() {
 }
 
 function ChapterList({ importId }: { importId: string }) {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<ImportChapterPage | null>(null);
+  const [loadError, setLoadError] = useState('');
   const [page, setPage] = useState(1);
 
   useEffect(() => {
-    setData(null);
-    api(`/api/admin/imports/${importId}/chapters?page=${page}&limit=50`).then(({ body }) => setData(body));
+    const controller = new AbortController();
+    setData(null); setLoadError('');
+    request<ImportChapterPage>(`/api/admin/imports/${importId}/chapters?page=${page}&limit=50`, { signal: controller.signal })
+      .then((body) => { if (!controller.signal.aborted) setData(body); })
+      .catch(() => { if (!controller.signal.aborted) setLoadError('章節載入失敗，請重新開啟預覽或換頁重試'); });
+    return () => controller.abort();
   }, [importId, page]);
 
+  if (loadError) return <p className="form-error" role="alert">{loadError}</p>;
   if (!data) return <SkeletonLines count={5} label="載入章節" />;
 
   const pages = Math.max(1, Math.ceil(data.total / data.limit));
   return (
     <div>
       <ol className="rows">
-        {data.chapters.map((c: any) => (
+        {data.chapters.map((c) => (
           <li className="row" key={c.position}>
             <div className="row-main">
               <span className="row-title row-title-sm">

@@ -1,3 +1,4 @@
+import type { ImportMetadata } from '../import/metadata.ts';
 // API DTOs (stabilization §9): explicit HTTP contract types. Raw DB rows are
 // never spread into responses — the wire format stays camelCase and stable
 // even when the DB schema evolves.
@@ -20,7 +21,7 @@ export interface ImportJobResponse {
   requestedEncoding: string | null;
   detectedFormat: 'txt' | 'epub' | null;
   detectedEncoding: string | null;
-  encodingResult: { confidence: string; reason: string; warnings: string[] } | null;
+  encodingResult: { confidence: string; reason: string; warnings: string[]; metadata?: ImportMetadata } | null;
   chapterCount: number | null;
   errorCode: string | null;
   errorDetail: string | null;

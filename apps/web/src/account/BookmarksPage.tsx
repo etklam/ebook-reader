@@ -53,6 +53,7 @@ export function BookmarksPage() {
         </div>
         <nav className="subnav" aria-label="會員頁面">
           <button className="linkish" onClick={() => navigate('/me/library')}>我的書庫</button>
+          <button className="linkish" onClick={() => navigate('/me/reading-stats')}>閱讀紀錄</button>
         </nav>
       </header>
 

@@ -3,7 +3,7 @@
 // public active_release pointer. Editorial imports never change public content
 // until this runs. Retry-safe: the same Idempotency-Key (or an unchanged
 // editorial head) returns the existing release without creating anything.
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, isNull, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import {
   categories, chapterRevisions, chapters, publicationEvents, releaseItems, works,
@@ -97,7 +97,7 @@ export async function validateForPublish(
     contentKey: chapterRevisions.contentKey,
   }).from(chapters)
     .leftJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
-    .where(eq(chapters.workId, workId))
+    .where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId)))
     .orderBy(asc(chapters.editorialPosition));
   if (chapterRows.length === 0) problems.push('no_chapters');
   const missingRevision = chapterRows.filter((c) => !c.headRevisionId).length;
@@ -116,7 +116,7 @@ export async function validateForPublish(
     from app.chapters c
     join app.chapter_revision_resources rr on rr.revision_id = c.head_revision_id
     join app.resources r on r.id = rr.resource_id
-    where c.work_id = ${workId}`);
+    where c.work_id = ${workId} and c.merged_into_chapter_id is null`);
   const resourceKeys = resourceRows.rows.map((row) => (row as { storage_key: string }).storage_key);
   const missingResources = (await Promise.all(
     resourceKeys.map(async (k) => (await storage.exists(k) ? null : k)))).filter(Boolean);
@@ -138,7 +138,7 @@ async function editorialSnapshot(db: NodePgDatabase, workId: string): Promise<Sn
     chapterId: chapters.id,
     revisionId: chapters.headRevisionId,
     position: chapters.editorialPosition,
-  }).from(chapters).where(eq(chapters.workId, workId)).orderBy(asc(chapters.editorialPosition));
+  }).from(chapters).where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId))).orderBy(asc(chapters.editorialPosition));
   // head is guaranteed non-null by validation before this runs
   return rows.map((r) => ({ chapterId: r.chapterId, revisionId: r.revisionId!, position: r.position }));
 }
@@ -252,7 +252,9 @@ export async function publishWork(
       newChapterIds: diff.newChapterIds,
       updatedChapterIds: diff.updatedChapterIds,
     });
-    await tx.update(works).set({ activeReleaseId: release.id, updatedAt: new Date() })
+    await tx.update(works).set({ activeReleaseId: release.id,
+      visibility: work.visibility === 'draft' ? 'public' : work.visibility,
+      updatedAt: new Date() })
       .where(eq(works.id, workId));
 
     return {

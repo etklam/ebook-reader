@@ -3,7 +3,7 @@
 // exactly that — and only while the work is still at the version that apply
 // produced. Any later edit blocks the revert with an explicit conflict;
 // automatic compensation plans are deferred backlog per v1.3.
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, isNull, isNotNull, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { chapters, importJobs, releaseItems, works } from '../db/schema.ts';
 import { assertTransition } from './states.ts';
@@ -130,7 +130,7 @@ export async function revertImport(
         update app.chapters c set head_revision_id = v.prev
         from unnest(${sql.param(snapshot.revisionChanges.map((r) => r.chapterId))}::uuid[],
                     ${sql.param(snapshot.revisionChanges.map((r) => r.previousHeadRevisionId))}::uuid[]) as v(id, prev)
-        where c.id = v.id`);
+        where c.id = v.id and c.merged_into_chapter_id is null`);
       await tx.execute(sql`
         delete from app.chapter_revisions where id = any(${sql.param(snapshot.revisionChanges.map((r) => r.newRevisionId))}::uuid[])`);
     }
@@ -148,16 +148,25 @@ export async function revertImport(
         delete from app.chapters where id = any(${sql.param(snapshot.addedChapterIds)}::uuid[])`);
     }
 
-    // 3) compact positions back to 1..n (relative order is untouched)
+    // 3) compact active positions while preserving absorbed rows' slots.
+    const absorbed = await tx.select({ position: chapters.editorialPosition }).from(chapters)
+      .where(and(eq(chapters.workId, job.workId!), isNotNull(chapters.mergedIntoChapterId)));
+    const reservedPositions = new Set(absorbed.map((row) => row.position));
+    let position = 1;
+    const positions: number[] = [];
     const remaining = await tx.select({ id: chapters.id })
-      .from(chapters).where(eq(chapters.workId, job.workId!))
+      .from(chapters).where(and(eq(chapters.workId, job.workId!), isNull(chapters.mergedIntoChapterId)))
       .orderBy(asc(chapters.editorialPosition));
+    for (const _row of remaining) {
+      while (reservedPositions.has(position)) position++;
+      positions.push(position++);
+    }
     if (remaining.length > 0) {
       await tx.execute(sql`
         update app.chapters c set editorial_position = v.pos
         from unnest(${sql.param(remaining.map((r) => r.id))}::uuid[],
-                    ${sql.param(remaining.map((_, i) => i + 1))}::int[]) as v(id, pos)
-        where c.id = v.id`);
+                    ${sql.param(positions)}::int[]) as v(id, pos)
+        where c.id = v.id and c.merged_into_chapter_id is null`);
     }
 
     const backTo = snapshot.newEditVersion - 1;

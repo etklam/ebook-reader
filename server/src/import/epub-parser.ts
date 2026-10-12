@@ -1,3 +1,4 @@
+import { completionStatus, type ImportMetadata } from './metadata.ts';
 // EPUB parsing (dev-plan §08, §19). The spine — not filename order, not the
 // TOC — defines reading order (IMP-16). Security at the trust boundary: zip
 // bomb caps, entry-name validation, and allowlist sanitization of every XHTML
@@ -201,6 +202,7 @@ function extractBody(
 }
 
 export interface ParsedEpub {
+  metadata: ImportMetadata;
   chapters: StagedChapter[];
   warnings: string[];
   /** deduplicated resource bytes to store, content-addressed */
@@ -249,6 +251,21 @@ export async function parseEpub(bytes: Buffer): Promise<ParsedEpub> {
   const opfFile = zip.file(opfPath);
   if (!opfFile) throw new EpubParseError('EPUB_MALFORMED', `找不到 OPF：${opfPath}`);
   const opf = xml.parse(await opfFile.async('string'));
+  const bookMetadata = opf?.package?.metadata;
+  const metadataText = (value: unknown): string => forceArray(value)
+    .map((v) => typeof v === 'object' && v !== null ? String((v as Record<string, unknown>)['#text'] ?? '') : String(v ?? ''))
+    .join('、').trim();
+  const descriptionDom = new JSDOM(metadataText(bookMetadata?.description));
+  const description = descriptionDom.window.document.body.textContent?.trim() ?? '';
+  descriptionDom.window.close();
+  const statusMeta = forceArray(bookMetadata?.meta).filter((m) =>
+    /^(status|serialStatus|狀態|状态|連載狀態|连载状态)$/i.test(String(m?.['@name'] ?? m?.['@property'] ?? '')));
+  const metadata: ImportMetadata = {
+    title: metadataText(bookMetadata?.title).slice(0, 300) || undefined,
+    author: metadataText(bookMetadata?.creator).slice(0, 300) || undefined,
+    description: description.slice(0, 5000) || undefined,
+    serialStatus: completionStatus(statusMeta.map((m) => m['@content'] ?? m['#text'] ?? '').join(' ')),
+  };
 
   const manifestItems = new Map<string, { href: string; type: string; properties: string }>();
   for (const item of forceArray(opf?.package?.manifest?.item)) {
@@ -421,5 +438,5 @@ export async function parseEpub(bytes: Buffer): Promise<ParsedEpub> {
   }
 
   if (chapters.length === 0) throw new EpubParseError('EPUB_NO_SPINE', 'spine 沒有可用的內容文件');
-  return { chapters, warnings, resources: [...resources.values()] };
+  return { chapters, warnings, resources: [...resources.values()], metadata };
 }

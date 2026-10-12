@@ -141,7 +141,7 @@ export async function headResourceDigests(
     select c.id as chapter_id, rr.content_hash, rr.alt
     from app.chapters c
     join app.chapter_revision_resources rr on rr.revision_id = c.head_revision_id
-    where c.work_id = ${workId}`);
+    where c.work_id = ${workId} and c.merged_into_chapter_id is null`);
   const grouped = new Map<string, StagedResourceLink[]>();
   for (const raw of rows.rows) {
     const row = raw as { chapter_id: string; content_hash: string; alt: string };

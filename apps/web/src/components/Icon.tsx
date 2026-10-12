@@ -3,9 +3,10 @@
 // aria-label, never from the glyph.
 type Name =
   | 'back' | 'toc' | 'bookmark' | 'settings'
-  | 'shelf' | 'me' | 'admin' | 'close' | 'filter';
+  | 'ranking' | 'shelf' | 'me' | 'admin' | 'close' | 'filter';
 
 const PATHS: Record<Name, React.ReactNode> = {
+  ranking: <path d="M4 20h16M6 20V11h4v9M10 20V5h4v15M14 20v-7h4v7" />,
   back: <path d="M14.5 5 8 12l6.5 7" />,
   toc: (
     <>

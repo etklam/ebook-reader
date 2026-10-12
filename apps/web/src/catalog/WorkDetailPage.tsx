@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   addToLibrary, follow, getToc, getWorkDetail, getWorkMemberState,
-  getProgress, markFollowSeen, removeFromLibrary, unfollow,
+  getProgress, recordWorkClick, markFollowSeen, removeFromLibrary, unfollow,
 } from '../api/client.ts';
 import type { ServerProgress, TocEntry, WorkDetail } from '../api/types.ts';
 import { navigate } from '../App.tsx';
@@ -38,7 +38,7 @@ export function WorkDetailPage({ workId }: { workId: string }) {
   useEffect(() => {
     let cancelled = false;
     getWorkDetail(workId).then((w) => {
-      if (!cancelled) setWork(w);
+      if (!cancelled) { setWork(w); void recordWorkClick(workId).catch(() => undefined); }
     }).catch((e: { code?: string }) => {
       if (!cancelled) setError(e.code ?? 'work_not_found');
     });

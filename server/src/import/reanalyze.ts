@@ -19,7 +19,8 @@ const REANALYZABLE = ['ready', 'review_required', 'failed'];
 
 export async function reanalyzeImport(
   db: NodePgDatabase, storage: Storage, jobId: string,
-  encoding: string | null, maxAttempts: number,
+  encoding: string | null | undefined, maxAttempts: number,
+  chapterPattern?: string | null,
 ): Promise<ReanalyzeResult> {
   const rows = await db.select().from(importJobs).where(eq(importJobs.id, jobId)).limit(1);
   const job = rows[0];
@@ -47,7 +48,8 @@ export async function reanalyzeImport(
     await tx.delete(importItems).where(eq(importItems.importJobId, jobId));
     await tx.update(importJobs).set({
       status: 'queued',
-      requestedEncoding: encoding ?? job.requestedEncoding,
+      requestedEncoding: encoding === undefined ? job.requestedEncoding : encoding,
+      requestedChapterPattern: chapterPattern === undefined ? job.requestedChapterPattern : chapterPattern,
       chapterCount: null,
       detectedEncoding: null,
       encodingResult: null,

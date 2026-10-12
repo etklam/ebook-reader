@@ -4,7 +4,7 @@
 // the session user id — never from the request body.
 import { Hono } from 'hono';
 import type { Context, MiddlewareHandler } from 'hono';
-import { and, asc, desc, eq, sql, type SQL } from 'drizzle-orm';
+import { isNull, and, asc, desc, eq, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { decodeCursor, encodeCursor, filterFingerprint } from '../catalog/cursor.ts';
 import {
@@ -52,7 +52,7 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
     const [row] = await db.select({ workId: chapters.workId })
       .from(chapterRevisions)
       .innerJoin(chapters, eq(chapters.id, chapterRevisions.chapterId))
-      .where(and(eq(chapterRevisions.id, revisionId), eq(chapterRevisions.chapterId, chapterId)))
+      .where(and(eq(chapterRevisions.id, revisionId), eq(chapterRevisions.chapterId, chapterId), isNull(chapters.mergedIntoChapterId)))
       .limit(1);
     return row?.workId === workId;
   };
@@ -345,7 +345,7 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
     const chapterId = typeof body?.chapterId === 'string' ? body.chapterId : '';
     if (!UUID_RE.test(chapterId)) return c.json({ error: 'invalid_request' }, 400);
     const [chapter] = await db.select({ workId: chapters.workId })
-      .from(chapters).where(eq(chapters.id, chapterId)).limit(1);
+      .from(chapters).where(and(eq(chapters.id, chapterId), isNull(chapters.mergedIntoChapterId))).limit(1);
     if (!chapter) return c.json({ error: 'chapter_not_found' }, 404);
     const work = await visibleWork(chapter.workId, c.get('role'));
     if (!work) return c.json({ error: 'forbidden' }, 403);

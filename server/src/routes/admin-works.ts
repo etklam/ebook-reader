@@ -4,7 +4,7 @@
 // operation — import/apply never publishes.
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, isNull, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import {
   categories, chapters, chapterRevisions, tags, workCategories, works, workReleases, workTags,
@@ -27,6 +27,39 @@ export const MAX_TAGS_PER_WORK = 20;
 export function adminWorkRoutes(deps: AdminWorksDeps): Hono<{ Variables: { userId: string; role: string } }> {
   const { db, storage } = deps;
   const app = new Hono<{ Variables: { userId: string; role: string } }>();
+
+  app.get('/api/admin/works', async (c) => {
+    const query = (c.req.query('q') ?? '').trim().slice(0, 100);
+    const literal = query.replace(/[\\%_]/g, '\\$&');
+    const rows = await db.select({ id: works.id, title: works.title, author: works.author,
+      visibility: works.visibility, activeReleaseId: works.activeReleaseId })
+      .from(works).where(query ? or(ilike(works.title, `%${literal}%`), ilike(works.author, `%${literal}%`)) : undefined)
+      .orderBy(desc(works.createdAt), desc(works.id)).limit(50);
+    return c.json({ works: rows });
+  });
+
+  app.patch('/api/admin/works/:workId', async (c) => {
+    const workId = routeId(c);
+    if (!UUID_RE.test(workId)) return c.json({ error: 'work_not_found' }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({ error: 'invalid_work_metadata' }, 400);
+    const [work] = await db.select().from(works).where(eq(works.id, workId)).limit(1);
+    if (!work) return c.json({ error: 'work_not_found' }, 404);
+    const workType = body.workType === undefined ? work.workType : body.workType;
+    if (!['serial', 'short_story'].includes(workType)) return c.json({ error: 'invalid_work_metadata' }, 400);
+    if (typeof body.title !== 'string' || !body.title.trim() || body.title.length > 300 ||
+      typeof body.author !== 'string' || body.author.length > 300 ||
+      typeof body.description !== 'string' || body.description.length > 5000 ||
+      (body.serialStatus !== null && !['ongoing', 'completed', 'paused'].includes(body.serialStatus))) {
+      return c.json({ error: 'invalid_work_metadata' }, 400);
+    }
+    await db.update(works).set({ title: body.title.trim(), author: body.author.trim(), workType,
+      description: body.description.trim(),
+      serialStatus: workType === 'serial' ? body.serialStatus : null,
+      updatedAt: new Date(), editVersion: sql`${works.editVersion} + 1`,
+    }).where(eq(works.id, workId));
+    return c.json({ ok: true });
+  });
 
   // GET publish preview: validation problems + diff vs previous release (§49)
   app.get('/api/admin/works/:workId/publish-preview', async (c) => {
@@ -54,7 +87,8 @@ export function adminWorkRoutes(deps: AdminWorksDeps): Hono<{ Variables: { userI
   app.get('/api/admin/preview/works/:workId/chapters', async (c) => {
     const workId = routeId(c);
     if (!UUID_RE.test(workId)) return c.json({ error: 'work_not_found' }, 404);
-    const [work] = await db.select({ id: works.id }).from(works).where(eq(works.id, workId)).limit(1);
+    const [work] = await db.select({ id: works.id, title: works.title, author: works.author,
+      description: works.description, serialStatus: works.serialStatus, workType: works.workType }).from(works).where(eq(works.id, workId)).limit(1);
     if (!work) return c.json({ error: 'work_not_found' }, 404);
     const rows = await db.select({
       id: chapters.id,
@@ -64,12 +98,12 @@ export function adminWorkRoutes(deps: AdminWorksDeps): Hono<{ Variables: { userI
       revisionId: chapters.headRevisionId,
     }).from(chapters)
       .leftJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
-      .where(eq(chapters.workId, workId))
+      .where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId)))
       .orderBy(asc(chapters.editorialPosition));
     const [release] = await db.select({ id: workReleases.id })
       .from(workReleases).where(eq(workReleases.workId, workId))
       .orderBy(sql`${workReleases.version} desc`).limit(1);
-    return c.json({ releaseId: release?.id ?? null, chapters: rows });
+    return c.json({ work, releaseId: release?.id ?? null, chapters: rows });
   });
   app.get('/api/admin/preview/works/:workId/chapters/:chapterId', async (c) => {
     const workId = routeId(c);
@@ -85,7 +119,7 @@ export function adminWorkRoutes(deps: AdminWorksDeps): Hono<{ Variables: { userI
       createdAt: chapterRevisions.createdAt,
     }).from(chapters)
       .innerJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
-      .where(sql`${chapters.id} = ${chapterId} and ${chapters.workId} = ${workId}`)
+      .where(sql`${chapters.id} = ${chapterId} and ${chapters.workId} = ${workId} and ${chapters.mergedIntoChapterId} is null`)
       .limit(1);
     const row = rows[0];
     if (!row) return c.json({ error: 'chapter_not_found' }, 404);
