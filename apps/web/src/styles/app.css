@@ -665,10 +665,152 @@ kbd {
 .auth-form .btn { margin-top: var(--sp-2); }
 .auth-foot { margin-top: var(--sp-6); font-size: var(--text-sm); color: var(--ink-3); }
 
-.subnav { display: flex; gap: var(--sp-5); padding-bottom: var(--sp-4); }
+/* password reveal: the field keeps one border, the toggle sits inside it so the
+   control reads as one input rather than an input plus a button */
+.input-reveal { position: relative; display: flex; }
+.input-reveal .input { flex: 1; padding-right: 4.5em; }
+/* full-height so the target stays 44px; flush inside the field's own border */
+.reveal-btn {
+  position: absolute;
+  inset-block: 1px;
+  inset-inline-end: 1px;
+  min-height: 0;
+  padding: 0 var(--sp-4);
+  font-size: var(--text-sm);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+}
+/* the hover rule out-specifies a bare [aria-pressed], so "on" needs both or the
+   toggle loses its brand colour the moment the pointer is on it */
+.reveal-btn[aria-pressed='true'],
+.btn.quiet.reveal-btn[aria-pressed='true']:hover:not(:disabled) {
+  color: var(--brand);
+  font-weight: 600;
+}
+
+/* a field that most people never need, kept one tap away instead of in the column */
+.disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--tap);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  cursor: pointer;
+  list-style: none;
+}
+.disclosure > summary::-webkit-details-marker { display: none; }
+/* display:flex drops the native marker, and without one this reads as a label */
+.disclosure > summary::before {
+  content: '▸';
+  color: var(--ink-faint);
+  transition: transform var(--dur-fast) var(--ease-out-quart);
+}
+.disclosure[open] > summary::before { transform: rotate(90deg); }
+.disclosure > summary:hover { color: var(--ink); }
+.disclosure[open] > summary { margin-bottom: var(--sp-3); }
+
+.subnav { display: flex; flex-wrap: wrap; gap: var(--sp-3) var(--sp-5); padding-bottom: var(--sp-4); }
 .subnav .linkish { font-size: var(--text-sm); }
 /* the one action that leaves, pushed to the opposite end of the row */
 .subnav .subnav-end { margin-inline-start: auto; }
+/* where you are: stated, in ink, and deliberately not a link */
+.subnav-here { font-size: var(--text-sm); font-weight: 600; color: var(--ink); }
+
+/* --- section heading: the running head one level down ---------------------- */
+.sec-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  margin-top: var(--sp-8);
+  padding-bottom: var(--sp-3);
+}
+.sec-head > :first-child { margin-top: 0; }
+h2.sec-head, .sec-head h2 {
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: var(--track-display);
+  text-wrap: balance;
+}
+
+/* ===================================================== reading activity === */
+/* A year of reading as 7 weekday rows × one column per week — the shape the
+   data has. Laid out as 7 *columns* it became a 3,000px ribbon on a phone and
+   nothing could be compared to anything. The week axis is longer than any
+   phone, so it scrolls horizontally and opens at today. */
+.cal-wrap {
+  --cell: 11px;
+  --cell-gap: 3px;
+  --months-h: 17px;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+}
+/* the weekday gutter sits beside the scroller, not inside it: a sticky grid
+   item cannot leave its own grid area, so in-scroller it just scrolled away */
+.cal-gutter {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-rows: repeat(7, var(--cell));
+  row-gap: var(--cell-gap);
+  align-items: center;
+  padding-top: var(--months-h);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--ink-3);
+}
+.cal {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: var(--sp-2);
+  -webkit-overflow-scrolling: touch;
+}
+.cal-months,
+.cal-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: var(--cell);
+  column-gap: var(--cell-gap);
+}
+.cal-months {
+  align-items: end;
+  height: var(--months-h);
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+.cal-months span { overflow: visible; white-space: nowrap; }
+.cal-grid {
+  grid-template-rows: repeat(7, var(--cell));
+  row-gap: var(--cell-gap);
+}
+.cal-cell {
+  border-radius: 2px;
+  background: var(--heat-0);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+.cal-cell[data-heat='1'] { background: var(--heat-1); }
+.cal-cell[data-heat='2'] { background: var(--heat-2); }
+.cal-cell[data-heat='3'] { background: var(--heat-3); }
+.cal-cell[data-heat='4'] { background: var(--heat-4); }
+
+/* the ramp is colour, so the scale is also written out in words */
+.cal-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-top: var(--sp-3);
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+.cal-legend .cal-swatches { display: flex; gap: var(--cell-gap, 3px); }
+.cal-legend .cal-cell { width: 11px; height: 11px; }
+.cal-legend .cal-legend-end { margin-inline-start: auto; text-align: right; }
+
+/* the three totals, on the shared tally rhythm rather than ad-hoc markup */
+.stats-totals { padding: var(--sp-4) 0 0; }
 
 /* ================================================================= admin === */
 .admin-shell { padding-bottom: var(--sp-10); }
@@ -827,7 +969,8 @@ kbd {
 .ranking-list { list-style: none; padding: 0; margin: 0; }
 .ranking-row { grid-template-columns: 2.5ch minmax(0, 1fr) auto; gap: var(--sp-4); }
 .ranking-position { width: 2.5ch; text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.rankings-page .head-note { margin-top: var(--sp-4); }
+/* the apparatus line under the period tabs — not the count in the head-line */
+.rankings-page .page-head > .head-note { margin-top: var(--sp-4); display: block; }
 
 .batch-drop { margin: var(--sp-4) 0; padding: var(--sp-4) 0; border-block: 1px dashed var(--rule-strong); }
 .admin-panel > .head-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3); }

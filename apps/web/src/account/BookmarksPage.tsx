@@ -1,19 +1,27 @@
 // 我的書籤 (§41): newest first, open jumps to the frozen chapter+paragraph (the
-// approximation notice comes from the reader), delete in place.
+// approximation notice comes from the reader), delete in place. Deletion is one
+// tap and then undoable, the same bargain 我的書庫 makes for 移出書庫 — the two
+// pages were taking the same kind of action and only one of them had a way back.
 import { useCallback, useEffect, useState } from 'react';
-import { deleteBookmark, getBookmarks } from '../api/client.ts';
+import { createBookmark, deleteBookmark, getBookmarks } from '../api/client.ts';
 import type { BookmarkEntry } from '../api/types.ts';
 import { navigate } from '../App.tsx';
 import { useMe } from './useMe.ts';
+import { MemberNav } from './MemberNav.tsx';
 import { SkeletonRows } from '../components/Skeleton.tsx';
 import { EmptyState } from '../components/EmptyState.tsx';
+import { Toast } from '../components/Toast.tsx';
 import { dateTime } from '../lib/format.ts';
+
+/** a line of confirmation, optionally with the action that takes it back */
+interface Note { message: string; undo?(): Promise<unknown> }
 
 export function BookmarksPage() {
   const { me, loading } = useMe();
   const [entries, setEntries] = useState<BookmarkEntry[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [note, setNote] = useState<Note | null>(null);
 
   const refresh = useCallback(() => {
     setFailed(false);
@@ -22,6 +30,24 @@ export function BookmarksPage() {
     return getBookmarks().then((r) => setEntries(r.bookmarks)).catch(() => setFailed(true));
   }, []);
   useEffect(() => { if (me) void refresh(); }, [me, refresh]);
+
+  // the delete is real, so undo re-creates the bookmark from the row's own
+  // anchor (chapter + revision + paragraph) — it lands where it was, not nearby
+  const remove = (b: BookmarkEntry) => {
+    setBusyId(b.id);
+    void deleteBookmark(b.id)
+      .then(refresh)
+      .then(() => setNote({
+        message: `已刪除《${b.workTitle}》的書籤`,
+        undo: () => createBookmark({
+          workId: b.workId, chapterId: b.chapterId, revisionId: b.revisionId,
+          paragraphIndex: b.paragraphIndex, note: b.note || undefined,
+        }),
+      }))
+      // a delete that silently failed left the row on screen with no reason why
+      .catch(() => setNote({ message: '這次沒有刪成功，請再試一次' }))
+      .finally(() => setBusyId(null));
+  };
 
   if (loading) {
     return (
@@ -49,12 +75,9 @@ export function BookmarksPage() {
       <header className="page-head">
         <div className="head-line">
           <h1>我的書籤</h1>
-          {entries && <span className="head-note">{entries.length} 則</span>}
+          {entries && <span className="head-note tnum">{entries.length} 則</span>}
         </div>
-        <nav className="subnav" aria-label="會員頁面">
-          <button className="linkish" onClick={() => navigate('/me/library')}>我的書庫</button>
-          <button className="linkish" onClick={() => navigate('/me/reading-stats')}>閱讀紀錄</button>
-        </nav>
+        <MemberNav current="bookmarks" onError={(message) => setNote({ message })} />
       </header>
 
       {entries === null && !failed && <SkeletonRows count={3} label="載入書籤" />}
@@ -79,7 +102,11 @@ export function BookmarksPage() {
         {entries?.map((b) => (
           <div key={b.id} className="row" data-testid="bookmark-card">
             <div className="row-main">
-              <span className="row-title">{b.workTitle}</span>
+              {/* the title is a link here as it is on every other list; it was
+                  the one place where tapping a work's name did nothing */}
+              <button className="row-title" onClick={() => navigate(`/works/${b.workId}`)}>
+                {b.workTitle}
+              </button>
               <div className="row-sub">
                 <span className="row-meta">
                   {b.chapterLabel || '（無標籤）'}　·　第 {b.paragraphIndex + 1} 段
@@ -91,11 +118,7 @@ export function BookmarksPage() {
                     onClick={() => navigate(`/read/${b.workId}/${b.chapterId}#p=${b.paragraphIndex}&rev=${b.revisionId}`)}>
                     開啟
                   </button>
-                  <button className="chip" disabled={busyId === b.id}
-                    onClick={() => {
-                      setBusyId(b.id);
-                      void deleteBookmark(b.id).then(refresh).catch(() => undefined).finally(() => setBusyId(null));
-                    }}>
+                  <button className="chip" disabled={busyId === b.id} onClick={() => remove(b)}>
                     刪除
                   </button>
                 </span>
@@ -104,6 +127,24 @@ export function BookmarksPage() {
           </div>
         ))}
       </div>
+
+      {note && (
+        <Toast
+          message={note.message}
+          actionLabel={note.undo ? '復原' : undefined}
+          onAction={() => {
+            const undo = note.undo;
+            setNote(null);
+            void undo?.()
+              .then(refresh)
+              .catch(() => {
+                void refresh();
+                setNote({ message: '復原失敗，請重新確認狀態' });
+              });
+          }}
+          onDismiss={() => setNote(null)}
+        />
+      )}
     </div>
   );
 }

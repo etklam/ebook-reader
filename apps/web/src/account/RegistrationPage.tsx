@@ -25,6 +25,7 @@ export function RegistrationPage() {
   const [invite, setInvite] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
+  const [shown, setShown] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,17 +63,28 @@ export function RegistrationPage() {
         </div>
         <div className="field">
           <label htmlFor="reg-password">密碼</label>
-          <input className="input" id="reg-password" aria-describedby="reg-password-hint"
-            type="password" value={password} required minLength={8} autoComplete="new-password"
-            onChange={(e) => setPassword(e.target.value)} />
+          {/* there is no self-serve reset, so a typo here is unrecoverable.
+              Being able to read what you typed is the safeguard. */}
+          <div className="input-reveal">
+            <input className="input" id="reg-password" aria-describedby="reg-password-hint"
+              type={shown ? 'text' : 'password'} value={password} required minLength={8}
+              autoComplete="new-password" onChange={(e) => setPassword(e.target.value)} />
+            <button type="button" className="btn quiet reveal-btn" aria-pressed={shown}
+              onClick={() => setShown((v) => !v)}>{shown ? '隱藏' : '顯示'}</button>
+          </div>
           <span className="hint" id="reg-password-hint">至少 8 個字元。目前沒有自助重設，請記牢。</span>
         </div>
-        <div className="field">
-          <label htmlFor="reg-invite">邀請碼（可留空）</label>
-          <input className="input input-mono" id="reg-invite" value={invite}
-            aria-invalid={code.startsWith('invite') || undefined}
-            onChange={(e) => setInvite(e.target.value)} />
-        </div>
+        {/* registration is open: the code gates nothing, so it does not get a
+            field in the main column — it stays available for anyone holding one */}
+        <details className="disclosure" open={code.startsWith('invite') || undefined}>
+          <summary>有邀請碼？（不需要也能註冊）</summary>
+          <div className="field">
+            <label htmlFor="reg-invite">邀請碼</label>
+            <input className="input input-mono" id="reg-invite" value={invite}
+              aria-invalid={code.startsWith('invite') || undefined}
+              onChange={(e) => setInvite(e.target.value)} />
+          </div>
+        </details>
         {error && (
           <p className="form-error" role="alert">
             {error}{ERROR_HINT[code] ? `　${ERROR_HINT[code]}` : ''}

@@ -9,6 +9,7 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [shown, setShown] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,11 +41,16 @@ export function LoginPage() {
         </div>
         <div className="field">
           <label htmlFor="login-password">密碼</label>
-          <input className="input" id="login-password" type="password" value={password} required
-            autoComplete="current-password"
-            aria-invalid={error ? true : undefined}
-            aria-describedby={error ? 'login-error' : undefined}
-            onChange={(e) => setPassword(e.target.value)} />
+          <div className="input-reveal">
+            <input className="input" id="login-password" type={shown ? 'text' : 'password'}
+              value={password} required
+              autoComplete="current-password"
+              aria-invalid={error ? true : undefined}
+              aria-describedby={error ? 'login-error' : undefined}
+              onChange={(e) => setPassword(e.target.value)} />
+            <button type="button" className="btn quiet reveal-btn" aria-pressed={shown}
+              onClick={() => setShown((v) => !v)}>{shown ? '隱藏' : '顯示'}</button>
+          </div>
         </div>
         {error && <p className="form-error" id="login-error" role="alert">{error}</p>}
         <button className="btn primary" type="submit" disabled={busy} aria-busy={busy || undefined}>

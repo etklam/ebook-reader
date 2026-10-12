@@ -2,11 +2,12 @@
 // markers, and favourite/follow changes without leaving the page. Removals are
 // one tap and then undoable, rather than one tap behind a confirmation.
 import { useCallback, useEffect, useState } from 'react';
-import { addToLibrary, follow, getLibrary, logout, markFollowSeen, removeFromLibrary, unfollow } from '../api/client.ts';
+import { addToLibrary, follow, getLibrary, markFollowSeen, removeFromLibrary, unfollow } from '../api/client.ts';
 import type { LibraryEntry } from '../api/types.ts';
 import { navigate } from '../App.tsx';
-import { refreshMe, useMe } from './useMe.ts';
-import { clearUpdates, refreshUpdates } from './useUpdates.ts';
+import { useMe } from './useMe.ts';
+import { MemberNav } from './MemberNav.tsx';
+import { refreshUpdates } from './useUpdates.ts';
 import { SkeletonRows } from '../components/Skeleton.tsx';
 import { EmptyState } from '../components/EmptyState.tsx';
 import { Toast } from '../components/Toast.tsx';
@@ -96,18 +97,7 @@ export function LibraryPage() {
             </span>
           )}
         </div>
-        <nav className="subnav" aria-label="會員頁面">
-          <button className="linkish" onClick={() => navigate('/me/bookmarks')}>我的書籤</button>
-          <button className="linkish" onClick={() => navigate('/me/reading-stats')}>閱讀紀錄</button>
-          <button className="linkish" onClick={() => navigate('/')}>到書庫找書</button>
-          <button className="linkish subnav-end"
-            onClick={() => void logout()
-              .then(refreshMe)
-              .then(() => { clearUpdates(); navigate('/'); })
-              .catch(() => undefined)}>
-            登出
-          </button>
-        </nav>
+        <MemberNav current="library" onError={(message) => setNote({ message })} />
       </header>
 
       {entries === null && !failed && <SkeletonRows count={3} label="載入書庫" />}
