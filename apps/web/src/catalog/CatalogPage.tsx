@@ -197,7 +197,7 @@ export function CatalogPage() {
       <header className="page-head">
         <div className="head-line">
           <h1>書庫</h1>
-          <span className="head-note tnum">{headNote}　<button className="linkish" onClick={() => navigate('/rankings')}>點擊排行榜</button></span>
+          <span className="head-note tnum">{headNote}　<button className="linkish" onClick={() => navigate('/rankings')}>排行榜</button></span>
         </div>
         <div className="seg" role="tablist" aria-label="作品類型">
           {TYPE_TABS.map((t) => (

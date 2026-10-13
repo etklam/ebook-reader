@@ -109,7 +109,12 @@ export interface WorkMemberState {
   newChapterCount: number;
 }
 
+export type LibraryReadingStatus = 'want' | 'reading' | 'finished' | 'paused';
+export interface LibraryFilters { readingStatus?: LibraryReadingStatus; groupName?: string }
+
 export interface LibraryEntry {
+  readingStatus: LibraryReadingStatus;
+  groupName: string | null;
   workId: string;
   title: string;
   author: string;
@@ -203,11 +208,16 @@ export interface PublishResponse {
   alreadyPublished: boolean;
 }
 
-export type RankingPeriod = 'week' | 'month' | 'year';
+export type RankingPeriod = 'week' | 'month' | 'year' | 'all';
+export type RankingType = 'clicks' | 'favorites';
+export interface RankingFilters { serialStatus?: Exclude<SerialStatus, null>; categoryId?: string }
 export interface RankingResponse {
+  type: RankingType;
   period: RankingPeriod;
-  days: number;
+  days: number | null;
   timezone: string;
   works: Array<{ id: string; title: string; author: string; workType: WorkType;
-    serialStatus: SerialStatus; chapterCount: number; clicks: number }>;
+    serialStatus: SerialStatus; chapterCount: number; clicks: number; favorites: number }>;
 }
+
+export interface RelatedWork { id: string; title: string; author: string; workType: WorkType; serialStatus: SerialStatus; chapterCount: number; sharedCategories: number; sharedTags: number }

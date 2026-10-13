@@ -399,11 +399,15 @@ export const registrationInvites = app.table('registration_invites', {
 export const userLibrary = app.table('user_library', {
   userId: uuid('user_id').notNull().references(() => users.id),
   workId: uuid('work_id').notNull().references(() => works.id),
+  readingStatus: text('reading_status').$type<'want' | 'reading' | 'finished' | 'paused'>().notNull().default('want'),
+  groupName: text('group_name'),
   createdAt: createdAt(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   primaryKey({ columns: [t.userId, t.workId] }),
   index('user_library_user_idx').on(t.userId, t.updatedAt),
+  check('user_library_reading_status_ck', sql`${t.readingStatus} in ('want','reading','finished','paused')`),
+  check('user_library_group_name_ck', sql`${t.groupName} is null or (length(${t.groupName}) between 1 and 40)`),
 ]);
 
 export const userFollows = app.table('user_follows', {
@@ -488,4 +492,24 @@ export const readerPreferences = app.table('reader_preferences', {
   check('reader_preferences_font_ck', sql`${t.fontSize} between 14 and 28`),
   check('reader_preferences_line_height_ck', sql`${t.lineHeight} between 1.4 and 2.6`),
   check('reader_preferences_spacing_ck', sql`${t.paragraphSpacing} between 0 and 3`),
+]);
+
+// Reader reports retain the exact published revision and paragraph snapshot.
+export const contentReports = app.table('content_reports', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  workId: uuid('work_id').notNull().references(() => works.id),
+  chapterId: uuid('chapter_id').notNull().references(() => chapters.id),
+  revisionId: uuid('revision_id').notNull().references(() => chapterRevisions.id),
+  paragraphIndex: integer('paragraph_index').notNull(),
+  excerpt: text('excerpt').notNull(),
+  message: text('message').notNull(),
+  status: text('status').$type<'open' | 'resolved'>().notNull().default('open'),
+  createdAt: createdAt(),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+}, (t) => [
+  index('content_reports_status_created_idx').on(t.status, t.createdAt),
+  check('content_reports_status_ck', sql`${t.status} in ('open','resolved')`),
+  check('content_reports_paragraph_ck', sql`${t.paragraphIndex} >= 0`),
+  check('content_reports_message_ck', sql`length(${t.message}) between 1 and 1000`),
 ]);

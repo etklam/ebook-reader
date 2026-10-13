@@ -76,9 +76,15 @@ export const getToc = (id: string, limit: number, offset: number) =>
 export const getChapter = (id: string) => api<ReaderChapter>(`/api/reader/chapters/${id}`);
 
 // --- member state ------------------------------------------------------------------
-export const getLibrary = (cursor?: string) =>
-  api<{ limit: number; nextCursor: string | null; works: LibraryEntry[] }>(
-    `/api/me/library${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+export const getLibrary = (cursor?: string, filters: import('./types.ts').LibraryFilters = {}) => {
+  const params = new URLSearchParams();
+  if (cursor) params.set('cursor', cursor);
+  if (filters.readingStatus) params.set('readingStatus', filters.readingStatus);
+  if (filters.groupName !== undefined) params.set('groupName', filters.groupName);
+  return api<{ limit: number; nextCursor: string | null; works: LibraryEntry[]; groups: string[] }>(`/api/me/library?${params}`);
+};
+export const updateLibraryEntry = (workId: string, patch: { readingStatus?: import('./types.ts').LibraryReadingStatus; groupName?: string | null }) =>
+  api<{ ok: true }>(`/api/me/library/${workId}`, json('PATCH', patch));
 // one-work state for the detail page — cheaper and correct now that the
 // library is paginated (fetching page 1 would miss a work further down)
 export const getWorkMemberState = (workId: string) =>
@@ -123,8 +129,14 @@ export const getPublishPreview = (workId: string) =>
 export const publishWork = (workId: string, idempotencyKey: string, note = '') =>
   api<PublishResponse>(`/api/admin/works/${workId}/publish`, json('POST', { note }, { headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey } }));
 
-export const getRankings = (period: import('./types.ts').RankingPeriod) =>
-  api<import('./types.ts').RankingResponse>(`/api/rankings?period=${period}`);
+export const getRankings = (period: import('./types.ts').RankingPeriod, type: import('./types.ts').RankingType = 'clicks', filters: import('./types.ts').RankingFilters = {}) => {
+  const params = new URLSearchParams({ period, type });
+  if (filters.serialStatus) params.set('serialStatus', filters.serialStatus);
+  if (filters.categoryId) params.set('categoryId', filters.categoryId);
+  return api<import('./types.ts').RankingResponse>(`/api/rankings?${params}`);
+};
+export const getRelatedWorks = (workId: string) =>
+  api<{ works: import('./types.ts').RelatedWork[] }>(`/api/works/${workId}/related`);
 export const recordWorkClick = (workId: string) =>
   api<{ counted: boolean }>(`/api/works/${workId}/click`, json('POST', {}));
 

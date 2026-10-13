@@ -6,7 +6,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { cookieOpts } from '../auth/session.ts';
 import { clientIp, createRateLimiter, rateLimit } from '../http/rate-limit.ts';
 
-const PERIOD_DAYS = { week: 7, month: 30, year: 365 } as const;
+const PERIOD_DAYS = { week: 7, month: 30, year: 365, all: null } as const;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VISITOR_COOKIE = 'ebook_click_visitor';
 
@@ -37,21 +37,33 @@ export function rankingRoutes({ db, trustProxy }: { db: NodePgDatabase; trustPro
 
   app.get('/api/rankings', async (c) => {
     const period = c.req.query('period') ?? 'week';
+    const type = c.req.query('type') ?? 'clicks';
+    if (type !== 'clicks' && type !== 'favorites') return c.json({ error: 'invalid_type' }, 400);
     if (!Object.hasOwn(PERIOD_DAYS, period)) return c.json({ error: 'invalid_period' }, 400);
+    const serialStatus = c.req.query('serialStatus') || null;
+    const categoryId = c.req.query('categoryId') || null;
+    if (serialStatus && !['ongoing', 'completed', 'paused'].includes(serialStatus)) return c.json({ error: 'invalid_filter', field: 'serialStatus' }, 400);
+    if (categoryId && !UUID_RE.test(categoryId)) return c.json({ error: 'invalid_filter', field: 'categoryId' }, 400);
+    const statusFilter = serialStatus ? sql`w.serial_status = ${serialStatus}` : sql`true`;
+    const categoryFilter = categoryId ? sql`exists (select 1 from app.work_categories wc join app.categories ct on ct.id = wc.category_id where wc.work_id = w.id and ct.is_active and wc.category_id = ${categoryId}::uuid)` : sql`true`;
     const days = PERIOD_DAYS[period as keyof typeof PERIOD_DAYS];
+    const source = type === 'favorites' ? sql`app.user_library` : sql`app.work_clicks`;
+    const day = type === 'favorites' ? sql`(v.created_at at time zone 'Asia/Taipei')::date` : sql`v.day`;
+    const range = days === null ? sql`true` : sql`${day} >= (now() at time zone 'Asia/Taipei')::date - ${days - 1}::integer`;
     const result = await db.execute(sql`
       select w.id, w.title, w.author, w.work_type, w.serial_status, r.chapter_count,
-             count(*)::text as clicks
-      from app.work_clicks v
+             count(*)::text as score
+      from ${source} v
       join app.works w on w.id = v.work_id
       join app.work_releases r on r.id = w.active_release_id and r.work_id = w.id
-      where v.day >= (now() at time zone 'Asia/Taipei')::date - ${days - 1}::integer
-        and w.visibility = 'public'
+      where ${range}
+        and w.visibility = 'public' and ${statusFilter} and ${categoryFilter}
       group by w.id, w.title, w.author, w.work_type, w.serial_status, r.chapter_count
       order by count(*) desc, w.title asc, w.id asc limit 50`);
-    return c.json({ period, days, timezone: 'Asia/Taipei', works: result.rows.map((row) => ({
+    return c.json({ type, period, days, timezone: 'Asia/Taipei', works: result.rows.map((row) => ({
       id: row.id, title: row.title, author: row.author, workType: row.work_type,
-      serialStatus: row.serial_status, chapterCount: row.chapter_count, clicks: Number(row.clicks),
+      serialStatus: row.serial_status, chapterCount: row.chapter_count, clicks: type === 'clicks' ? Number(row.score) : 0,
+      favorites: type === 'favorites' ? Number(row.score) : 0,
     })) });
   });
   return app;

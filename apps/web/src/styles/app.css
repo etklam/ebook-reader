@@ -113,8 +113,8 @@
   transition: color var(--dur-fast) var(--ease-out-quart);
 }
 .seg-item:hover { color: var(--ink); }
-.seg-item[aria-selected='true'] { color: var(--ink); font-weight: 600; }
-.seg-item[aria-selected='true']::after {
+.seg-item[aria-selected='true'], .seg-item[aria-pressed='true'] { color: var(--ink); font-weight: 600; }
+.seg-item[aria-selected='true']::after, .seg-item[aria-pressed='true']::after {
   content: '';
   position: absolute;
   left: 0; right: 0; bottom: -1px;
@@ -995,3 +995,30 @@ h2.sec-head, .sec-head h2 {
   .batch-metadata .field-wide { grid-column: 1 / -1; }
   .tidy-preview { grid-template-columns: 1fr 1fr; }
 }
+
+/* Shelf and rankings reuse native controls and the catalogue's ruled rows. */
+.ranking-filters, .library-filters, .library-edit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  margin-top: var(--sp-4);
+}
+.ranking-filters > .field, .library-filters > .field, .library-edit > .field {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+.detail-related { margin-top: var(--sp-7); }
+.detail-related .row-rail { max-width: 8rem; }
+
+.typo-report blockquote, .content-report blockquote {
+  margin: var(--sp-4) 0;
+  padding: var(--sp-4);
+  background: var(--surface-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.content-report { padding: var(--sp-5) 0; border-bottom: 1px solid var(--rule); }
+.content-report > p { overflow-wrap: anywhere; }
+.content-reports-panel .msg-actions { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-4); }
+
+.library-organize { align-self: flex-start; margin-top: var(--sp-3); }

@@ -16,17 +16,6 @@ export interface SessionSweepResult {
   deleted: number;
 }
 
-/** Keep the rolling yearly ranking plus one day of boundary grace. */
-export async function sweepWorkClicks(db: NodePgDatabase): Promise<SessionSweepResult> {
-  const rows = await db.execute(sql`
-    delete from app.work_clicks where ctid in (
-      select ctid from app.work_clicks
-      where day < (now() at time zone 'Asia/Taipei')::date - 365
-      order by day limit 10000
-    ) returning work_id`);
-  return { deleted: rows.rows.length };
-}
-
 /**
  * Delete sessions that can never authenticate again: expired past the grace
  * period, or revoked and no longer interesting for support questions.

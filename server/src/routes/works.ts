@@ -243,6 +243,42 @@ export function worksRoutes(deps: CatalogDeps): Hono<Record<string, never>> {
     return c.json({ items: rows });
   });
 
+  app.get('/api/works/:id/related', async (c) => {
+    const id = c.req.param('id');
+    if (!UUID_RE.test(id)) return c.json({ error: 'work_not_found' }, 404);
+    const [source] = await db.select({ id: works.id }).from(works)
+      .where(sql`${works.id} = ${id} and ${works.visibility} in ('public','unlisted') and ${works.activeReleaseId} is not null`).limit(1);
+    if (!source) return c.json({ error: 'work_not_found' }, 404);
+    const result = await db.execute(sql`
+      with category_matches as (
+        select candidate.work_id, count(*)::int as shared_categories
+        from app.work_categories seed
+        join app.categories ct on ct.id = seed.category_id and ct.is_active
+        join app.work_categories candidate on candidate.category_id = seed.category_id
+        where seed.work_id = ${id}::uuid and candidate.work_id <> ${id}::uuid
+        group by candidate.work_id
+      ), tag_matches as (
+        select candidate.work_id, count(*)::int as shared_tags
+        from app.work_tags seed
+        join app.tags tg on tg.id = seed.tag_id and tg.is_active
+        join app.work_tags candidate on candidate.tag_id = seed.tag_id
+        where seed.work_id = ${id}::uuid and candidate.work_id <> ${id}::uuid
+        group by candidate.work_id
+      )
+      select w.id, w.title, w.author, w.work_type, w.serial_status, r.chapter_count,
+             coalesce(cm.shared_categories, 0) as shared_categories, coalesce(tm.shared_tags, 0) as shared_tags
+      from app.works w
+      join app.work_releases r on r.id = w.active_release_id and r.work_id = w.id
+      left join category_matches cm on cm.work_id = w.id
+      left join tag_matches tm on tm.work_id = w.id
+      where w.visibility = 'public' and (cm.work_id is not null or tm.work_id is not null)
+      order by coalesce(tm.shared_tags, 0) desc, coalesce(cm.shared_categories, 0) desc, w.title asc, w.id asc
+      limit 6`);
+    return c.json({ works: result.rows.map((row) => ({ id: row.id, title: row.title, author: row.author,
+      workType: row.work_type, serialStatus: row.serial_status, chapterCount: row.chapter_count,
+      sharedCategories: Number(row.shared_categories), sharedTags: Number(row.shared_tags) })) });
+  });
+
   // public work detail: release-scoped metadata + lightweight TOC head
   app.get('/api/works/:id', async (c) => {
     const id = c.req.param('id');

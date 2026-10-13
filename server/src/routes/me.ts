@@ -15,6 +15,23 @@ import {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const routeId = (c: Context): string => c.req.param('workId') as string;
+const READING_STATUSES = ['want', 'reading', 'finished', 'paused'] as const;
+type ReadingStatus = typeof READING_STATUSES[number];
+const isReadingStatus = (value: unknown): value is ReadingStatus =>
+  READING_STATUSES.some((status) => status === value);
+
+export function parseLibraryMetadata(body: unknown): { readingStatus?: ReadingStatus; groupName?: string | null } | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const data = body as Record<string, unknown>;
+  if (Object.keys(data).some((key) => !['readingStatus', 'groupName'].includes(key)) || Object.keys(data).length === 0) return null;
+  if ('readingStatus' in data && !isReadingStatus(data.readingStatus)) return null;
+  if ('groupName' in data && data.groupName !== null &&
+    (typeof data.groupName !== 'string' || data.groupName.trim().length > 40)) return null;
+  return {
+    ...('readingStatus' in data ? { readingStatus: data.readingStatus as ReadingStatus } : {}),
+    ...('groupName' in data ? { groupName: (data.groupName as string | null)?.trim() || null } : {}),
+  };
+}
 
 export interface MeDeps {
   db: NodePgDatabase;
@@ -77,8 +94,14 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
   app.get('/api/me/library', async (c) => {
     const userId = userIdOf(c);
     const limit = Math.min(50, Math.max(1, Number(c.req.query('limit') ?? 20) || 20));
-    const fingerprint = filterFingerprint([`library=${userId}`]);
+    const readingStatus = c.req.query('readingStatus');
+    const groupName = c.req.query('groupName')?.trim();
+    if (readingStatus !== undefined && !isReadingStatus(readingStatus)) return c.json({ error: 'invalid_reading_status' }, 400);
+    if (groupName !== undefined && groupName.length > 40) return c.json({ error: 'invalid_group_name' }, 400);
+    const fingerprint = filterFingerprint([`library=${userId}`, `status=${readingStatus ?? ''}`, `group=${groupName === undefined ? '*' : JSON.stringify(groupName)}`]);
     const scope: SQL[] = [eq(library.userId, userId)];
+    if (readingStatus) scope.push(eq(library.readingStatus, readingStatus));
+    if (groupName !== undefined) scope.push(groupName ? eq(library.groupName, groupName) : isNull(library.groupName));
     const rawCursor = c.req.query('cursor');
     if (rawCursor) {
       const decoded = decodeCursor(rawCursor, fingerprint);
@@ -97,6 +120,8 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
       activeReleaseId: works.activeReleaseId,
       addedAt: library.createdAt,
       updatedAt: library.updatedAt,
+      readingStatus: library.readingStatus,
+      groupName: library.groupName,
       // continue reading (§39): stable chapter-id based, never max position
       progressChapterId: readingProgress.chapterId,
       progressParagraphIndex: readingProgress.paragraphIndex,
@@ -121,9 +146,14 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
     const nextCursor = rows.length > limit && last
       ? encodeCursor({ v: 1, f: fingerprint, k: last.sortValue, id: last.workId })
       : null;
+    // Group options cover the entire shelf, including rows beyond this page.
+    const groups = await db.selectDistinct({ name: library.groupName }).from(library)
+      .where(and(eq(library.userId, userId), sql`${library.groupName} is not null`))
+      .orderBy(asc(library.groupName));
     return c.json({
       limit,
       nextCursor,
+      groups: groups.map((group) => group.name),
       works: page.map((r) => ({
         workId: r.workId,
         title: r.title,
@@ -138,6 +168,8 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
         continueParagraphIndex: r.progressParagraphIndex,
         lastReadAt: r.progressUpdatedAt?.toISOString() ?? null,
         addedAt: r.addedAt.toISOString(),
+        readingStatus: r.readingStatus,
+        groupName: r.groupName,
       })),
     });
   });
@@ -181,6 +213,16 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
     const userId = userIdOf(c);
     await db.insert(library).values({ userId, workId: work.id })
       .onConflictDoUpdate({ target: [library.userId, library.workId], set: { updatedAt: new Date() } });
+    return c.json({ ok: true });
+  });
+
+  app.patch('/api/me/library/:workId', async (c) => {
+    const metadata = parseLibraryMetadata(await c.req.json().catch(() => null));
+    if (!metadata) return c.json({ error: 'invalid_library_metadata' }, 400);
+    const [entry] = await db.update(library).set({ ...metadata, updatedAt: new Date() })
+      .where(and(eq(library.userId, userIdOf(c)), eq(library.workId, routeId(c))))
+      .returning({ workId: library.workId });
+    if (!entry) return c.json({ error: 'library_entry_not_found' }, 404);
     return c.json({ ok: true });
   });
 

@@ -8,6 +8,7 @@ import { TaxonomyPanel } from './TaxonomyPanel.tsx';
 import { count } from '../lib/format.ts';
 import { SkeletonLines } from '../components/Skeleton.tsx';
 import { BatchImportPanel } from './BatchImportPanel.tsx';
+import { ContentReportsPanel } from './ContentReportsPanel.tsx';
 import { ChapterEditor } from './ChapterEditor.tsx';
 import { ExportPanel } from './ExportPanel.tsx';
 import { api as request, ApiRequestError, getMe, login, logout } from '../api/client.ts';
@@ -127,8 +128,10 @@ export function AdminApp() {
 function AdminHome({ email, onLogout }: { email: string; onLogout(): void }) {
   const params = new URLSearchParams(location.search);
   const initialTab = params.get('tab');
-  const [tab, setTab] = useState<'import' | 'publish' | 'taxonomy'>(initialTab === 'publish' || initialTab === 'taxonomy' ? initialTab : 'import');
+  const [tab, setTab] = useState<'import' | 'publish' | 'taxonomy' | 'reports'>(initialTab === 'publish' || initialTab === 'taxonomy' || initialTab === 'reports' ? initialTab : 'import');
   const [selectedWorkId, setSelectedWorkId] = useState(params.get('work') ?? '');
+  const [targetChapter, setTargetChapter] = useState(params.get('chapter') ?? '');
+  const [targetParagraph, setTargetParagraph] = useState(Number(params.get('paragraph') ?? 0));
   const [batchMode, setBatchMode] = useState(false);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [exportRevision, setExportRevision] = useState(0);
@@ -137,8 +140,9 @@ function AdminHome({ email, onLogout }: { email: string; onLogout(): void }) {
     const query = new URLSearchParams();
     query.set('tab', tab);
     if (selectedWorkId) query.set('work', selectedWorkId);
+    if (tab === 'publish' && targetChapter) { query.set('chapter', targetChapter); query.set('paragraph', String(targetParagraph)); }
     history.replaceState(null, '', `/admin?${query}`);
-  }, [tab, selectedWorkId]);
+  }, [tab, selectedWorkId, targetChapter, targetParagraph]);
   function continueToPublish(id: string) { setSelectedWorkId(id); setTab('publish'); }
   return (
     <main className="app-main admin-shell">
@@ -159,6 +163,7 @@ function AdminHome({ email, onLogout }: { email: string; onLogout(): void }) {
             ['import', '匯入'],
             ['publish', '草稿與發布'],
             ['taxonomy', '分類標籤'],
+            ['reports', '錯字回報'],
           ] as const).map(([v, label]) => (
             <button key={v} role="tab" aria-selected={tab === v} className="seg-item"
               onClick={() => setTab(v)}>
@@ -172,11 +177,14 @@ function AdminHome({ email, onLogout }: { email: string; onLogout(): void }) {
         ? <BatchImportPanel onBack={() => setBatchMode(false)} onOpenWork={(id) => { setBatchMode(false); continueToPublish(id); }} />
         : <ImportPanel onContinue={continueToPublish} onBatch={() => setBatchMode(true)} />}</div>
       {tab === 'publish' && <>
-        <PublishPanel workId={selectedWorkId} onWorkChange={setSelectedWorkId} refreshVersion={workspaceRevision}
+        <PublishPanel workId={selectedWorkId} onWorkChange={(id) => { setSelectedWorkId(id); setTargetChapter(''); }} refreshVersion={workspaceRevision}
           onPublished={() => setExportRevision((value) => value + 1)} />
-        <ChapterEditor workId={selectedWorkId} onChanged={() => setWorkspaceRevision((value) => value + 1)} />
+        <ChapterEditor workId={selectedWorkId} initialChapterId={targetChapter} initialParagraphIndex={targetParagraph} onChanged={() => setWorkspaceRevision((value) => value + 1)} />
         <ExportPanel workId={selectedWorkId} refresh={exportRevision} />
       </>}
+      {tab === 'reports' && <ContentReportsPanel onEdit={(id, chapterId, paragraphIndex) => {
+        setSelectedWorkId(id); setTargetChapter(chapterId); setTargetParagraph(paragraphIndex); setTab('publish');
+      }} />}
       {tab === 'taxonomy' && <TaxonomyPanel />}
     </main>
   );

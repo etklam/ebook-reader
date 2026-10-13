@@ -29,6 +29,8 @@ import {
 import { createBookmark } from '../api/client.ts';
 import { SkeletonChapter } from '../components/Skeleton.tsx';
 import { count } from '../lib/format.ts';
+import { ReportTypo } from './ReportTypo.tsx';
+import { createChapterLoader } from './chapter-loader.ts';
 import { FullTextSearch } from './FullTextSearch.tsx';
 import { SpeechControls, useSpeechReader } from './SpeechControls.tsx';
 import { useReadingTimeTracker } from '../account/reading-time.ts';
@@ -64,35 +66,19 @@ const ERROR_HINT: Record<string, string> = {
   network: '看起來是連線中斷。重試一次通常就好；進度已經存在這台裝置上。',
 };
 
-// small body cache: next/prev revisits and preloads never re-fetch an
-// unchanged revision; a failed preload never breaks the current page
-const chapterCache = new Map<string, ReaderChapter>();
-
-async function fetchChapter(chapterId: string): Promise<ReaderChapter> {
-  const hit = chapterCache.get(chapterId);
-  if (hit) return hit;
-  const ch = await getChapter(chapterId);
-  if (chapterCache.size > 8) chapterCache.delete(chapterCache.keys().next().value!);
-  chapterCache.set(chapterId, ch);
-  return ch;
-}
-
-function prefetchChapter(chapterId: string | null): void {
-  if (chapterId && !chapterCache.has(chapterId)) getChapter(chapterId).catch(() => undefined);
-}
-
 const COLUMN_GAP = 48;
 /** px of horizontal travel before a touch gesture counts as a page turn */
 const SWIPE_MIN = 44;
 
 export function ReaderPage({ workId, initialChapterId }: { workId: string; initialChapterId: string | null }) {
+  const chapterLoader = useMemo(() => createChapterLoader(getChapter), [workId]);
   const [work, setWork] = useState<ReaderWork | null>(null);
   const [chapter, setChapter] = useState<ReaderChapter | null>(null);
   const [state, setState] = useState<LoadState>({ phase: 'loading' });
   const [settings, setSettings] = useState<ReaderSettings>(() => loadSettings());
   const [converted, setConverted] = useState<string[] | null>(null);
   const [chromeVisible, setChromeVisible] = useState(false);
-  const [sheet, setSheet] = useState<null | 'toc' | 'settings'>(null);
+  const [sheet, setSheet] = useState<null | 'toc' | 'settings' | 'report'>(null);
   const [page, setPage] = useState(0);
   const [pageCount, setPageCount] = useState(1);
   const [vpWidth, setVpWidth] = useState(0);
@@ -102,6 +88,8 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   useReadingTimeTracker(Boolean(member?.isMember && state.phase === 'ready' && chapter));
   // bumped by 重試: re-runs the whole entry resolution, which is the only
   // recovery available when the first load failed before any chapter existed
+  const [reportParagraphIndex, setReportParagraphIndex] = useState(0);
+  const selectedParagraph = useRef<{ chapterId: string; index: number } | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const captureRef = useRef<() => ReadingPosition | null>(() => null);
 
@@ -162,6 +150,26 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     };
   }, [chapter, settings.mode]);
 
+  useEffect(() => {
+    const rememberSelection = () => {
+      const selection = window.getSelection();
+      if (!selection?.toString().trim() || !chapter) return;
+      const node = selection.anchorNode;
+      const element = node instanceof Element ? node : node?.parentElement;
+      const paragraph = element?.closest(`[${PARA_ATTR}]`);
+      if (paragraph && stripRef.current?.contains(paragraph)) {
+        selectedParagraph.current = { chapterId: chapter.chapterId, index: Number(paragraph.getAttribute(PARA_ATTR)) };
+      }
+    };
+    document.addEventListener('selectionchange', rememberSelection);
+    return () => document.removeEventListener('selectionchange', rememberSelection);
+  }, [chapter]);
+  function openReport() {
+    const selected = selectedParagraph.current;
+    const index = selected && selected.chapterId === chapter?.chapterId ? selected.index : captureAnchor()?.paragraphIndex ?? 0;
+    setReportParagraphIndex(index); setSheet('report');
+  }
+
   captureRef.current = captureAnchor;
 
   // capture the anchor before a layout-changing setting applies (§11.3).
@@ -188,11 +196,11 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     setPage(0);
     setPageCount(1);
     try {
-      const ch = await fetchChapter(chapterId);
+      const ch = await chapterLoader.load(chapterId);
       if (seq !== seqRef.current) return; // stale response — ignore (§13)
       setChapter(ch);
       setState({ phase: 'ready' });
-      prefetchChapter(ch.nextChapterId);
+      chapterLoader.prefetch(ch.nextChapterId);
       if (restore && restore.chapterId === ch.chapterId) {
         const exact = restore.revisionId === ch.revisionId;
         queueAnchor(exact ? restore : remapPosition(restore, ch.revisionId, splitParagraphs(ch.body).length));
@@ -206,7 +214,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
       const code = e instanceof ApiRequestError ? e.code : 'network';
       setState({ phase: 'error', code, retryable: retryableError(e, code) });
     }
-  }, []);
+  }, [chapterLoader, queueAnchor]);
 
   // initial load: work metadata + entry chapter (route id → saved position → first)
   useEffect(() => {
@@ -722,7 +730,11 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
           onJump={(id) => goChapter(id)}
         />
       </BottomSheet>
+      <BottomSheet open={sheet === 'report'} title="回報章節錯字" onClose={() => setSheet(null)}>
+        <ReportTypo key={`${chapter.chapterId}:${reportParagraphIndex}`} chapter={chapter} paragraphIndex={reportParagraphIndex} isMember={Boolean(member?.isMember)} />
+      </BottomSheet>
       <BottomSheet open={sheet === 'settings'} title="閱讀設定" onClose={() => setSheet(null)}>
+        <button className="btn" onClick={openReport}>回報錯字</button>
         <SpeechControls controller={speech} />
         <ReaderSettingsPanel settings={settings} onChange={updateSettings} onLayoutChange={changeLayout} />
       </BottomSheet>

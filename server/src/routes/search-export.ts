@@ -9,44 +9,17 @@ import {
 } from '../db/schema.ts';
 import type { Storage } from '../storage.ts';
 import { variantsForSearch } from '../search/normalize.ts';
+import { clientIp, createRateLimiter, rateLimit } from '../http/rate-limit.ts';
+import { findChapterMatch } from '../search/chapter-search.ts';
 
 export interface SearchExportRoutesDeps {
   db: NodePgDatabase;
   storage: Storage;
+  trustProxy?: boolean;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const IMAGE_RE = /\[\[img:([0-9a-f]{64})\]\]/gi;
 const MAX_RESULTS = 50;
-
-function noImages(body: string): string {
-  return body.replace(IMAGE_RE, '');
-}
-
-function snippet(body: string, variants: readonly string[]): { snippet: string; matchStart: number; matchLength: number } | null {
-  const text = noImages(body).replace(/\s+/g, ' ').trim();
-  const lower = text.toLocaleLowerCase();
-  let matchAt = -1;
-  let matchLength = 0;
-  for (const variant of variants) {
-    const needle = variant.toLocaleLowerCase();
-    const at = lower.indexOf(needle);
-    if (at >= 0 && (matchAt < 0 || at < matchAt)) {
-      matchAt = at;
-      matchLength = needle.length;
-    }
-  }
-  if (matchAt < 0) return null;
-  const start = Math.max(0, matchAt - 72);
-  const end = Math.min(text.length, matchAt + matchLength + 112);
-  const prefix = start > 0 ? '…' : '';
-  const result = text.slice(start, end);
-  return {
-    snippet: `${prefix}${result}${end < text.length ? '…' : ''}`,
-    matchStart: prefix.length + matchAt - start,
-    matchLength,
-  };
-}
 
 function filenamePart(value: string): string {
   return value.normalize('NFC').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim().slice(0, 100) || 'ebook';
@@ -64,6 +37,11 @@ export function searchExportRoutes(deps: SearchExportRoutesDeps): Hono<{ Variabl
   const { db, storage } = deps;
   const app = new Hono<{ Variables: { userId: string; role: string } }>();
 
+  app.use('/api/reader/works/:id/search', rateLimit({
+    limiter: createRateLimiter({ windowMs: 60_000, max: 10 }),
+    keyOf: (c) => clientIp(c, deps.trustProxy ?? false), errorCode: 'too_many_requests',
+  }));
+
   // Search follows reader visibility and the ACTIVE release. Draft head is
   // searchable only to Admin; historical releases are never exposed here.
   app.get('/api/reader/works/:id/search', async (c) => {
@@ -74,8 +52,12 @@ export function searchExportRoutes(deps: SearchExportRoutesDeps): Hono<{ Variabl
     const admin = c.get('role') === 'admin';
     if (work.visibility === 'draft' && !admin) return c.json({ error: 'forbidden' }, 403);
 
-    const q = (c.req.query('q') ?? '').trim().slice(0, 100);
+    const q = (c.req.query('q') ?? '').trim().replace(/\s+/g, ' ');
     if (!q) return c.json({ error: 'query_required' }, 400);
+    if (q.length > 100) return c.json({ error: 'query_too_long' }, 400);
+    const offsetText = c.req.query('offset') ?? '0';
+    if (!/^\d{1,9}$/.test(offsetText)) return c.json({ error: 'invalid_offset' }, 400);
+    const offset = Number(offsetText);
     const variants = await variantsForSearch(q);
     const rows: ExportChapter[] = work.visibility === 'draft' && admin
       ? await db.select({
@@ -103,32 +85,33 @@ export function searchExportRoutes(deps: SearchExportRoutesDeps): Hono<{ Variabl
     }> = [];
     // ponytail: scan immutable chapter objects on demand; a persistent index is
     // justified only once the catalogue size makes full-volume scans too slow.
-    let contentUnavailable = false;
-    await Promise.all(Array.from({ length: Math.min(8, rows.length) }, async (_, worker) => {
-      for (let index = worker; index < rows.length; index += Math.min(8, rows.length)) {
-        const row = rows[index];
+    // Process small ordered batches so stored matches stay bounded to one page.
+    for (let start = 0; start < rows.length; start += 8) {
+      const batch = rows.slice(start, start + 8);
+      const matches = await Promise.all(batch.map(async (row) => {
         let body: string;
         try { body = (await storage.get(row.contentKey)).toString('utf8'); }
-        catch { contentUnavailable = true; continue; }
-        const paragraphs = body.split('\n\n');
-        let paragraphIndex = paragraphs.findIndex((paragraph) => snippet(paragraph, variants) !== null);
-        const found = paragraphIndex >= 0 ? snippet(paragraphs[paragraphIndex], variants) : snippet(row.title, variants);
-        if (!found) continue;
-        if (paragraphIndex < 0) paragraphIndex = 0;
-        total += 1;
-        results.push({
-          chapterId: row.chapterId, labelRaw: row.labelRaw, title: row.title,
-          ...found, paragraphIndex,
-          href: `/read/${workId}/${row.chapterId}#p=${paragraphIndex}&rev=${row.revisionId}`,
-        });
+        catch { return { unavailable: true } as const; }
+        return { row, found: findChapterMatch(body, row.title, variants) };
+      }));
+      if (matches.some((match) => 'unavailable' in match)) {
+        return c.json({ error: 'content_unavailable' }, 409);
       }
-    }));
-    if (contentUnavailable) return c.json({ error: 'content_unavailable' }, 409);
-    // workers append out of order; restore the work's editorial/release order.
-    const order = new Map(rows.map((row, index) => [row.chapterId, index]));
-    results.sort((a, b) => (order.get(a.chapterId) ?? 0) - (order.get(b.chapterId) ?? 0));
-    const truncated = total > MAX_RESULTS;
-    return c.json({ query: q, total, truncated, results: results.slice(0, MAX_RESULTS) });
+      for (const match of matches) {
+        if ('unavailable' in match || !match.found) continue;
+        const { row, found } = match;
+        if (total >= offset && results.length < MAX_RESULTS) {
+          results.push({
+            chapterId: row.chapterId, labelRaw: row.labelRaw, title: row.title,
+            ...found,
+            href: `/read/${workId}/${row.chapterId}#p=${found.paragraphIndex}&rev=${row.revisionId}`,
+          });
+        }
+        total += 1;
+      }
+    }
+    const nextOffset = offset + results.length < total ? offset + results.length : null;
+    return c.json({ query: q, total, offset, nextOffset, truncated: nextOffset !== null, results });
   });
 
   app.get('/api/admin/works/:workId/export-versions', async (c) => {

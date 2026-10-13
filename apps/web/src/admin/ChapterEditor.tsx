@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client.ts';
 
 type ChapterRow = {
@@ -40,12 +40,17 @@ function errorText(code: string): string {
 export function ChapterEditor({
   workId,
   refresh = 0,
+  initialChapterId = '',
+  initialParagraphIndex = 0,
   onChanged,
 }: {
   workId: string;
   refresh?: number;
+  initialChapterId?: string;
+  initialParagraphIndex?: number;
   onChanged?(): void;
 }) {
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const [chapters, setChapters] = useState<ChapterRow[]>([]);
   const [chapterId, setChapterId] = useState('');
   const [chapter, setChapter] = useState<ChapterDetail | null>(null);
@@ -78,12 +83,12 @@ export function ChapterEditor({
         if (!active) return;
         setChapters(data.chapters);
         setChapterId((current) => data.chapters.some((item) => item.id === current)
-          ? current : data.chapters[0]?.id ?? '');
+          ? current : data.chapters.find((item) => item.id === initialChapterId)?.id ?? data.chapters[0]?.id ?? '');
       })
       .catch((error) => { if (active) setMessage(errorText((error as { code?: string }).code ?? '')); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [workId, refresh, listVersion]);
+  }, [workId, refresh, listVersion, initialChapterId]);
 
   useEffect(() => {
     let active = true;
@@ -103,6 +108,16 @@ export function ChapterEditor({
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [workId, chapterId, listVersion]);
+
+  useEffect(() => { if (initialChapterId) setChapterId(initialChapterId); }, [initialChapterId]);
+  useEffect(() => {
+    if (!chapter || chapter.chapterId !== initialChapterId || !Number.isSafeInteger(initialParagraphIndex) || initialParagraphIndex < 0) return;
+    const canonical = chapter.body.split('\n\n');
+    if (!canonical[initialParagraphIndex]) return;
+    const start = canonical.slice(0, initialParagraphIndex).reduce((sum, text) => sum + text.length + 2, 0);
+    bodyRef.current?.focus();
+    bodyRef.current?.setSelectionRange(start, start + canonical[initialParagraphIndex].length);
+  }, [chapter, initialChapterId, initialParagraphIndex]);
 
   const reload = (nextChapterId?: string) => {
     if (nextChapterId) setChapterId(nextChapterId);
@@ -195,8 +210,9 @@ export function ChapterEditor({
           </div>
           <div className="field">
             <label htmlFor="chapter-editor-body">正文</label>
-            <textarea id="chapter-editor-body" className="input" rows={18} value={body}
+            <textarea ref={bodyRef} id="chapter-editor-body" className="input" rows={18} value={body}
               onChange={(event) => setBody(event.target.value)} disabled={busy} />
+            {initialChapterId === chapterId && <span className="hint">回報位置：第 {initialParagraphIndex + 1} 段。此處為目前草稿，請與回報摘錄核對後修正。</span>}
             <span className="hint">段落之間以空行分隔。保留原有圖片標記，單章上限 3 MiB。</span>
           </div>
           <div className="row-actions">

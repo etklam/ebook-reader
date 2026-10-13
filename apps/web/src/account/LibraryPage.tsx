@@ -1,9 +1,9 @@
 // 我的書庫 (§40): saved works as ruled rows with continue-reading, update
 // markers, and favourite/follow changes without leaving the page. Removals are
 // one tap and then undoable, rather than one tap behind a confirmation.
-import { useCallback, useEffect, useState } from 'react';
-import { addToLibrary, follow, getLibrary, markFollowSeen, removeFromLibrary, unfollow } from '../api/client.ts';
-import type { LibraryEntry } from '../api/types.ts';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { addToLibrary, follow, getLibrary, markFollowSeen, removeFromLibrary, unfollow, updateLibraryEntry } from '../api/client.ts';
+import type { LibraryEntry, LibraryReadingStatus } from '../api/types.ts';
 import { navigate } from '../App.tsx';
 import { useMe } from './useMe.ts';
 import { MemberNav } from './MemberNav.tsx';
@@ -15,6 +15,35 @@ import { STATUS_LABEL, dateTime } from '../lib/format.ts';
 
 /** a line of confirmation, optionally with the action that takes it back */
 interface Note { message: string; undo?(): Promise<unknown> }
+const READING_LABELS: Record<LibraryReadingStatus, string> = {
+  want: '想讀', reading: '閱讀中', finished: '已讀', paused: '擱置',
+};
+
+function LibraryMetadataForm({ entry, groups, busy, save }: {
+  entry: LibraryEntry; groups: string[]; busy: boolean;
+  save(status: LibraryReadingStatus, groupName: string): void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [status, setStatus] = useState(entry.readingStatus);
+  const [groupName, setGroupName] = useState(entry.groupName ?? '');
+  if (!editing) return <button className="chip library-organize" disabled={busy} onClick={() => setEditing(true)}>整理</button>;
+  return (
+    <form className="library-edit" onSubmit={(event) => { event.preventDefault(); save(status, groupName); }}>
+      <label className="field">閱讀狀態
+        <select className="input" value={status} disabled={busy} onChange={(event) => setStatus(event.target.value as LibraryReadingStatus)}>
+          {Object.entries(READING_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </label>
+      <label className="field">分組
+        <input className="input" value={groupName} maxLength={40} list={`groups-${entry.workId}`} placeholder="留空為未分組"
+          disabled={busy} onChange={(event) => setGroupName(event.target.value)} />
+        <datalist id={`groups-${entry.workId}`}>{groups.map((group) => <option key={group} value={group} />)}</datalist>
+      </label>
+      <button className="chip primary" disabled={busy} type="submit">儲存</button>
+      <button className="chip" disabled={busy} type="button" onClick={() => setEditing(false)}>取消</button>
+    </form>
+  );
+}
 
 export function LibraryPage() {
   const { me, loading } = useMe();
@@ -24,28 +53,41 @@ export function LibraryPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [failed, setFailed] = useState(false);
   const [note, setNote] = useState<Note | null>(null);
+  const [readingStatus, setReadingStatus] = useState<LibraryReadingStatus | ''>('');
+  const [groupFilter, setGroupFilter] = useState('*');
+  const [groups, setGroups] = useState<string[]>([]);
+  const requestVersion = useRef(0);
 
   // the shelf is keyset-paginated; refresh always restarts from the top so a
   // favourite/follow change cannot leave a stale cursor pointing mid-list
   const refresh = useCallback(() => {
+    const version = ++requestVersion.current;
     setFailed(false);
-    return getLibrary()
-      .then((r) => { setEntries(r.works); setNextCursor(r.nextCursor); })
+    return getLibrary(undefined, { readingStatus: readingStatus || undefined, groupName: groupFilter === '*' ? undefined : groupFilter.slice(1) })
+      .then((r) => {
+        if (version !== requestVersion.current) return;
+        setEntries(r.works); setNextCursor(r.nextCursor); setGroups(r.groups);
+      })
       // an empty shelf and an unreachable shelf are different facts, and
       // "還沒有收藏的作品" is the wrong one to tell a reader who has twelve
-      .catch(() => { setFailed(true); setNextCursor(null); });
-  }, []);
-  useEffect(() => { if (me) void refresh(); }, [me, refresh]);
+      .catch(() => { if (version === requestVersion.current) { setFailed(true); setNextCursor(null); } });
+  }, [readingStatus, groupFilter]);
+  useEffect(() => {
+    if (me) { setEntries(null); setNextCursor(null); void refresh(); }
+    return () => { requestVersion.current++; };
+  }, [me, refresh]);
 
   const loadMore = () => {
     if (!nextCursor) return;
+    const version = requestVersion.current;
     setLoadingMore(true);
-    void getLibrary(nextCursor)
+    void getLibrary(nextCursor, { readingStatus: readingStatus || undefined, groupName: groupFilter === '*' ? undefined : groupFilter.slice(1) })
       .then((r) => {
+        if (version !== requestVersion.current) return;
         setEntries((prev) => [...(prev ?? []), ...r.works]);
         setNextCursor(r.nextCursor);
       })
-      .catch(() => undefined)
+      .catch(() => setNote({ message: '更多作品載入失敗，請再試一次' }))
       .finally(() => setLoadingMore(false));
   };
 
@@ -98,6 +140,22 @@ export function LibraryPage() {
           )}
         </div>
         <MemberNav current="library" onError={(message) => setNote({ message })} />
+        <div className="library-filters">
+          <label className="field">閱讀狀態
+            <select className="input" value={readingStatus} disabled={busyId !== null || loadingMore}
+              onChange={(event) => setReadingStatus(event.target.value as LibraryReadingStatus | '')}>
+              <option value="">全部狀態</option>
+              {Object.entries(READING_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>
+          <label className="field">分組
+            <select className="input" value={groupFilter} disabled={busyId !== null || loadingMore} onChange={(event) => setGroupFilter(event.target.value)}>
+              <option value="*">全部分組</option><option value=":">未分組</option>
+              {[...new Set([...groups, ...(groupFilter !== ':' && groupFilter !== '*' ? [groupFilter.slice(1)] : [])])].map((group) =>
+                <option key={group} value={`:${group}`}>{group}</option>)}
+            </select>
+          </label>
+        </div>
       </header>
 
       {entries === null && !failed && <SkeletonRows count={3} label="載入書庫" />}
@@ -112,8 +170,8 @@ export function LibraryPage() {
 
       {!failed && entries !== null && entries.length === 0 && (
         <EmptyState
-          title="還沒有收藏的作品"
-          body="在作品頁按「☆ 收藏」會把它放進這裡；按「追更」則會在有新章節時標記出來。"
+          title={readingStatus || groupFilter !== '*' ? '沒有符合篩選的作品' : '還沒有收藏的作品'}
+          body={readingStatus || groupFilter !== '*' ? '試試其他閱讀狀態或分組。' : '在作品頁按「☆ 收藏」會把它放進這裡；按「追更」則會在有新章節時標記出來。'}
           action={<button className="btn primary" onClick={() => navigate('/')}>去書庫逛逛</button>}
         />
       )}
@@ -127,6 +185,7 @@ export function LibraryPage() {
               </button>
               <div className="row-sub">
                 <span className="row-meta">{e.author || '佚名'}</span>
+                <span className="row-meta">{READING_LABELS[e.readingStatus]} · {e.groupName || '未分組'}</span>
                 {e.hasUpdate && (
                   <span className="flag-new">有更新（{e.newChapterCount} 新章）</span>
                 )}
@@ -154,10 +213,15 @@ export function LibraryPage() {
                   <button className="chip" disabled={busyId === e.workId}
                     onClick={() => act(e.workId, removeFromLibrary(e.workId), {
                       message: `已移出書庫《${e.title}》`,
-                      undo: () => addToLibrary(e.workId),
+                      undo: async () => {
+                        await addToLibrary(e.workId);
+                        await updateLibraryEntry(e.workId, { readingStatus: e.readingStatus, groupName: e.groupName });
+                      },
                     })}>移出書庫</button>
                 </span>
               </div>
+              <LibraryMetadataForm key={`${e.workId}-${e.readingStatus}-${e.groupName}`} entry={e} groups={groups} busy={busyId !== null}
+                save={(status, groupName) => act(e.workId, updateLibraryEntry(e.workId, { readingStatus: status, groupName }), { message: '已更新閱讀狀態與分組' })} />
             </div>
             <div className="row-rail">
               <span className={e.serialStatus === 'ongoing' ? 'status status-ongoing' : 'status'}>

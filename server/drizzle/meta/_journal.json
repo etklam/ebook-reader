@@ -78,6 +78,13 @@
       "when": 1791802717857,
       "tag": "0010_lyrical_brood",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791871859239,
+      "tag": "0011_silent_phalanx",
+      "breakpoints": true
     }
   ]
 }

@@ -3,6 +3,7 @@
 // the reachable bottom action bar the mobile spec asks for (§04). For signed-in
 // members: favourite/follow with update state. Opening the detail marks
 // followed updates seen (§38 policy).
+import { RelatedWorks } from './RelatedWorks.tsx';
 import { useCallback, useEffect, useState } from 'react';
 import {
   addToLibrary, follow, getToc, getWorkDetail, getWorkMemberState,
@@ -212,6 +213,8 @@ export function WorkDetailPage({ workId }: { workId: string }) {
           ))}
         </ol>
       </section>
+
+      <RelatedWorks workId={workId} />
 
       <div className="detail-cta">
         <button className="btn primary" onClick={startReading} disabled={!work.firstChapterId && !progress}>
