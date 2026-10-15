@@ -7,7 +7,7 @@
 import { Hono } from 'hono';
 import { and, asc, desc, eq, inArray, isNotNull, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { categories, releaseItems, tags, workCategories, workReleases, works, workTags } from '../db/schema.ts';
+import { categories, releaseItems, tags, workCategories, workReleases, works, workTags, userLibrary } from '../db/schema.ts';
 import { decodeCursor, encodeCursor, filterFingerprint } from '../catalog/cursor.ts';
 
 export interface CatalogDeps {
@@ -25,7 +25,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 function parseUuidList(raw: string | undefined): string[] | null {
   if (!raw) return [];
   const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
-  return parts.every((p) => UUID_RE.test(p)) ? parts : null;
+  return parts.every((p) => UUID_RE.test(p)) ? [...new Set(parts.map((p) => p.toLowerCase()))].sort() : null;
 }
 
 // Traditional/Simplified-equivalent metadata search (§16): query-time only —
@@ -42,7 +42,7 @@ async function searchVariants(q: string): Promise<string[]> {
 // the result set, so validation lives here too — duplicating it would let the
 // two paths drift and report a count that does not match the list.
 export interface CatalogFilterError {
-  error: 'invalid_filter';
+  error: 'invalid_filter' | 'unauthenticated';
   field: string;
 }
 export interface CatalogFilter {
@@ -55,6 +55,7 @@ export interface CatalogFilter {
 
 export async function buildCatalogFilter(
   query: (key: string) => string | undefined,
+  userId?: string,
 ): Promise<CatalogFilter | CatalogFilterError> {
   const limit = Math.min(50, Math.max(1, Number(query('limit') ?? 20) || 20));
   const q = (query('q') ?? '').trim().slice(0, 100);
@@ -69,9 +70,19 @@ export async function buildCatalogFilter(
   }
   const categoryIds = parseUuidList(query('categoryIds'));
   const tagIds = parseUuidList(query('tagIds'));
-  if (categoryIds === null || tagIds === null) {
+  const excludeTagIds = parseUuidList(query('excludeTagIds'));
+  if (categoryIds === null || tagIds === null || excludeTagIds === null) {
     return { error: 'invalid_filter', field: 'ids' };
   }
+  if (tagIds.some((id) => excludeTagIds.includes(id))) {
+    return { error: 'invalid_filter', field: 'excludeTagIds' };
+  }
+  const hideFinishedRaw = query('hideFinished');
+  if (hideFinishedRaw !== undefined && !['true', 'false'].includes(hideFinishedRaw)) {
+    return { error: 'invalid_filter', field: 'hideFinished' };
+  }
+  const hideFinished = hideFinishedRaw === 'true';
+  if (hideFinished && !userId) return { error: 'unauthenticated', field: 'hideFinished' };
   const tagMode = query('tagMode') === 'any' ? 'any' : 'all';
   const sortParam = query('sort') ?? 'updated';
   if (!(sortParam in SORTS)) return { error: 'invalid_filter', field: 'sort' };
@@ -85,6 +96,8 @@ export async function buildCatalogFilter(
     `cat=${[...new Set(categoryIds)].sort().join('.')}`,
     `tag=${[...new Set(tagIds)].sort().join('.')}`,
     `mode=${tagIds.length > 0 ? tagMode : ''}`,
+    `exclude=${excludeTagIds.join('.')}`,
+    `hideFinished=${hideFinished ? userId : ''}`,
     `status=${[...new Set(serialStatus)].sort().join('.')}`,
     `q=${q}`,
     `sort=${sortParam}`,
@@ -115,6 +128,16 @@ export async function buildCatalogFilter(
       : sql`exists (
           select 1 from ${workTags} wt
           where wt.work_id = ${works.id} and wt.tag_id = any(${sql.param(tagIds)}::uuid[]))`);
+  }
+  if (excludeTagIds.length > 0) {
+    conds.push(sql`not exists (
+      select 1 from ${workTags} wt
+      where wt.work_id = ${works.id} and wt.tag_id = any(${sql.param(excludeTagIds)}::uuid[]))`);
+  }
+  if (hideFinished) {
+    conds.push(sql`not exists (
+      select 1 from ${userLibrary} ul
+      where ul.work_id = ${works.id} and ul.user_id = ${userId}::uuid and ul.reading_status = 'finished')`);
   }
   if (q) {
     const likeVariants = (await searchVariants(q)).map((v) => `%${v}%`);
@@ -157,13 +180,26 @@ function afterCursor(sort: SortKey, key: string, id: string): SQL {
     or (${works.title} = ${key} and ${works.id} > ${id}::uuid))`;
 }
 
-export function worksRoutes(deps: CatalogDeps): Hono<Record<string, never>> {
+export function worksRoutes(deps: CatalogDeps): Hono<{ Variables: { userId: string } }> {
   const { db } = deps;
-  const app = new Hono<Record<string, never>>();
+  const app = new Hono<{ Variables: { userId: string } }>();
+
+  // A cookie can personalize these URLs. Never let browser/proxy caches reuse
+  // a prior member's list, count, or error response.
+  app.use('/api/works', async (c, next) => {
+    c.header('Cache-Control', 'private, no-store');
+    c.header('Vary', 'Cookie');
+    await next();
+  });
+  app.use('/api/works/count', async (c, next) => {
+    c.header('Cache-Control', 'private, no-store');
+    c.header('Vary', 'Cookie');
+    await next();
+  });
 
   app.get('/api/works', async (c) => {
-    const filter = await buildCatalogFilter((k) => c.req.query(k));
-    if ('error' in filter) return c.json(filter, 400);
+    const filter = await buildCatalogFilter((k) => c.req.query(k), c.get('userId'));
+    if ('error' in filter) return c.json(filter, filter.error === 'unauthenticated' ? 401 : 400);
     const { conds, limit } = filter;
 
     const rawCursor = c.req.query('cursor');
@@ -220,8 +256,8 @@ export function worksRoutes(deps: CatalogDeps): Hono<Record<string, never>> {
   // work because works→work_releases joins on the single active release, so one
   // work can never contribute two rows.
   app.get('/api/works/count', async (c) => {
-    const filter = await buildCatalogFilter((k) => c.req.query(k));
-    if ('error' in filter) return c.json(filter, 400);
+    const filter = await buildCatalogFilter((k) => c.req.query(k), c.get('userId'));
+    if ('error' in filter) return c.json(filter, filter.error === 'unauthenticated' ? 401 : 400);
     const [row] = await db.select({ n: sql<number>`count(distinct ${works.id})::int` })
       .from(works)
       .innerJoin(workReleases, eq(workReleases.id, works.activeReleaseId))

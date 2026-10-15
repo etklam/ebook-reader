@@ -1,0 +1,178 @@
+{
+  "scroll": {
+    "before": {
+      "recordedAt": "2026-10-15T06:21:56.500Z",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+      "viewport": "390x844",
+      "font": "18px/1.9 serif",
+      "mode": "scroll",
+      "images": 0,
+      "scenario": "90 near-end position lookups, 80–99% of chapter, one per animation frame",
+      "results": [
+        {
+          "paragraphs": 100,
+          "captures": 90,
+          "geometryReads": 7825,
+          "p50Ms": 0.09999990463256836,
+          "p95Ms": 0.10000002384185791,
+          "frameP95Ms": 16.700000000000045,
+          "longTasksMs": []
+        },
+        {
+          "paragraphs": 5000,
+          "captures": 90,
+          "geometryReads": 400070,
+          "p50Ms": 3.3000000715255737,
+          "p95Ms": 4.200000047683716,
+          "frameP95Ms": 16.799999999999727,
+          "longTasksMs": []
+        }
+      ]
+    },
+    "after": {
+      "recordedAt": "2026-10-15T06:27:58.229Z",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+      "viewport": "390x844",
+      "font": "18px/1.9 serif",
+      "mode": "scroll",
+      "images": 0,
+      "scenario": "90 near-end position lookups, 80–99% of chapter, one per animation frame",
+      "results": [
+        {
+          "paragraphs": 100,
+          "captures": 90,
+          "geometryReads": 608,
+          "p50Ms": 0,
+          "p95Ms": 0.10000002384185791,
+          "frameP95Ms": 16.799999999999955,
+          "longTasksMs": []
+        },
+        {
+          "paragraphs": 5000,
+          "captures": 90,
+          "geometryReads": 1118,
+          "p50Ms": 0.20000004768371582,
+          "p95Ms": 0.40000009536743164,
+          "frameP95Ms": 16.799999999999955,
+          "longTasksMs": []
+        }
+      ]
+    }
+  },
+  "search": {
+    "before": {
+      "recordedAt": "2026-10-15T06:21:54.847Z",
+      "node": "v26.4.0",
+      "platform": "darwin/arm64",
+      "chapters": 500,
+      "corpusBytes": 6741890,
+      "storage": "real temporary local files, warm filesystem cache",
+      "metadata": "stubbed; does not measure PostgreSQL, network, rate-limit throughput or production performance",
+      "cases": [
+        {
+          "query": "小龍",
+          "concurrency": 1,
+          "samples": 10,
+          "p50Ms": 11.234207999999967,
+          "p95Ms": 16.22199999999998,
+          "readsPerRequest": 500,
+          "bytesPerRequest": 6741890
+        },
+        {
+          "query": "小龍",
+          "concurrency": 4,
+          "samples": 40,
+          "p50Ms": 30.288417000000095,
+          "p95Ms": 31.39699999999999,
+          "readsPerRequest": 500,
+          "bytesPerRequest": 6741890
+        },
+        {
+          "query": "未命中詞",
+          "concurrency": 1,
+          "samples": 10,
+          "p50Ms": 16.342624999999998,
+          "p95Ms": 23.093833000000018,
+          "readsPerRequest": 500,
+          "bytesPerRequest": 6741890
+        },
+        {
+          "query": "未命中詞",
+          "concurrency": 4,
+          "samples": 40,
+          "p50Ms": 51.8916670000001,
+          "p95Ms": 54.74637500000006,
+          "readsPerRequest": 500,
+          "bytesPerRequest": 6741890
+        }
+      ]
+    },
+    "after": {
+      "recordedAt": "2026-10-15T06:27:56.918Z",
+      "node": "v26.4.0",
+      "platform": "darwin/arm64",
+      "chapters": 500,
+      "corpusBytes": 6741890,
+      "storage": "real temporary local files, warm filesystem cache",
+      "metadata": "stubbed; does not measure PostgreSQL, network, rate-limit throughput or production performance",
+      "cases": [
+        {
+          "query": "小龍",
+          "concurrency": 1,
+          "samples": 10,
+          "p50Ms": 1.9050000000000296,
+          "p95Ms": 8.132625000000019,
+          "readsPerRequest": 56,
+          "bytesPerRequest": 755038
+        },
+        {
+          "query": "小龍",
+          "concurrency": 4,
+          "samples": 40,
+          "p50Ms": 3.9560409999999706,
+          "p95Ms": 4.463707999999997,
+          "readsPerRequest": 56,
+          "bytesPerRequest": 755038
+        },
+        {
+          "query": "未命中詞",
+          "concurrency": 1,
+          "samples": 10,
+          "p50Ms": 18.678583000000003,
+          "p95Ms": 24.034582999999998,
+          "readsPerRequest": 500,
+          "bytesPerRequest": 6741890
+        },
+        {
+          "query": "未命中詞",
+          "concurrency": 4,
+          "samples": 40,
+          "p50Ms": 55.60487499999999,
+          "p95Ms": 65.31133299999999,
+          "readsPerRequest": 500,
+          "bytesPerRequest": 6741890
+        }
+      ]
+    }
+  },
+  "preload": {
+    "recordedAt": "2026-10-15T06:39:16.023Z",
+    "browser": "153.0.8010.12",
+    "viewport": "390x844",
+    "conditions": "one sample per case, real localhost API + PostgreSQL + file storage, warm filesystem; fresh anonymous browser contexts; no network throttling",
+    "cases": [
+      {
+        "preloaded": false,
+        "navigationMs": 271.0292919999997,
+        "bodyRequestsBeforeNavigation": 0,
+        "bodyRequestsDuringNavigation": 1
+      },
+      {
+        "preloaded": true,
+        "navigationMs": 273.40050000000065,
+        "bodyRequestsBeforeNavigation": 1,
+        "bodyRequestsDuringNavigation": 0
+      }
+    ]
+  }
+}

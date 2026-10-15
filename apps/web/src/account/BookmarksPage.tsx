@@ -2,7 +2,7 @@
 // approximation notice comes from the reader), delete in place. Deletion is one
 // tap and then undoable, the same bargain 我的書庫 makes for 移出書庫 — the two
 // pages were taking the same kind of action and only one of them had a way back.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createBookmark, deleteBookmark, getBookmarks } from '../api/client.ts';
 import type { BookmarkEntry } from '../api/types.ts';
 import { navigate } from '../App.tsx';
@@ -12,6 +12,7 @@ import { SkeletonRows } from '../components/Skeleton.tsx';
 import { EmptyState } from '../components/EmptyState.tsx';
 import { Toast } from '../components/Toast.tsx';
 import { dateTime } from '../lib/format.ts';
+import { BookmarkNoteEditor } from './BookmarkNoteEditor.tsx';
 
 /** a line of confirmation, optionally with the action that takes it back */
 interface Note { message: string; undo?(): Promise<unknown> }
@@ -21,22 +22,44 @@ export function BookmarksPage() {
   const [entries, setEntries] = useState<BookmarkEntry[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const [workId, setWorkId] = useState('');
+  const [works, setWorks] = useState<Array<{ id: string; title: string }>>([]);
+  const [total, setTotal] = useState(0);
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editorOpener = useRef<HTMLButtonElement | null>(null);
+  const generation = useRef(0);
+  const retryOffset = useRef(0);
   const [note, setNote] = useState<Note | null>(null);
 
-  const refresh = useCallback(() => {
+  const refresh = useCallback((offset = 0) => {
+    const request = ++generation.current;
+    retryOffset.current = offset;
     setFailed(false);
-    // "還沒有書籤" after a failed fetch would tell a member their bookmarks
-    // are gone; the two states get different copy and different actions
-    return getBookmarks().then((r) => setEntries(r.bookmarks)).catch(() => setFailed(true));
-  }, []);
-  useEffect(() => { if (me) void refresh(); }, [me, refresh]);
+    setFetching(true);
+    return getBookmarks(workId || undefined, offset).then((response) => {
+      if (request !== generation.current) return;
+      setEntries((previous) => offset === 0 ? response.bookmarks : [...(previous ?? []), ...response.bookmarks]);
+      setWorks(response.works);
+      setTotal(response.total);
+      setNextOffset(response.nextOffset);
+    }).catch(() => { if (request === generation.current) setFailed(true); })
+      .finally(() => { if (request === generation.current) setFetching(false); });
+  }, [workId]);
+  useEffect(() => {
+    setEntries(null);
+    setEditingId(null);
+    if (me) void refresh();
+    return () => { generation.current++; };
+  }, [me, refresh]);
 
   // the delete is real, so undo re-creates the bookmark from the row's own
   // anchor (chapter + revision + paragraph) — it lands where it was, not nearby
   const remove = (b: BookmarkEntry) => {
     setBusyId(b.id);
     void deleteBookmark(b.id)
-      .then(refresh)
+      .then(() => refresh())
       .then(() => setNote({
         message: `已刪除《${b.workTitle}》的書籤`,
         undo: () => createBookmark({
@@ -75,10 +98,21 @@ export function BookmarksPage() {
       <header className="page-head">
         <div className="head-line">
           <h1>我的書籤</h1>
-          {entries && <span className="head-note tnum">{entries.length} 則</span>}
+          {entries && <span className="head-note tnum">{total} 則</span>}
         </div>
         <MemberNav current="bookmarks" onError={(message) => setNote({ message })} />
       </header>
+
+      <div className="field">
+        <label htmlFor="bookmark-work">按作品篩選</label>
+        <select id="bookmark-work" className="input" value={workId} onChange={(event) => {
+          generation.current++;
+          setWorkId(event.target.value);
+        }}>
+          <option value="">全部作品</option>
+          {works.map((work) => <option key={work.id} value={work.id}>{work.title}</option>)}
+        </select>
+      </div>
 
       {entries === null && !failed && <SkeletonRows count={3} label="載入書籤" />}
 
@@ -86,13 +120,13 @@ export function BookmarksPage() {
         <EmptyState
           title="書籤暫時載不出來"
           body="書籤存在帳號裡，沒有遺失——只是這次沒取到。重試一次通常就好。"
-          action={<button className="btn" onClick={() => void refresh()}>重試</button>}
+          action={<button className="btn" onClick={() => void refresh(retryOffset.current)}>重試</button>}
         />
       )}
 
       {!failed && entries !== null && entries.length === 0 && (
         <EmptyState
-          title="還沒有書籤"
+          title={workId ? '這部作品目前沒有書籤' : '還沒有書籤'}
           body="閱讀時點一下正文叫出工具列，按「書籤」就會記下目前這一段。章節之後被修訂也找得回來——書籤會落在最接近的段落。"
           action={<button className="btn" onClick={() => navigate('/me/library')}>回我的書庫</button>}
         />
@@ -118,15 +152,28 @@ export function BookmarksPage() {
                     onClick={() => navigate(`/read/${b.workId}/${b.chapterId}#p=${b.paragraphIndex}&rev=${b.revisionId}`)}>
                     開啟
                   </button>
+                  <button className="chip" disabled={busyId === b.id} onClick={(event) => { editorOpener.current = event.currentTarget; setEditingId(b.id); }}>
+                    編輯備註
+                  </button>
                   <button className="chip" disabled={busyId === b.id} onClick={() => remove(b)}>
                     刪除
                   </button>
                 </span>
               </div>
+              {editingId === b.id && <BookmarkNoteEditor key={b.id} bookmarkId={b.id} initialNote={b.note}
+                onCancel={() => { setEditingId(null); editorOpener.current?.focus(); }} onSaved={(saved) => {
+                  setEntries((previous) => previous?.map((entry) => entry.id === b.id ? { ...entry, note: saved } : entry) ?? null);
+                  setEditingId(null);
+                  editorOpener.current?.focus();
+                  setNote({ message: '已儲存書籤備註' });
+                }} />}
             </div>
           </div>
         ))}
       </div>
+
+      {nextOffset !== null && entries !== null && <button className="btn" disabled={fetching}
+        onClick={() => void refresh(nextOffset)}>{fetching ? '載入中…' : `載入更多（${entries.length} / ${total}）`}</button>}
 
       {note && (
         <Toast
@@ -136,7 +183,7 @@ export function BookmarksPage() {
             const undo = note.undo;
             setNote(null);
             void undo?.()
-              .then(refresh)
+              .then(() => refresh())
               .catch(() => {
                 void refresh();
                 setNote({ message: '復原失敗，請重新確認狀態' });

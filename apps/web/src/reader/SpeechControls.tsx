@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { speechChunks } from './speech-chunks.ts';
 
-type SpeechInput = { chapterId: string | null; text: string; hasNextChapter: boolean; onNextChapter(): void };
+type SpeechInput = { chapterId: string | null; text: string; contentVersion?: string; hasNextChapter: boolean; onNextChapter(): void; getParagraphIndex?(): number; onParagraph?(index: number | null): void };
 
 /** The reader owns this hook so closing a sheet or loading the next chapter cannot stop playback. */
 export function useSpeechReader(input: SpeechInput) {
@@ -17,17 +18,25 @@ export function useSpeechReader(input: SpeechInput) {
   const [sleepUntil, setSleepUntil] = useState<number | null>(null);
   const [sleepRemaining, setSleepRemaining] = useState(0);
   const [error, setError] = useState('');
+  const [currentParagraph, setCurrentParagraph] = useState<number | null>(null);
+  const [resumeParagraph, setResumeParagraph] = useState<number | null>(null);
+  const paragraphRef = useRef<number | null>(null);
+  const setParagraph = (index: number | null) => {
+    paragraphRef.current = index; setCurrentParagraph(index); current.current.onParagraph?.(index);
+  };
   const version = useRef(0);
   const autoStart = useRef(false);
   const current = useRef(input);
   current.current = input;
   const speakRef = useRef<() => void>(() => undefined);
-  const previousContent = useRef<{ chapterId: string | null; text: string } | null>(null);
+  const previousContent = useRef<{ chapterId: string | null; text: string; contentVersion?: string } | null>(null);
 
   const stop = useCallback(() => {
     autoStart.current = false;
     version.current++;
     if (supported) window.speechSynthesis.cancel();
+    if (paragraphRef.current !== null) setResumeParagraph(paragraphRef.current);
+    setParagraph(null);
     setSpeaking(false); setPaused(false);
   }, [supported]);
 
@@ -39,55 +48,59 @@ export function useSpeechReader(input: SpeechInput) {
     return () => window.speechSynthesis.removeEventListener('voiceschanged', refresh);
   }, [supported]);
 
-  const speak = useCallback(() => {
-    const text = current.current.text.replace(/\[\[img:[0-9a-f]{64}\]\]/gi, '').trim();
-    if (!supported || !text) return;
+  const start = useCallback((startParagraph = 0) => {
+    const chunks = speechChunks(current.current.text, startParagraph);
+    if (!supported || !chunks.length) return;
     const token = ++version.current;
     window.speechSynthesis.cancel();
     setError(''); setSpeaking(true); setPaused(false);
     // Short utterances avoid native speech engines truncating entire long chapters.
-    const chunks = text.split(/\n+/).flatMap((paragraph) => paragraph.match(/[\s\S]{1,180}/g) ?? []);
     const voice = voices.find((item) => item.voiceURI === voiceUri) ?? voices.find((item) => /^zh/i.test(item.lang));
     const play = (index: number) => {
       if (token !== version.current) return;
       if (index >= chunks.length) {
-        setSpeaking(false); setPaused(false);
+        setSpeaking(false); setPaused(false); setResumeParagraph(null); setParagraph(null);
         if (autoNextRef.current && current.current.hasNextChapter) {
           autoStart.current = true;
           current.current.onNextChapter();
         }
         return;
       }
-      const utterance = new SpeechSynthesisUtterance(chunks[index]);
+      const utterance = new SpeechSynthesisUtterance(chunks[index].text);
+      utterance.onstart = () => { if (token === version.current) { setParagraph(chunks[index].paragraphIndex); setResumeParagraph(chunks[index].paragraphIndex); } };
       utterance.rate = rate;
       utterance.lang = voice?.lang ?? 'zh-TW';
       if (voice) utterance.voice = voice;
       utterance.onend = () => play(index + 1);
       utterance.onerror = (event) => {
         if (token !== version.current || event.error === 'canceled' || event.error === 'interrupted') return;
-        setSpeaking(false); setPaused(false);
+        setSpeaking(false); setPaused(false); setParagraph(null);
         setError('系統語音播放中斷，可按「朗讀」重新開始。背景播放由瀏覽器與裝置控制。');
       };
       window.speechSynthesis.speak(utterance);
     };
     play(0);
   }, [rate, supported, voices, voiceUri]);
+  const speak = useCallback(() => start(0), [start]);
   speakRef.current = speak;
 
   useEffect(() => {
     // Empty text is the conversion/loading interval between chapters; retain the pending continuation.
-    if (!input.text || !supported) return;
+    if (!supported) return;
     const previous = previousContent.current;
-    if (previous?.chapterId === input.chapterId && previous.text === input.text) return;
-    previousContent.current = { chapterId: input.chapterId, text: input.text };
+    if (previous?.chapterId === input.chapterId && previous.text === input.text && previous.contentVersion === input.contentVersion) return;
+    // Loading text may be empty; cancel old playback immediately, retaining only an automatic chapter handoff.
+    const continueAutomatically = autoStart.current && previous?.chapterId !== input.chapterId;
+    if (input.text) previousContent.current = { chapterId: input.chapterId, text: input.text, contentVersion: input.contentVersion };
+    setResumeParagraph(null); setParagraph(null);
     version.current++;
     window.speechSynthesis.cancel();
     setSpeaking(false); setPaused(false);
-    if (autoStart.current) {
+    if (autoStart.current && input.text && continueAutomatically) {
       autoStart.current = false;
       speakRef.current();
-    }
-  }, [input.chapterId, input.text, supported]);
+    } else if (input.text) autoStart.current = false;
+  }, [input.chapterId, input.text, input.contentVersion, supported]);
 
   useEffect(() => {
     if (!sleepUntil) { setSleepRemaining(0); return; }
@@ -104,7 +117,9 @@ export function useSpeechReader(input: SpeechInput) {
 
   return {
     supported, rate, setRate, voices, voiceUri, setVoiceUri, speaking, paused,
-    autoNext, setAutoNext, sleepMinutes, sleepRemaining, error, speak, stop,
+    autoNext, setAutoNext, sleepMinutes, sleepRemaining, error, speak, stop, currentParagraph, resumeParagraph,
+    speakCurrent: () => start(current.current.getParagraphIndex?.() ?? 0),
+    speakResume: () => start(resumeParagraph ?? 0),
     togglePause: () => {
       if (paused) window.speechSynthesis.resume(); else window.speechSynthesis.pause();
       setPaused(!paused);
@@ -121,11 +136,16 @@ export function SpeechControls({ controller }: { controller: ReturnType<typeof u
   return <section className="speech-controls" aria-label="語音朗讀控制">
     <h3>語音朗讀</h3>
     <div className="row-actions">
-      {!speech.speaking ? <button className="btn" onClick={speech.speak}>朗讀本章</button> : <>
+      {!speech.speaking ? <>
+        <button className="btn" onClick={speech.speak}>朗讀本章</button>
+        <button className="btn" onClick={speech.speakCurrent}>從目前段落朗讀</button>
+        {speech.resumeParagraph !== null && <button className="btn" onClick={speech.speakResume}>從第 {speech.resumeParagraph + 1} 段續播</button>}
+      </> : <>
         <button className="btn" onClick={speech.togglePause}>{speech.paused ? '繼續' : '暫停'}</button>
         <button className="btn" onClick={speech.stop}>停止</button>
       </>}
     </div>
+    {speech.currentParagraph !== null && <p className="hint" role="status">正在朗讀第 {speech.currentParagraph + 1} 段{speech.paused ? '（已暫停）' : ''}</p>}
     <div className="field"><label htmlFor="speech-voice">系統語音</label>
       <select className="input" id="speech-voice" value={speech.voiceUri} disabled={speech.speaking}
         onChange={(event) => speech.setVoiceUri(event.target.value)}>

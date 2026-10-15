@@ -14,6 +14,7 @@ import { ExportPanel } from './ExportPanel.tsx';
 import { api as request, ApiRequestError, getMe, login, logout } from '../api/client.ts';
 import type { Me } from '../api/types.ts';
 import type { ImportJob, ImportQuality, ImportChapterPage } from '../api/import-types.ts';
+import { ImportReview } from './ImportReview.tsx';
 import { useImportMonitor } from './useImportMonitor.ts';
 
 // Older incremental actions inspect HTTP error bodies to display resolution details.
@@ -242,9 +243,6 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
   const submit = (e: React.FormEvent) => runImportAction(() => submitRequest(e));
   const reanalyze = (enc = '') => runImportAction(() => reanalyzeRequest(enc));
   const commit = () => runImportAction(commitRequest);
-  const loadDiff = () => runImportAction(loadDiffRequest);
-  const applyIncremental = (mode: 'incremental' | 'overwrite', confirmAppend = false) =>
-    runImportAction(() => applyIncrementalRequest(mode, confirmAppend));
   const doRevert = () => runImportAction(doRevertRequest);
 
   async function submitRequest(e: React.FormEvent) {
@@ -273,7 +271,7 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
   async function reanalyzeRequest(enc = '') {
     if (!importId) return;
     monitor.stop(importId);
-    setQuality(null);
+    setQuality(null); setDiff(null);
     try {
       const { status, body } = await api(`/api/admin/imports/${importId}/reanalyze`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(enc ? { encoding: enc } : {}),
@@ -301,29 +299,6 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
     onContinue(body.workId);
   }
 
-  async function loadDiffRequest() {
-    if (!importId) return;
-    setError('');
-    const { status, body } = await api(`/api/admin/imports/${importId}/diff`);
-    if (status !== 200) { setError(body.error ?? '比對失敗'); return; }
-    setDiff(body);
-  }
-
-  async function applyIncrementalRequest(mode: 'incremental' | 'overwrite', confirmAppend = false) {
-    if (!importId || !diff) return;
-    monitor.stop(importId);
-    setError('');
-    const key = `ui-${importId}-${mode}-${Date.now()}`;
-    const { status, body } = await api(`/api/admin/imports/${importId}/apply`, {
-      method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': key },
-      body: JSON.stringify({ baseEditVersion: diff.editVersion, mode, confirmAppend }),
-    });
-    if (status !== 200) { setError(`${body.error ?? '套用失敗'}${body.unresolved?.length ? `（${body.unresolved.length} 項待決：${body.unresolved.map((u: any) => u.labelRaw).join('、')}）` : ''}`); return; }
-    setApplyResult(body);
-    const refreshed = await api(`/api/admin/imports/${importId}`);
-    if (refreshed.status === 200) setJob(refreshed.body);
-  }
-
   async function doRevertRequest() {
     if (!importId || !diff) return;
     monitor.stop(importId);
@@ -348,10 +323,7 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
   const enc = job?.encodingResult;
   const detected = job?.detectedEncoding;
   const draftWorkId = job?.committedWorkId ?? (job?.status === 'applied' ? job.workId : null);
-  const cls = (k: string) => diff?.match.items.filter((i: any) => i.itemClass === k).length ?? 0;
-  const pending = diff
-    ? diff.match.items.filter((i: any) => ['ambiguous', 'structural_conflict'].includes(i.itemClass)).length
-    : 0;
+
 
   return (
     <>
@@ -495,41 +467,9 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
           {(job.status === 'ready' || job.status === 'review_required' || job.status === 'applied') && job.workId && (
             <>
               <h3>與現有章節比對</h3>
-              <button className="btn" onClick={loadDiff} disabled={busy}>載入比對結果</button>
-              {diff && (
-                <>
-                  <div className="tally">
-                    <div><b>{cls('unchanged')}</b>相同</div>
-                    <div><b>{cls('modified')}</b>有修訂</div>
-                    <div><b>{cls('new')}</b>新章</div>
-                    <div><b>{pending}</b>待決</div>
-                    <div><b>{diff.match.missingFromSource.length}</b>來源缺失</div>
-                  </div>
-                  <p className="hint">基準版本 edit_version = {diff.editVersion}；增量模式會保留站方已修訂的內容。</p>
-                  {diff.match.needsReview && (
-                    <p className="form-warn">
-                      有項目需要決策，待決清單會出現在套用的錯誤訊息裡。找不到錨點的新章可選「確認追加到結尾」。
-                    </p>
-                  )}
-                  <div className="row-actions">
-                    <button className="btn primary" onClick={() => applyIncremental('incremental')}
-                      disabled={busy || job.status === 'applied'}>
-                      套用增量
-                    </button>
-                    <button className="btn" onClick={() => {
-                      if (confirm('覆蓋會為每個有差異的章節建立新修訂，站方先前的修改會被來源內容取代。確定要覆蓋嗎？')) {
-                        void applyIncremental('overwrite');
-                      }
-                    }} disabled={busy || job.status === 'applied'}>
-                      套用覆蓋
-                    </button>
-                    <button className="btn" onClick={() => applyIncremental('incremental', true)}
-                      disabled={busy || job.status === 'applied'}>
-                      確認追加到結尾
-                    </button>
-                  </div>
-                </>
-              )}
+              <ImportReview key={importId} importId={importId!} applied={job.status === 'applied'}
+                onBaseline={(editVersion) => setDiff({ editVersion })}
+                onApplied={(result) => { setApplyResult(result); void api(`/api/admin/imports/${importId}`).then((response) => { if (response.status === 200) setJob(response.body); }); }} />
 
               {applyResult?.summary && (
                 <p className="form-ok">

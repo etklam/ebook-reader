@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api/client.ts';
+import { api, ApiRequestError } from '../api/client.ts';
 
 type Version = { id: string; label: string; kind: 'head' | 'release'; active?: boolean };
 type VersionsResponse = { work: { id: string; title: string }; versions: Version[] };
@@ -29,7 +29,8 @@ export function ExportPanel({ workId, refresh = 0 }: { workId: string; refresh?:
         setData(result);
         setVersion(result.versions.find((item) => item.active)?.id ?? 'head');
       })
-      .catch(() => { if (active) setMessage('無法載入可匯出的版本。'); });
+      .catch((error) => { if (active) setMessage(error instanceof ApiRequestError && [401, 403].includes(error.status)
+        ? '管理員登入已失效或權限不足，請重新登入管理後台。' : '無法載入可匯出的版本，請確認網絡後重新選擇作品。'); });
     return () => { active = false; };
   }, [workId, refresh]);
 
@@ -42,7 +43,7 @@ export function ExportPanel({ workId, refresh = 0 }: { workId: string; refresh?:
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(body.error ?? 'export_failed');
+        throw new ApiRequestError(response.status, body.error ?? 'export_failed', body);
       }
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
@@ -53,8 +54,14 @@ export function ExportPanel({ workId, refresh = 0 }: { workId: string; refresh?:
       URL.revokeObjectURL(url);
       setMessage(`已下載 ${data?.work.title ?? '作品'}（${data?.versions.find((item) => item.id === version)?.label ?? version}）。`);
     } catch (error) {
-      const code = error instanceof Error ? error.message : '';
-      setMessage(code === 'no_chapters' ? '這個版本沒有可匯出的章節。' : '匯出失敗，請稍後再試。');
+      const code = error instanceof ApiRequestError ? error.code : '';
+      setMessage(error instanceof ApiRequestError && [401, 403].includes(error.status)
+        ? '管理員登入已失效或權限不足，請重新登入管理後台。'
+        : code === 'content_unavailable'
+          ? '這個版本的章節或圖片檔案缺失，無法完整匯出。請先檢查並修復儲存檔案，或選擇其他完整版本。'
+          : code === 'no_chapters' ? '這個版本沒有可匯出的章節，請選擇其他版本。'
+            : code === 'version_not_found' ? '所選版本已不存在，請重新選擇作品以載入版本清單。'
+              : '匯出失敗，請確認網絡後重試。');
     } finally { setBusy(false); }
   };
 

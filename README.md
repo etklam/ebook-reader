@@ -6,6 +6,8 @@
 
 2026-10-13 新增書架分組與閱讀狀態、書內搜尋分頁、章節錯字回報、排行榜篩選、相似作品及下一章預載；入口、API 與 migration 見 [功能說明](docs/reader-discovery-features.md)。
 
+2026-10-15 完成 10 張 AFK 改善票：長目錄定位／搜尋、書籤備註、書庫排除標籤／隱藏已讀、朗讀段落續播、逐章匯入核對，以及預載／捲動／搜尋優化。[Tickets 與驗證紀錄](docs/tickets/reader-improvements/README.md)；[效能比較與限制](docs/perf/reader-improvements-2026-10-15.md)。離線暫存與同步策略兩張 HITL 票仍待決策；真機 L3 未執行。
+
 ## 本機啟動（M1+M2）
 
 ```bash

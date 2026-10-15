@@ -42,10 +42,10 @@ async function mockReader(page: Page, member = false) {
       searchRequests.push(url);
       const query = url.searchParams.get('q')!;
       if (query === '失敗') return route.fulfill({ status: 500, json: { error: 'failed' } });
-      if (query === '空白') json = { query, total: 0, offset: 0, nextOffset: null, results: [] };
+      if (query === '空白') json = { query, total: null, offset: 0, nextCursor: null, hasMore: false, results: [] };
       else {
-        const offset = Number(url.searchParams.get('offset'));
-        json = { query, total: 51, offset, nextOffset: offset === 0 ? 50 : null, results: [{
+        const offset = url.searchParams.get('cursor') ? 50 : 0;
+        json = { query, total: null, offset, nextCursor: offset === 0 ? 'next-page' : null, hasMore: offset === 0, results: [{
           chapterId: second, title: offset === 0 ? '首批結果' : '末批結果', labelRaw: '第2章',
           snippet: `找到 ${query}`, matchStart: 3, matchLength: query.length, paragraphIndex: 20,
           href: `/read/${workId}/${second}#p=20&rev=${revision(second)}`,
@@ -75,11 +75,11 @@ test('book search encodes literal input, pages both ways and jumps to the matchi
   expect(searchRequests[0].searchParams.get('q')).toBe(query);
   await page.getByRole('button', { name: '下一頁', exact: true }).click();
   await expect(page.getByRole('link', { name: /末批結果/ })).toBeVisible();
-  expect(searchRequests.at(-1)!.searchParams.get('offset')).toBe('50');
+  expect(searchRequests.at(-1)!.searchParams.get('cursor')).toBe('next-page');
   await expect(page.getByRole('button', { name: '下一頁', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '上一頁', exact: true }).click();
   await expect(page.getByRole('link', { name: /首批結果/ })).toBeVisible();
-  expect(searchRequests.at(-1)!.searchParams.get('offset')).toBe('0');
+  expect(searchRequests.at(-1)!.searchParams.get('cursor')).toBeNull();
   await page.getByRole('link', { name: /首批結果/ }).click();
   await expect(page.locator('.reader-chapter-label')).toHaveText(/第2章/);
   await expect.poll(() => page.locator('.reader-scroll').evaluate((container) => {
@@ -113,9 +113,13 @@ test('next chapter preload is consumed once and cannot mark an unread chapter re
   const { chapterRequests, readMarks } = await mockReader(page, true);
   await page.goto(`/read/${workId}/${first}`);
   await expect(page.locator('.reader-chapter-label')).toHaveText(/第1章/);
-  await expect.poll(() => chapterRequests).toEqual([first, second]);
-  await page.clock.runFor(10_100);
+  await expect.poll(() => chapterRequests).toEqual([first]);
+  await page.clock.runFor(31_000);
   await expect.poll(() => readMarks).toEqual([first]);
+  expect(chapterRequests).toEqual([first]);
+  await page.locator('.reader-scroll').evaluate((element) => { element.scrollTop = element.scrollHeight * 0.85; });
+  await page.clock.runFor(200);
+  await expect.poll(() => chapterRequests).toEqual([first, second]);
   await page.mouse.click(195, 422);
   await page.getByRole('button', { name: '下一章', exact: true }).click();
   await expect(page.locator('.reader-chapter-label')).toHaveText(/第2章/);

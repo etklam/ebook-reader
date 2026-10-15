@@ -56,7 +56,7 @@
 .chip {
   display: inline-flex;
   align-items: center;
-  min-height: 40px;
+  min-height: var(--tap);
   padding: var(--sp-2) var(--sp-4);
   font-size: var(--text-base);
   color: var(--ink-2);
@@ -562,7 +562,7 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-1);
-  min-height: 32px;
+  min-height: var(--tap);
   padding: 2px var(--sp-2) 2px var(--sp-3);
   font-size: var(--text-xs);
   color: var(--ink-2);
@@ -1022,3 +1022,15 @@ h2.sec-head, .sec-head h2 {
 .content-reports-panel .msg-actions { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-4); }
 
 .library-organize { align-self: flex-start; margin-top: var(--sp-3); }
+/* Native controls share the archive accent in every inherited color context. */
+input[type='checkbox'] { accent-color: var(--brand); }
+
+.import-review-list { margin-block: var(--sp-5); }
+.import-review-item { padding-block: var(--sp-5); border-bottom: 1px solid var(--rule); }
+.import-review-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-5); margin-block: var(--sp-4); }
+.import-review-comparison > section { min-width: 0; }
+.import-review-body { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 24rem; font: inherit; background: var(--surface); padding: var(--sp-4); }
+.import-review-item .hint { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .import-review-comparison { grid-template-columns: minmax(0, 1fr); }
+}

@@ -135,6 +135,35 @@ test('READ-API: work metadata — chapterCount and first/latest ids', async () =
   }
 });
 
+test('SEARCH-API: cursor pages real imported draft objects with admin-only access and version invalidation', async () => {
+  const chapter = (await q(`select cr.content_key from app.chapters ch join app.chapter_revisions cr on cr.id=ch.head_revision_id where ch.work_id=$1 order by ch.editorial_position limit 1`, [baseWork]))[0];
+  const body = (await storage.get(chapter.content_key)).toString('utf8');
+  const query = body.split('\n\n').find((paragraph) => paragraph.trim().length >= 2)!.trim().slice(0, 2);
+  const endpoint = `/api/reader/works/${baseWork}/search?q=${encodeURIComponent(query)}`;
+  assert.equal((await app.request(endpoint)).status, 403);
+  assert.equal((await app.request(endpoint, { headers: { cookie: member } })).status, 403);
+  const response = await app.request(endpoint, { headers: { cookie: admin } });
+  assert.equal(response.status, 200);
+  const first = await response.json() as { total: null; offset: number; nextCursor: string | null; results: Array<{ chapterId: string; href: string }> };
+  assert.equal(first.total, null);
+  assert.ok(first.results.length > 0);
+  if (first.nextCursor) {
+    const next = await app.request(`${endpoint}&cursor=${first.nextCursor}`, { headers: { cookie: admin } });
+    assert.equal(next.status, 200);
+    const second = await next.json() as typeof first;
+    assert.equal(second.offset, 50);
+    assert.ok(second.results.every((row) => !first.results.some((previous) => previous.chapterId === row.chapterId)));
+    await q('update app.works set edit_version=edit_version+1 where id=$1', [baseWork]);
+    const stale = await app.request(`${endpoint}&cursor=${first.nextCursor}`, { headers: { cookie: admin } });
+    assert.equal(stale.status, 409);
+    assert.equal((await stale.json() as { error: string }).error, 'search_version_changed');
+  }
+  await q("update app.works set visibility='public' where id=$1", [baseWork]);
+  const unpublished = await (await app.request(endpoint)).json() as typeof first;
+  assert.equal(unpublished.results.length, 0, 'public search must not expose unpublished heads');
+  await q("update app.works set visibility='draft' where id=$1", [baseWork]);
+});
+
 test('READ-API: draft visibility — admin only; public readable anonymously; removed/unknown 404', async () => {
   // draft: member and anonymous are forbidden
   assert.equal((await app.request(`/api/reader/works/${weirdWork}`, { headers: { cookie: member } })).status, 403);

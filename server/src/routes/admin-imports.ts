@@ -6,9 +6,9 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { createHash } from 'node:crypto';
-import { eq, asc, sql } from 'drizzle-orm';
+import { and, isNull, ilike, eq, asc, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { works, sourceFiles, importJobs, importItems } from '../db/schema.ts';
+import { chapters, chapterRevisions, works, sourceFiles, importJobs, importItems } from '../db/schema.ts';
 import type { ApiConfig } from '../config.ts';
 import type { Storage } from '../storage.ts';
 import { processorVersion } from '../import/versions.ts';
@@ -17,6 +17,7 @@ import { applyIncremental, diffImport } from '../import/apply-incremental.ts';
 import { reanalyzeImport } from '../import/reanalyze.ts';
 import { revertPlan, revertImport } from '../import/revert.ts';
 import { inspectImport } from '../import/quality.ts';
+import { analysisVersion } from '../import/analysis-version.ts';
 import { validChapterPattern } from '../import/txt-parser.ts';
 import type {
   ImportJobResponse, ImportChapterPageResponse, ImportUploadResponse,
@@ -227,6 +228,84 @@ export function adminImportRoutes(deps: ImportRoutesDeps): Hono<{ Variables: { u
     return c.json(r);
   });
 
+  // Bounded review metadata; bodies are fetched separately for one chosen pair.
+  app.get('/api/admin/imports/:id/review', async (c) => {
+    const id = routeId(c);
+    return db.transaction(async (tx) => {
+      const [job] = await tx.select().from(importJobs).where(eq(importJobs.id, id)).for('share').limit(1);
+      if (!job) return c.json({ error: 'not_found' }, 404);
+      if (job.workId) await tx.select({ id: works.id }).from(works).where(eq(works.id, job.workId)).for('share').limit(1);
+      const result = await diffImport(tx, id);
+      if (!result.ok) return c.json({ error: result.error }, result.status);
+      const page = Math.min(1_000_000, Math.max(1, Math.floor(Number(c.req.query('page')) || 1)));
+      const limit = 40;
+      const filter = c.req.query('filter') ?? 'all';
+      const anchorIds = new Set(result.match.items.flatMap((item) => [item.matchedChapterId, item.insertAfterChapterId, item.insertBeforeChapterId]).filter((value): value is string => Boolean(value)));
+      const anchorRows = await tx.select({ id: chapters.id, label: chapters.labelRaw }).from(chapters).where(eq(chapters.workId, result.workId));
+      const anchorLabels = new Map(anchorRows.filter((row) => anchorIds.has(row.id)).map((row) => [row.id, row.label]));
+      const rows = [
+        ...result.match.items.map((item) => ({ ...item, kind: 'source' as const, matchedLabel: anchorLabels.get(item.matchedChapterId ?? ''), afterLabel: anchorLabels.get(item.insertAfterChapterId ?? ''), beforeLabel: anchorLabels.get(item.insertBeforeChapterId ?? '') })),
+        ...result.match.missingFromSource.map((item) => ({ ...item, kind: 'missing' as const, itemClass: 'missing' as const })),
+      ];
+      const pending = (item: typeof rows[number]) => item.kind === 'source' &&
+        (['ambiguous', 'structural_conflict'].includes(item.itemClass) || (item.itemClass === 'new' && !item.positionConfident));
+      const selected = rows.filter((item) => filter === 'all' || (filter === 'pending' ? pending(item) : item.itemClass === filter));
+      const counts = Object.fromEntries(['unchanged', 'modified', 'new', 'ambiguous', 'structural_conflict', 'missing'].map((key) => [key, rows.filter((item) => item.itemClass === key).length]));
+      return c.json({ editVersion: result.editVersion, analysisVersion: analysisVersion(job), workId: result.workId,
+        page, limit, total: selected.length, counts, pendingCount: rows.filter(pending).length,
+        rows: selected.slice((page - 1) * limit, page * limit) });
+    });
+  });
+
+  app.get('/api/admin/imports/:id/review/targets', async (c) => {
+    const [job] = await db.select({ workId: importJobs.workId }).from(importJobs).where(eq(importJobs.id, routeId(c))).limit(1);
+    if (!job?.workId) return c.json({ error: 'not_found' }, 404);
+    const q = (c.req.query('q') ?? '').trim().slice(0, 100);
+    const rows = await db.select({ id: chapters.id, labelRaw: chapters.labelRaw, position: chapters.editorialPosition }).from(chapters)
+      .where(and(eq(chapters.workId, job.workId), isNull(chapters.mergedIntoChapterId), q ? ilike(chapters.labelRaw, `%${q}%`) : undefined))
+      .orderBy(asc(chapters.editorialPosition)).limit(41);
+    return c.json({ chapters: rows.slice(0, 40), hasMore: rows.length > 40 });
+  });
+
+  app.get('/api/admin/imports/:id/review/detail', async (c) => {
+    const id = routeId(c);
+    const itemId = c.req.query('itemId');
+    const chapterId = c.req.query('chapterId');
+    if ((itemId && !UUID_RE.test(itemId)) || (chapterId && !UUID_RE.test(chapterId)) || (!itemId && !chapterId)) return c.json({ error: 'invalid_review_target' }, 400);
+    return db.transaction(async (tx) => {
+      const [job] = await tx.select().from(importJobs).where(eq(importJobs.id, id)).for('share').limit(1);
+      if (!job) return c.json({ error: 'not_found' }, 404);
+      if (!job.workId) return c.json({ error: 'work_required' }, 400);
+      if (c.req.query('analysisVersion') !== analysisVersion(job)) return c.json({ error: 'analysis_version_conflict' }, 409);
+      const [work] = await tx.select({ version: works.editVersion }).from(works).where(eq(works.id, job.workId!)).for('share').limit(1);
+      if (!work || String(work.version) !== c.req.query('editVersion')) return c.json({ error: 'edit_version_conflict' }, 409);
+      const [item] = itemId ? await tx.select({ id: importItems.id, title: importItems.title, contentKey: importItems.contentKey }).from(importItems)
+        .where(and(eq(importItems.id, itemId), eq(importItems.importJobId, id))).limit(1) : [];
+      if (itemId && !item) return c.json({ error: 'not_found' }, 404);
+      const [site] = chapterId ? await tx.select({ id: chapters.id, labelRaw: chapters.labelRaw, title: chapterRevisions.title, contentKey: chapterRevisions.contentKey, revisionId: chapterRevisions.id }).from(chapters)
+        .leftJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
+        .where(and(eq(chapters.id, chapterId), eq(chapters.workId, job.workId!), isNull(chapters.mergedIntoChapterId))).limit(1) : [];
+      if (chapterId && !site) return c.json({ error: 'not_found' }, 404);
+      const offset = Math.min(100_000_000, Math.max(0, Math.floor(Number(c.req.query('offset')) || 0)));
+      const chunk = async (key: string | null | undefined) => {
+        const text = key ? (await storage.get(key)).toString('utf8') : '';
+        return { text: text.slice(offset, offset + 24000), total: text.length, hasMore: text.length > offset + 24000 };
+      };
+      const sourceResources = item ? await tx.execute(sql`select content_hash, alt from app.import_item_resources where import_item_id = ${item.id} order by content_hash limit 201`) : null;
+      const siteResources = site?.revisionId ? await tx.execute(sql`select r.content_hash, rr.alt from app.chapter_revision_resources rr join app.resources r on r.id = rr.resource_id where rr.revision_id = ${site.revisionId} order by r.content_hash limit 201`) : null;
+      return c.json({ offset, source: { title: item?.title ?? '', ...await chunk(item?.contentKey), resources: sourceResources?.rows ?? [] },
+        site: { title: site?.title ?? '', labelRaw: site?.labelRaw ?? '', ...await chunk(site?.contentKey), resources: siteResources?.rows ?? [] } });
+    });
+  });
+
+  app.post('/api/admin/imports/:id/review-plan', async (c) => {
+    const body = await c.req.json().catch(() => null);
+    if (!Number.isInteger(body?.baseEditVersion) || typeof body?.analysisVersion !== 'string') return c.json({ error: 'review_version_required' }, 400);
+    const result = await applyIncremental(db, routeId(c), { baseEditVersion: body.baseEditVersion, analysisVersion: body.analysisVersion,
+      mode: body.mode === 'overwrite' ? 'overwrite' : 'incremental', resolutions: body.resolutions && typeof body.resolutions === 'object' ? body.resolutions : undefined, preview: true });
+    return c.json(result, result.status);
+  });
+
   // M3: incremental apply. baseEditVersion is the optimistic concurrency check
   // (§12); unresolved items need resolutions or confirmAppend.
   app.post('/api/admin/imports/:id/apply', async (c) => {
@@ -240,6 +319,7 @@ export function adminImportRoutes(deps: ImportRoutesDeps): Hono<{ Variables: { u
     }
     const result = await applyIncremental(db, routeId(c), {
       baseEditVersion: body.baseEditVersion as number,
+      analysisVersion: typeof body.analysisVersion === 'string' ? body.analysisVersion : undefined,
       mode: body.mode === 'overwrite' ? 'overwrite' : 'incremental',
       confirmAppend: body.confirmAppend === true,
       resolutions: body.resolutions && typeof body.resolutions === 'object' ? body.resolutions : undefined,

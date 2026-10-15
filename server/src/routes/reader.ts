@@ -8,13 +8,14 @@
 // unlisted = readable by direct URL, never listed; removed = 404.
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { and, isNull, asc, eq, sql } from 'drizzle-orm';
+import { and, isNull, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import {
   chapters, chapterRevisions, chapterRevisionResources, releaseItems, resources,
   works, workReleases,
 } from '../db/schema.ts';
 import type { Storage } from '../storage.ts';
+import { variantsForSearch } from '../search/normalize.ts';
 
 export interface ReaderRoutesDeps {
   db: NodePgDatabase;
@@ -141,45 +142,60 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
     const v = await visibleWork(db, id, c.get('role') ?? '');
     if (!v.ok) return c.json({ error: v.error }, v.error === 'forbidden' ? 403 : 404);
     const work = v.work;
-    const limit = Math.min(500, Math.max(1, Number(c.req.query('limit') ?? 200) || 200));
-    const offset = Math.max(0, Number(c.req.query('offset') ?? 0) || 0);
-
+    const limit = Math.min(500, Math.max(1, Math.floor(Number(c.req.query('limit')) || 200)));
+    const offset = Math.max(0, Math.floor(Number(c.req.query('offset')) || 0));
+    if (!Number.isSafeInteger(limit) || !Number.isSafeInteger(offset)) return c.json({ error: 'invalid_filter' }, 400);
+    const around = c.req.query('aroundChapterId');
+    const latest = c.req.query('latest') === 'true';
+    const order = c.req.query('order') ?? 'asc';
+    const query = (c.req.query('q') ?? '').trim();
+    if ((around && !UUID_RE.test(around)) || !['asc', 'desc'].includes(order) || query.length > 200) {
+      return c.json({ error: 'invalid_filter' }, 400);
+    }
     const source = contentSource(work, c.get('role') ?? '');
-    if (source === 'none') {
-      return c.json({ total: 0, limit, offset, chapters: [] });
+    // Only metadata enters this CTE. No canonical bodies or storage I/O.
+    const base = source === 'head' ? sql`
+      select c.id, c.volume_id as "volumeId", c.label_raw as "labelRaw",
+        coalesce(r.title, '') as title, c.editorial_position as "editorialPosition",
+        c.head_revision_id as "revisionId"
+      from app.chapters c left join app.chapter_revisions r on r.id = c.head_revision_id
+      where c.work_id = ${id} and c.merged_into_chapter_id is null`
+      : sql`select chapter_id as id, volume_id as "volumeId", label_raw as "labelRaw",
+          title, editorial_position as "editorialPosition", revision_id as "revisionId"
+        from app.release_items where release_id = ${source === 'release' ? work.activeReleaseId : null}`;
+    const variants = query ? await variantsForSearch(query.toLocaleLowerCase()) : [];
+    const matches = variants.length ? sql.join(variants.map((term) => sql`
+      (strpos(lower("labelRaw"), ${term}) > 0 or strpos(lower(title), ${term}) > 0)`), sql` or `) : sql`true`;
+    const direction = order === 'desc' ? sql`desc` : sql`asc`;
+    const result = await db.execute(sql`
+      with base as (${base}),
+      ranked as (select *, (row_number() over (order by "editorialPosition" ${direction}) - 1)::int as ordinal
+        from base where ${matches}),
+      stats as (select count(*)::int as total,
+        ${source === 'head' ? sql`'head:' || md5(coalesce((select string_agg(row(base.*)::text, ',' order by "editorialPosition") from base), ''))`
+          : sql`${work.activeReleaseId ?? 'none'}::text`} as version,
+        (select ordinal from ranked where id = ${around ?? null}::uuid) as anchor,
+        (select ordinal from ranked order by "editorialPosition" desc limit 1) as latest from ranked),
+      bounds as (select *, case
+        when ${latest} and latest is not null then greatest(0, least(total - ${limit}, latest - ${Math.floor(limit / 2)}))
+        when ${Boolean(around)} and anchor is not null then greatest(0, least(total - ${limit}, anchor - ${Math.floor(limit / 2)}))
+        else least(${offset}, greatest(0, total - 1)) end as start from stats)
+      select total, version, start as offset,
+        (${Boolean(around)} and anchor is null) as "anchorMissing",
+        coalesce((select json_agg(json_build_object('id', id, 'volumeId', "volumeId", 'labelRaw', "labelRaw",
+          'title', title, 'editorialPosition', "editorialPosition", 'revisionId', "revisionId") order by ordinal)
+          from ranked where ordinal >= bounds.start and ordinal < bounds.start + ${limit}), '[]'::json) as chapters
+      from bounds`);
+    const page = result.rows[0] as {
+      total: number; version: string; offset: number; anchorMissing: boolean; chapters: unknown[];
+    };
+    if (c.req.query('version') && c.req.query('version') !== page.version) {
+      return c.json({ error: 'toc_version_changed', version: page.version }, 409);
     }
-    if (source === 'head') {
-      const [total] = await db.select({ n: sql<number>`count(*)::int` })
-        .from(chapters).where(and(eq(chapters.workId, id), isNull(chapters.mergedIntoChapterId)));
-      const rows = await db.select({
-        id: chapters.id,
-        volumeId: chapters.volumeId,
-        labelRaw: chapters.labelRaw,
-        title: chapterRevisions.title,
-        editorialPosition: chapters.editorialPosition,
-        revisionId: chapters.headRevisionId,
-      }).from(chapters)
-        .leftJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
-        .where(and(eq(chapters.workId, id), isNull(chapters.mergedIntoChapterId)))
-        .orderBy(asc(chapters.editorialPosition))
-        .limit(limit).offset(offset);
-      return c.json({ total: total.n, limit, offset, chapters: rows });
-    }
-
-    const [total] = await db.select({ n: workReleases.chapterCount })
-      .from(workReleases).where(eq(workReleases.id, work.activeReleaseId!));
-    const rows = await db.select({
-      id: releaseItems.chapterId,
-      volumeId: releaseItems.volumeId,
-      labelRaw: releaseItems.labelRaw,
-      title: releaseItems.title,
-      editorialPosition: releaseItems.editorialPosition,
-      revisionId: releaseItems.revisionId,
-    }).from(releaseItems)
-      .where(eq(releaseItems.releaseId, work.activeReleaseId!))
-      .orderBy(asc(releaseItems.editorialPosition))
-      .limit(limit).offset(offset);
-    return c.json({ total: total.n, limit, offset, chapters: rows });
+    return c.json({ ...page, limit,
+      previousOffset: page.offset > 0 ? Math.max(0, page.offset - limit) : null,
+      nextOffset: page.offset + limit < page.total ? page.offset + limit : null,
+    });
   });
 
   // chapter content — release snapshot for the public; head only for draft

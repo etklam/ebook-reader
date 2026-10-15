@@ -11,7 +11,7 @@ type SearchResult = {
   paragraphIndex: number;
   href: string;
 };
-type SearchResponse = { query: string; total: number; offset: number; nextOffset: number | null; truncated: boolean; results: SearchResult[] };
+type SearchResponse = { query: string; total: null; offset: number; nextCursor: string | null; hasMore: boolean; results: SearchResult[] };
 
 function highlighted(text: string, start: number, length: number) {
   const safeStart = Math.max(0, Math.min(text.length, start));
@@ -25,24 +25,33 @@ export function FullTextSearch({ workId }: { workId: string }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const requestId = useRef(0);
+  const [cursors, setCursors] = useState<Array<string | null>>([null]);
+  const [pageIndex, setPageIndex] = useState(0);
 
   useEffect(() => {
     requestId.current += 1;
     setResponse(null); setError(''); setBusy(false); setQuery('');
+    setCursors([null]); setPageIndex(0);
     return () => { requestId.current += 1; };
   }, [workId]);
 
-  const fetchPage = async (value: string, offset = 0) => {
+  const fetchPage = async (value: string, index = 0, cursor: string | null = null) => {
     if (!value || busy) return;
     const id = ++requestId.current;
     setBusy(true); setError(''); setResponse(null);
     try {
-      const result = await api<SearchResponse>(`/api/reader/works/${workId}/search?q=${encodeURIComponent(value)}&offset=${offset}`);
-      if (requestId.current === id) setResponse(result);
+      const params = new URLSearchParams({ q: value });
+      if (cursor) params.set('cursor', cursor);
+      const result = await api<SearchResponse>(`/api/reader/works/${workId}/search?${params}`);
+      if (requestId.current === id) {
+        setResponse(result); setPageIndex(index);
+        setCursors((previous) => [...previous.slice(0, index), cursor, ...(result.nextCursor ? [result.nextCursor] : [])]);
+      }
     } catch (e) {
       if (requestId.current === id) setError(e instanceof Error && 'status' in e && e.status === 403
         ? '這部作品尚未公開。' : e instanceof Error && 'status' in e && e.status === 429
-          ? '搜尋次數較多，請一分鐘後再試。' : '搜尋失敗，請稍後再試。');
+          ? '搜尋次數較多，請一分鐘後再試。' : e instanceof Error && 'status' in e && e.status === 409
+            ? '作品版本或內容已變動，請重新搜尋；若仍失敗，請稍後重試。' : '搜尋失敗，請稍後再試。');
     } finally {
       if (requestId.current === id) setBusy(false);
     }
@@ -50,6 +59,7 @@ export function FullTextSearch({ workId }: { workId: string }) {
 
   const search = (event: FormEvent) => {
     event.preventDefault();
+    setCursors([null]); setPageIndex(0);
     void fetchPage(query.trim());
   };
 
@@ -62,6 +72,7 @@ export function FullTextSearch({ workId }: { workId: string }) {
             aria-label="搜尋本書內容" placeholder="輸入關鍵字" onChange={(event) => {
               requestId.current += 1;
               setBusy(false); setResponse(null); setError('');
+              setCursors([null]); setPageIndex(0);
               setQuery(event.target.value);
             }} />
           <button className="btn primary" disabled={busy || !query.trim()}>{busy ? '搜尋中…' : '搜尋'}</button>
@@ -71,7 +82,9 @@ export function FullTextSearch({ workId }: { workId: string }) {
       {error && <p className="form-error" role="alert">{error}</p>}
       {busy && <p className="hint" role="status">正在搜尋章節內容…</p>}
       {response && <>
-        <p className="hint" role="status">{response.total ? `找到 ${response.total} 個章節` : '沒有找到相符章節'}{response.total ? `，顯示 ${response.offset + 1}–${response.offset + response.results.length} 個。` : '。'}</p>
+        <p className="hint" role="status">{response.results.length
+          ? `顯示第 ${response.offset + 1}–${response.offset + response.results.length} 個相符章節${response.hasMore ? '，還有更多結果。' : '。'}`
+          : '沒有找到相符章節。'}</p>
         {response.results.length > 0 && <div className="rows">
           {response.results.map((result) => (
             <a className="row" key={result.chapterId} href={result.href}>
@@ -83,11 +96,11 @@ export function FullTextSearch({ workId }: { workId: string }) {
             </a>
           ))}
         </div>}
-        {(response.offset > 0 || response.nextOffset !== null) && <div className="form-row" aria-label="搜尋結果分頁">
-          <button className="btn" disabled={busy || response.offset === 0}
-            onClick={() => void fetchPage(response.query, Math.max(0, response.offset - 50))}>上一頁</button>
-          <button className="btn" disabled={busy || response.nextOffset === null}
-            onClick={() => { if (response.nextOffset !== null) void fetchPage(response.query, response.nextOffset); }}>下一頁</button>
+        {(pageIndex > 0 || response.hasMore) && <div className="form-row" aria-label="搜尋結果分頁">
+          <button className="btn" disabled={busy || pageIndex === 0}
+            onClick={() => void fetchPage(response.query, pageIndex - 1, cursors[pageIndex - 1])}>上一頁</button>
+          <button className="btn" disabled={busy || !response.nextCursor}
+            onClick={() => { if (response.nextCursor) void fetchPage(response.query, pageIndex + 1, response.nextCursor); }}>下一頁</button>
         </div>}
       </>}
     </section>

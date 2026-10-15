@@ -357,7 +357,7 @@ test('HRD-08: API responses carry restrictive security headers', async () => {
     assert.equal(h.get('x-frame-options'), 'DENY', path);
     assert.equal(h.get('referrer-policy'), 'no-referrer', path);
     assert.match(h.get('content-security-policy') ?? '', /frame-ancestors 'none'/, path);
-    assert.equal(h.get('cache-control'), 'no-store', `${path} member/chapter data must not be cacheable`);
+    assert.match(h.get('cache-control') ?? '', /(?:^|,\s*)no-store(?:\s*,|$)/, `${path} member/chapter data must not be cacheable`);
   }
   // HSTS is off by default: pinning https on a plain-HTTP dev host would be a
   // self-inflicted outage

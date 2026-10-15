@@ -71,6 +71,10 @@ export interface TocEntry {
 }
 
 export interface TocResponse {
+  version: string;
+  anchorMissing: boolean;
+  previousOffset: number | null;
+  nextOffset: number | null;
   total: number;
   limit: number;
   offset: number;
@@ -158,6 +162,15 @@ export interface BookmarkEntry {
   paragraphIndex: number;
   note: string;
   createdAt: string;
+}
+
+export interface BookmarksResponse {
+  bookmarks: BookmarkEntry[];
+  works: Array<{ id: string; title: string }>;
+  total: number;
+  limit: number;
+  offset: number;
+  nextOffset: number | null;
 }
 
 export interface ReaderPreferencesDto {

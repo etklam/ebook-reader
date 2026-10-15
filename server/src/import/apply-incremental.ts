@@ -16,6 +16,7 @@ import {
   stagedLinksByItem, type StagedResourceLink,
 } from './resources.ts';
 import { assertTransition } from './states.ts';
+import { analysisVersion } from './analysis-version.ts';
 
 /** persisted on the job row: the replay response AND the revert snapshot */
 export interface AppliedSnapshot {
@@ -37,6 +38,8 @@ function hashApplyRequest(jobId: string, req: ApplyRequest): string {
     mode: req.mode ?? 'incremental',
     baseEditVersion: req.baseEditVersion,
     confirmAppend: req.confirmAppend === true,
+    // Omit for legacy callers so persisted pre-upgrade replay hashes still match.
+    ...(req.analysisVersion === undefined ? {} : { analysisVersion: req.analysisVersion }),
     resolutions: req.resolutions
       ? Object.fromEntries(Object.entries(req.resolutions).sort(([a], [b]) => a.localeCompare(b)))
       : null,
@@ -45,6 +48,9 @@ function hashApplyRequest(jobId: string, req: ApplyRequest): string {
 }
 
 export interface ApplyRequest {
+  analysisVersion?: string;
+  /** Validate and count the exact decisions without changing any rows. */
+  preview?: boolean;
   baseEditVersion: number;
   /** incremental keeps site versions for modified chapters (§05); overwrite
    * creates a new immutable revision and moves head_revision_id (§12) */
@@ -73,6 +79,7 @@ interface Insert {
   bodyHash: string;
   /** place after this existing chapter id (anchor); null → resolved order */
   afterChapterId: string | null;
+  beforeChapterId: string | null;
 }
 
 const BATCH = 500;
@@ -114,6 +121,9 @@ export async function applyIncremental(
     }
     if (job.status !== 'ready' && job.status !== 'review_required') {
       return { ok: false, status: 409, error: 'not_appliable', detail: `job status is ${job.status}` };
+    }
+    if (req.analysisVersion && req.analysisVersion !== analysisVersion(job)) {
+      return { ok: false, status: 409, error: 'analysis_version_conflict', detail: '來源已重新分析，請重新比對並檢視決策' };
     }
     if (!job.workId) return { ok: false, status: 400, error: 'work_required', detail: 'upload with workId to target an existing work' };
     const targetWorkId = job.workId; // narrowed once; closures below need the non-null value
@@ -179,11 +189,20 @@ export async function applyIncremental(
     const mode = req.mode ?? 'incremental';
     const adminMatch = new Map<string, string>(); // itemId → chapterId
     for (const [itemId, decision] of Object.entries(req.resolutions ?? {})) {
+      if (!itemById.has(itemId) || typeof decision !== 'string' || !/^(new|exclude|match:[0-9a-f-]{36})$/i.test(decision)) {
+        return { ok: false, status: 400, error: 'invalid_resolution' };
+      }
+    }
+    const targetOwners = new Map(result.items.filter((item) => item.itemClass === 'unchanged' || item.itemClass === 'modified').map((item) => [item.matchedChapterId!, item.itemId]));
+    for (const [itemId, decision] of Object.entries(req.resolutions ?? {})) {
       if (decision.startsWith('match:')) {
         const target = decision.slice('match:'.length);
         if (!existingById.has(target)) {
           return { ok: false, status: 400, error: 'invalid_resolution', detail: `chapter ${target} 不屬於此作品` };
         }
+        const owner = targetOwners.get(target);
+        if (owner && owner !== itemId) return { ok: false, status: 400, error: 'duplicate_resolution_target', detail: '同一站方章節不能對應多個來源項目；請修正來源或排除重複項目' };
+        targetOwners.set(target, itemId);
         adminMatch.set(itemId, target);
       }
     }
@@ -213,7 +232,7 @@ export async function applyIncremental(
         inserts.push({
           itemId: m.itemId, labelRaw: item.labelRaw, title: item.title,
           contentKey: item.contentKey, bodyHash: item.bodyHash,
-          afterChapterId: m.insertAfterChapterId,
+          afterChapterId: m.insertAfterChapterId, beforeChapterId: m.insertBeforeChapterId,
         });
         continue;
       }
@@ -223,17 +242,17 @@ export async function applyIncremental(
         inserts.push({
           itemId: m.itemId, labelRaw: item.labelRaw, title: item.title,
           contentKey: item.contentKey, bodyHash: item.bodyHash,
-          afterChapterId: m.insertAfterChapterId, // may be null → source order
+          afterChapterId: m.insertAfterChapterId, beforeChapterId: m.insertBeforeChapterId, // may be null → source order
         });
         continue;
       }
       const adminChapter = adminMatch.get(m.itemId);
       if (adminChapter) {
         // Admin confirmed this source item IS that existing chapter. A
-        // body-identical confirmation is an unchanged match; a differing body
+        // body- and resource-identical confirmation is unchanged; a differing pair
         // follows the mode (keep site vs new revision).
         const ex = existingById.get(adminChapter)!;
-        if (ex.bodyCompareHash === item.bodyHash) unchanged++;
+        if (ex.bodyCompareHash === item.bodyHash && (existingDigests.get(ex.id) ?? '') === resourceDigest(stagedLinks.get(item.id) ?? [])) unchanged++;
         else if (mode === 'overwrite') {
           updates.push({
             itemId: m.itemId,
@@ -249,7 +268,7 @@ export async function applyIncremental(
         inserts.push({
           itemId: m.itemId, labelRaw: item.labelRaw, title: item.title,
           contentKey: item.contentKey, bodyHash: item.bodyHash,
-          afterChapterId: null, // append in source order after last chapter
+          afterChapterId: null, beforeChapterId: null, // append in source order after last chapter
         });
         continue;
       }
@@ -258,6 +277,9 @@ export async function applyIncremental(
     if (unresolved.length > 0) {
       return { ok: false, status: 409, error: 'resolution_required', unresolved };
     }
+
+    if (req.preview) return { ok: true, status: 200, workId: job.workId, newEditVersion: work.editVersion, alreadyApplied: false,
+      summary: { added: inserts.length, updated: updates.length, unchanged, modifiedKept, skipped: skipped.length, missingKept: result.missingFromSource.length } };
 
     // --- compute merged ordering, insert new chapters, renumber ----------------
     // slots: existing chapter ids in position order; inserts attach after their
@@ -271,6 +293,9 @@ export async function applyIncremental(
       if (ins.afterChapterId) {
         idx = order.findIndex((o) => 'chapterId' in o && o.chapterId === ins.afterChapterId);
         if (idx === -1) idx = order.length - 1;
+      } else if (ins.beforeChapterId) {
+        const before = order.findIndex((slot) => 'chapterId' in slot && slot.chapterId === ins.beforeChapterId);
+        idx = before < 0 ? order.length - 1 : before - 1;
       } else {
         idx = order.length - 1;
       }

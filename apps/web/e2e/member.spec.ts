@@ -102,10 +102,17 @@ test('MEM-UI: opening a bookmark lands on its paragraph, not on the resumed posi
   // bookmark near the top: this chapter is short, and a mark taken further in
   // cannot be told apart from the end-of-chapter position it is compared with
   await page.waitForTimeout(700);
+  // Previous tests intentionally sync a later account position; this scenario
+  // explicitly starts at the top so its bookmark and later progress differ.
+  await page.locator('.reader-scroll').evaluate((element) => { element.scrollTop = 0; });
+  await page.waitForTimeout(150);
   const marked = await visibleParagraph(page);
   await page.mouse.click(195, 422);
   await page.getByRole('button', { name: '加入書籤' }).click();
   await expect(page.locator('.reader-note', { hasText: '已加入書籤' })).toBeVisible();
+  await page.getByLabel('書籤備註（可留空）').fill('閱讀測試備註');
+  await page.getByRole('button', { name: '儲存備註', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // read on, so the saved position and the bookmark disagree
   await page.mouse.click(195, 422);
@@ -115,6 +122,7 @@ test('MEM-UI: opening a bookmark lands on its paragraph, not on the resumed posi
   expect(Number(drifted)).toBeGreaterThan(Number(marked));
 
   await page.goto('/me/bookmarks');
+  await expect(page.locator('[data-testid="bookmark-card"]').first()).toContainText('閱讀測試備註');
   await page.locator('[data-testid="bookmark-card"]').first().getByRole('button', { name: '開啟' }).click();
   await expect(page.locator('[data-paragraph-index="0"]')).toBeVisible({ timeout: 15_000 });
   await page.waitForTimeout(900);

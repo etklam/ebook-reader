@@ -132,6 +132,11 @@
   overflow-wrap: anywhere;
 }
 .reader-body p:last-child { margin-bottom: 0; }
+.reader-body p[data-speaking='true'] {
+  background: var(--brand-tint);
+  outline: 1px solid var(--brand);
+  outline-offset: 0;
+}
 
 /* Paginated strip fills the viewport height; columns flow horizontally.
    The side inset lives on the paragraphs, not on the strip: padding on the

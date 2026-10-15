@@ -423,6 +423,17 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
     const workId = c.req.query('workId');
     // same rule as /api/me/reads: never widen a filter the caller asked for
     if (workId && !UUID_RE.test(workId)) return c.json({ error: 'invalid_filter', field: 'workId' }, 400);
+    const limit = Math.min(100, Math.max(1, Math.floor(Number(c.req.query('limit')) || 100)));
+    const offset = Math.max(0, Math.floor(Number(c.req.query('offset')) || 0));
+    if (!Number.isSafeInteger(limit) || !Number.isSafeInteger(offset)) return c.json({ error: 'invalid_filter' }, 400);
+    const condition = workId
+      ? and(eq(bookmarks.userId, userId), eq(bookmarks.workId, workId))
+      : eq(bookmarks.userId, userId);
+    const [count] = await db.select({ total: sql<number>`count(*)::int` }).from(bookmarks).where(condition);
+    // Filter choices cover every bookmark owned by this member, independent of the page/filter.
+    const workOptions = await db.selectDistinct({ id: works.id, title: works.title }).from(bookmarks)
+      .innerJoin(works, eq(works.id, bookmarks.workId)).where(eq(bookmarks.userId, userId))
+      .orderBy(asc(works.title), asc(works.id));
     const rows = await db.select({
       id: bookmarks.id,
       workId: bookmarks.workId,
@@ -436,12 +447,12 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
     }).from(bookmarks)
       .innerJoin(works, eq(works.id, bookmarks.workId))
       .innerJoin(chapters, eq(chapters.id, bookmarks.chapterId))
-      .where(workId
-        ? and(eq(bookmarks.userId, userId), eq(bookmarks.workId, workId))
-        : eq(bookmarks.userId, userId))
-      .orderBy(desc(bookmarks.updatedAt))
-      .limit(500);
+      .where(condition)
+      .orderBy(desc(bookmarks.createdAt), desc(bookmarks.id))
+      .limit(limit).offset(offset);
     return c.json({
+      total: count.total, works: workOptions, limit, offset,
+      nextOffset: offset + limit < count.total ? offset + limit : null,
       bookmarks: rows.map((r) => ({
         ...r,
         createdAt: r.createdAt.toISOString(),
@@ -457,6 +468,7 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
       || typeof revisionId !== 'string' || !Number.isInteger(paragraphIndex) || (paragraphIndex as number) < 0) {
       return c.json({ error: 'invalid_request' }, 400);
     }
+    if (note !== undefined && (typeof note !== 'string' || note.length > 500)) return c.json({ error: 'invalid_note' }, 400);
     const work = await visibleWork(workId, c.get('role'));
     if (!work) return c.json({ error: 'work_not_found' }, 404);
     // the frozen revision must belong to the bookmarked chapter, and that
@@ -477,7 +489,8 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
     if (!UUID_RE.test(id)) return c.json({ error: 'bookmark_not_found' }, 404);
     const body = await c.req.json().catch(() => ({}));
     const patch: Record<string, unknown> = { updatedAt: new Date() };
-    if (typeof body?.note === 'string') patch.note = body.note.slice(0, 500);
+    if (body?.note !== undefined && (typeof body.note !== 'string' || body.note.length > 500)) return c.json({ error: 'invalid_note' }, 400);
+    if (typeof body?.note === 'string') patch.note = body.note;
     if (Number.isInteger(body?.paragraphIndex) && (body.paragraphIndex as number) >= 0) patch.paragraphIndex = body.paragraphIndex;
     if (Object.keys(patch).length === 1) return c.json({ error: 'invalid_request' }, 400);
     const [row] = await db.update(bookmarks).set(patch)

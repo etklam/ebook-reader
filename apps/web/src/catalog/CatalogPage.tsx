@@ -6,7 +6,7 @@
 // the same predicate builder as the list and therefore always agrees with it
 // (§03A-F). If that request fails the header falls back to what is loaded.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getCatalog, getCatalogCount, getPublicTaxonomy } from '../api/client.ts';
+import { ApiRequestError, getCatalog, getCatalogCount, getPublicTaxonomy } from '../api/client.ts';
 import type { CatalogWork, TaxonomyItem } from '../api/types.ts';
 import { navigate } from '../App.tsx';
 import { WorkCard } from './WorkCard.tsx';
@@ -16,12 +16,15 @@ import { Icon } from '../components/Icon.tsx';
 import { SkeletonRows } from '../components/Skeleton.tsx';
 import { EmptyState } from '../components/EmptyState.tsx';
 import { count } from '../lib/format.ts';
+import { useMe } from '../account/useMe.ts';
 
 export interface CatalogFilterState {
   q: string;
   type: '' | 'short_story' | 'serial';
   categoryIds: string[];
   tagIds: string[];
+  excludeTagIds: string[];
+  hideFinished: boolean;
   tagMode: 'all' | 'any';
   serialStatus: string[];
   sort: 'updated' | 'title';
@@ -29,11 +32,15 @@ export interface CatalogFilterState {
 
 export function filterFromSearch(search: string): CatalogFilterState {
   const p = new URLSearchParams(search);
+  const ids = (key: string) => [...new Set((p.get(key) ?? '').split(',').map((id) => id.trim().toLowerCase()).filter(Boolean))].sort();
+  const excludeTagIds = ids('excludeTagIds');
   return {
     q: p.get('q') ?? '',
     type: (p.get('type') as CatalogFilterState['type']) ?? '',
-    categoryIds: (p.get('categoryIds') ?? '').split(',').filter(Boolean),
-    tagIds: (p.get('tagIds') ?? '').split(',').filter(Boolean),
+    categoryIds: ids('categoryIds'),
+    tagIds: ids('tagIds').filter((id) => !excludeTagIds.includes(id)),
+    excludeTagIds,
+    hideFinished: p.get('hideFinished') === 'true',
     tagMode: p.get('tagMode') === 'any' ? 'any' : 'all',
     serialStatus: (p.get('serialStatus') ?? '').split(',').filter(Boolean),
     sort: p.get('sort') === 'title' ? 'title' : 'updated',
@@ -42,10 +49,13 @@ export function filterFromSearch(search: string): CatalogFilterState {
 
 export function filterToSearch(f: CatalogFilterState): string {
   const p = new URLSearchParams();
+  const ids = (values: string[]) => [...new Set(values.map((id) => id.toLowerCase()))].sort().join(',');
   if (f.q) p.set('q', f.q);
   if (f.type) p.set('type', f.type);
-  if (f.categoryIds.length) p.set('categoryIds', f.categoryIds.join(','));
-  if (f.tagIds.length) p.set('tagIds', f.tagIds.join(','));
+  if (f.categoryIds.length) p.set('categoryIds', ids(f.categoryIds));
+  if (f.tagIds.length) p.set('tagIds', ids(f.tagIds));
+  if (f.excludeTagIds.length) p.set('excludeTagIds', ids(f.excludeTagIds));
+  if (f.hideFinished) p.set('hideFinished', 'true');
   if (f.tagIds.length && f.tagMode === 'any') p.set('tagMode', 'any');
   if (f.serialStatus.length) p.set('serialStatus', f.serialStatus.join(','));
   if (f.sort !== 'updated') p.set('sort', f.sort);
@@ -68,8 +78,16 @@ const SERIAL_STATUS = [
 ] as const;
 
 export function CatalogPage() {
+  const { me, loading: sessionLoading } = useMe();
   const [filter, setFilter] = useState(() => filterFromSearch(location.search));
-  const [works, setWorks] = useState<CatalogWork[]>([]);
+  const [loadedWorks, setWorks] = useState<CatalogWork[]>([]);
+  const [resultScope, setResultScope] = useState('');
+  const [countScope, setCountScope] = useState('');
+  const scope = `${me?.id ?? ''}:${filterToSearch(filter)}`;
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+  const works = resultScope === scope ? loadedWorks : [];
+  const [loginRequired, setLoginRequired] = useState(false);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [done, setDone] = useState(false);
@@ -116,11 +134,13 @@ export function CatalogPage() {
   // pages shifted the window and silently skipped a book (CAT-03).
   const load = useCallback((f: CatalogFilterState, cursor: string | null, append: boolean) => {
     const seq = ++seqRef.current;
+    const requestScope = scopeRef.current;
     setLoading(true);
-    if (!append) setFailed(false);
+    if (!append) { setFailed(false); setLoginRequired(false); }
     const query = {
       q: f.q || undefined, type: f.type || undefined,
       categoryIds: f.categoryIds, tagIds: f.tagIds, tagMode: f.tagMode,
+      excludeTagIds: f.excludeTagIds, hideFinished: f.hideFinished,
       serialStatus: f.serialStatus, sort: f.sort,
     };
     // the count belongs to the condition set, not to the page: it is fetched
@@ -132,26 +152,47 @@ export function CatalogPage() {
         .then((r) => {
           // a count we cannot read is the same as no count: show the loaded
           // figure rather than the word "undefined"
-          if (countSeq === countSeqRef.current) setTotal(typeof r.count === 'number' ? r.count : null);
+          if (countSeq === countSeqRef.current && requestScope === scopeRef.current) {
+            setTotal(typeof r.count === 'number' ? r.count : null);
+            setCountScope(requestScope);
+          }
         })
         .catch(() => undefined);
     }
     getCatalog({ ...query, limit: PAGE, cursor: cursor ?? undefined }).then((r) => {
-      if (seq !== seqRef.current) return;   // a newer condition already won
+      if (seq !== seqRef.current || requestScope !== scopeRef.current) return;   // a newer condition already won
+      setResultScope(requestScope);
       setWorks((prev) => (append ? [...prev, ...r.works] : r.works));
       setNextCursor(r.nextCursor);
       setDone(r.nextCursor === null);
-    }).catch(() => {
-      if (seq !== seqRef.current) return;
+    }).catch((error: unknown) => {
+      if (seq !== seqRef.current || requestScope !== scopeRef.current) return;
       if (!append) setWorks([]);
       setFailed(true);
+      setLoginRequired(error instanceof ApiRequestError && error.status === 401 && f.hideFinished);
     }).finally(() => {
       if (seq === seqRef.current) setLoading(false);
     });
   }, []);
 
   // a changed condition set always restarts from no cursor (§03A-C)
-  useEffect(() => { setNextCursor(null); load(filter, null, false); }, [filter, load]);
+  useEffect(() => {
+    // Invalidate in-flight responses and cursors on login, logout, or account
+    // changes, even while the same URL/filter remains selected.
+    ++seqRef.current;
+    ++countSeqRef.current;
+    setWorks([]);
+    setNextCursor(null);
+    setTotal(null);
+    if (sessionLoading) return;
+    if (filter.hideFinished && !me) {
+      setLoading(false);
+      setFailed(false);
+      setLoginRequired(true);
+      return;
+    }
+    load(filter, null, false);
+  }, [filter, me?.id, sessionLoading, load]);
 
   const openDetail = (id: string) => navigate(`/works/${id}${location.search}`);
 
@@ -163,7 +204,7 @@ export function CatalogPage() {
   }, [categories, tags]);
 
   const activeFilterCount =
-    filter.categoryIds.length + filter.tagIds.length + filter.serialStatus.length;
+    filter.categoryIds.length + filter.tagIds.length + filter.excludeTagIds.length + filter.serialStatus.length + Number(filter.hideFinished);
 
   // applied conditions as individually removable chips (§03A C)
   const appliedChips: Array<{ key: string; label: string; remove: () => void }> = [
@@ -177,6 +218,12 @@ export function CatalogPage() {
       label: `#${nameOf(id)}`,
       remove: () => applyFilter({ ...filter, tagIds: filter.tagIds.filter((x) => x !== id) }),
     })),
+    ...filter.excludeTagIds.map((id) => ({
+      key: `exclude:${id}`,
+      label: `排除 #${nameOf(id)}`,
+      remove: () => applyFilter({ ...filter, excludeTagIds: filter.excludeTagIds.filter((x) => x !== id) }),
+    })),
+    ...(filter.hideFinished ? [{ key: 'hideFinished', label: '隱藏已讀', remove: () => applyFilter({ ...filter, hideFinished: false }) }] : []),
     ...filter.serialStatus.map((v) => ({
       key: `s:${v}`,
       label: SERIAL_STATUS.find((s) => s.v === v)?.label ?? v,
@@ -184,13 +231,14 @@ export function CatalogPage() {
     })),
   ];
 
-  const firstLoad = loading && works.length === 0;
+  const firstLoad = (loading || sessionLoading) && works.length === 0;
+  const visibleTotal = countScope === scope ? total : null;
 
   // the head states the size of the shelf under these conditions; how much of
   // it is on screen belongs to the 載入更多 button, where it is actionable
   const headNote = firstLoad ? '載入中'
-    : total === null ? `已載入 ${count(works.length)} 部`
-    : `共 ${count(total)} 部`;
+    : visibleTotal === null ? `已載入 ${count(works.length)} 部`
+    : `共 ${count(visibleTotal)} 部`;
 
   return (
     <div className="catalog" data-testid="catalog">
@@ -253,7 +301,12 @@ export function CatalogPage() {
 
       {firstLoad && <SkeletonRows count={6} label="載入書庫" />}
 
-      {!loading && failed && works.length === 0 && (
+      {!firstLoad && loginRequired && (
+        <EmptyState title="登入後才能隱藏已讀" body="此條件只使用本人書架手動標記為「已讀」的作品。登入後可繼續，或移除此條件。"
+          action={<button className="btn" onClick={() => navigate('/login')}>登入</button>} />
+      )}
+
+      {!loading && !loginRequired && failed && works.length === 0 && (
         <EmptyState
           title="書庫暫時載不出來"
           body="可能是連線中斷。重試一次通常就好；若持續失敗，稍後再回來看看。"
@@ -261,7 +314,7 @@ export function CatalogPage() {
         />
       )}
 
-      {!loading && !failed && works.length === 0 && (
+      {!firstLoad && !loginRequired && !failed && works.length === 0 && (
         <EmptyState
           testId="catalog-empty"
           title="沒有符合條件的作品"
@@ -272,7 +325,7 @@ export function CatalogPage() {
           }
           action={appliedChips.length > 0 || filter.q
             ? (
-              <button className="btn" onClick={() => { setSearchText(''); applyFilter({ ...filter, q: '', categoryIds: [], tagIds: [], serialStatus: [] }); }}>
+              <button className="btn" onClick={() => { setSearchText(''); applyFilter({ ...filter, q: '', categoryIds: [], tagIds: [], excludeTagIds: [], hideFinished: false, serialStatus: [] }); }}>
                 清除全部條件
               </button>
             )
@@ -288,13 +341,15 @@ export function CatalogPage() {
 
       {!done && !loading && works.length > 0 && (
         <button className="btn btn-block tnum" onClick={() => load(filter, nextCursor, true)}>
-          載入更多{total === null ? '' : `（${count(works.length)} / ${count(total)}）`}
+          載入更多{visibleTotal === null ? '' : `（${count(works.length)} / ${count(visibleTotal)}）`}
         </button>
       )}
 
       <BottomSheet open={sheetOpen} title="篩選" onClose={() => setSheetOpen(false)}>
         <FilterSheet
           applied={filter}
+          signedIn={!!me}
+          sessionLoading={sessionLoading}
           categories={categories}
           tags={tags}
           onApply={(next) => { applyFilter(next); setSheetOpen(false); }}
@@ -307,13 +362,16 @@ export function CatalogPage() {
 // The panel edits a draft; 套用 promotes it to the applied filter and the URL,
 // 清除 resets only the draft (keeping the type tab and the search string), and
 // closing discards. Selections are marked with ✓ as well as colour (§21).
-function FilterSheet({ applied, categories, tags, onApply }: {
+function FilterSheet({ applied, signedIn, sessionLoading, categories, tags, onApply }: {
   applied: CatalogFilterState;
+  signedIn: boolean;
+  sessionLoading: boolean;
   categories: TaxonomyItem[];
   tags: TaxonomyItem[];
   onApply(f: CatalogFilterState): void;
 }) {
   const [draft, setDraft] = useState(applied);
+  const [tagFeedback, setTagFeedback] = useState('');
   useEffect(() => { setDraft(applied); }, [applied]);
 
   const toggle = (list: string[], id: string) =>
@@ -350,16 +408,30 @@ function FilterSheet({ applied, categories, tags, onApply }: {
       <div className="setting-row">
         <span className="setting-label">標籤</span>
         <div className="setting-control">
-          {tags.map((t) => (
-            <button key={t.id} className={chip(draft.tagIds.includes(t.id))}
-              aria-pressed={draft.tagIds.includes(t.id)}
-              onClick={() => setDraft({ ...draft, tagIds: toggle(draft.tagIds, t.id) })}>
-              {mark(draft.tagIds.includes(t.id))}{t.displayName}
-            </button>
-          ))}
+          {tags.map((t) => {
+            const included = draft.tagIds.includes(t.id);
+            const excluded = draft.excludeTagIds.includes(t.id);
+            return (
+              <button key={t.id} className={chip(included || excluded)}
+                aria-label={`${t.displayName}：${included ? '包含，改為排除' : excluded ? '排除，改為不篩選' : '不篩選，改為包含'}`}
+                aria-pressed={included || excluded}
+                onClick={() => {
+                  setDraft({ ...draft,
+                    tagIds: !included && !excluded ? [...draft.tagIds, t.id] : draft.tagIds.filter((id) => id !== t.id),
+                    excludeTagIds: included ? [...draft.excludeTagIds, t.id] : draft.excludeTagIds.filter((id) => id !== t.id),
+                  });
+                  setTagFeedback(`${t.displayName}：${included ? '已由包含改為排除' : excluded ? '已移除排除條件' : '已設為包含'}`);
+                }}>
+                {included ? '✓ ' : excluded ? '排除 ' : ''}{t.displayName}{included ? '（包含）' : ''}
+              </button>
+            );
+          })}
           {tags.length === 0 && <span className="muted">尚無標籤</span>}
         </div>
       </div>
+
+      <p className="hint sheet-hint">標籤依序切換：不篩選 → 包含 → 排除。命中任一排除標籤即隱藏。</p>
+      <p className="hint sheet-hint" role="status">{tagFeedback}</p>
 
       {draft.tagIds.length > 1 && (
         <div className="setting-row">
@@ -386,13 +458,26 @@ function FilterSheet({ applied, categories, tags, onApply }: {
         </div>
       </div>
 
+      <div className="setting-row">
+        <span className="setting-label">閱讀狀態</span>
+        <div className="setting-control">
+          <label className="chip">
+            <input type="checkbox" checked={draft.hideFinished} disabled={!signedIn || sessionLoading}
+              onChange={(e) => setDraft({ ...draft, hideFinished: e.target.checked })} />
+            隱藏已讀
+          </label>
+          {!signedIn && !sessionLoading && <button className="linkish" onClick={() => navigate('/login')}>登入後使用</button>}
+        </div>
+      </div>
+      <p className="hint sheet-hint">只隱藏本人書架手動標記為「已讀」的作品；閱讀進度不會自動視為已讀。</p>
+
       <p className="hint sheet-hint">
-        重設只清除面板內的分類、標籤與連載狀態，不會動到目前的類型與關鍵字。
+        重設只清除面板內的分類、包含與排除標籤、連載狀態與隱藏已讀，不會動到目前的類型與關鍵字。
       </p>
 
       <div className="sheet-actions">
         <button className="btn"
-          onClick={() => setDraft({ ...draft, categoryIds: [], tagIds: [], tagMode: 'all', serialStatus: [] })}>
+          onClick={() => setDraft({ ...draft, categoryIds: [], tagIds: [], excludeTagIds: [], hideFinished: false, tagMode: 'all', serialStatus: [] })}>
           清除篩選
         </button>
         <button className="btn primary" onClick={() => onApply(draft)}>套用</button>

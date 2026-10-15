@@ -11,6 +11,8 @@ import type { Storage } from '../storage.ts';
 import { variantsForSearch } from '../search/normalize.ts';
 import { clientIp, createRateLimiter, rateLimit } from '../http/rate-limit.ts';
 import { findChapterMatch } from '../search/chapter-search.ts';
+import { filterFingerprint } from '../catalog/cursor.ts';
+import { decodeSearchCursor, encodeSearchCursor } from '../search/search-cursor.ts';
 
 export interface SearchExportRoutesDeps {
   db: NodePgDatabase;
@@ -57,7 +59,7 @@ export function searchExportRoutes(deps: SearchExportRoutesDeps): Hono<{ Variabl
     if (q.length > 100) return c.json({ error: 'query_too_long' }, 400);
     const offsetText = c.req.query('offset') ?? '0';
     if (!/^\d{1,9}$/.test(offsetText)) return c.json({ error: 'invalid_offset' }, 400);
-    const offset = Number(offsetText);
+    if (Number(offsetText) !== 0) return c.json({ error: 'cursor_required' }, 400);
     const variants = await variantsForSearch(q);
     const rows: ExportChapter[] = work.visibility === 'draft' && admin
       ? await db.select({
@@ -78,15 +80,24 @@ export function searchExportRoutes(deps: SearchExportRoutesDeps): Hono<{ Variabl
           .orderBy(asc(releaseItems.editorialPosition))
         : [];
 
-    let total = 0;
+    const filter = filterFingerprint([workId, q, work.visibility === 'draft' ? c.get('userId') ?? 'admin' : 'reader']);
+    const revision = filterFingerprint([
+      work.visibility === 'draft' ? `draft:${work.editVersion}` : work.activeReleaseId ?? 'none',
+      ...rows.map((row) => `${row.chapterId}:${row.revisionId}`),
+    ]);
+    const cursorText = c.req.query('cursor');
+    const cursor = cursorText ? decodeSearchCursor(cursorText, filter, revision, rows.length) : null;
+    if (cursor && !cursor.ok) return c.json({ error: cursor.error }, cursor.status);
+    const offset = cursor?.ok ? cursor.shown : 0;
+    const first = cursor?.ok ? cursor.next : 0;
+    let nextCursor: string | null = null;
     const results: Array<{
       chapterId: string; labelRaw: string; title: string; snippet: string;
       matchStart: number; matchLength: number; paragraphIndex: number; href: string;
     }> = [];
-    // ponytail: scan immutable chapter objects on demand; a persistent index is
-    // justified only once the catalogue size makes full-volume scans too slow.
-    // Process small ordered batches so stored matches stay bounded to one page.
-    for (let start = 0; start < rows.length; start += 8) {
+    // ponytail: metadata + bounded body batches, stop at the first lookahead
+    // match. Sparse/no-hit searches still scan the suffix; index only if measured.
+    scan: for (let start = first; start < rows.length; start += 8) {
       const batch = rows.slice(start, start + 8);
       const matches = await Promise.all(batch.map(async (row) => {
         let body: string;
@@ -97,21 +108,23 @@ export function searchExportRoutes(deps: SearchExportRoutesDeps): Hono<{ Variabl
       if (matches.some((match) => 'unavailable' in match)) {
         return c.json({ error: 'content_unavailable' }, 409);
       }
-      for (const match of matches) {
+      for (let i = 0; i < matches.length; i++) {
+        const match = matches[i];
         if ('unavailable' in match || !match.found) continue;
         const { row, found } = match;
-        if (total >= offset && results.length < MAX_RESULTS) {
-          results.push({
-            chapterId: row.chapterId, labelRaw: row.labelRaw, title: row.title,
-            ...found,
-            href: `/read/${workId}/${row.chapterId}#p=${found.paragraphIndex}&rev=${row.revisionId}`,
-          });
+        if (results.length === MAX_RESULTS) {
+          // Include this lookahead chapter on the next page, never skip it.
+          nextCursor = encodeSearchCursor(filter, revision, start + i, offset + results.length);
+          break scan;
         }
-        total += 1;
+        results.push({
+          chapterId: row.chapterId, labelRaw: row.labelRaw, title: row.title,
+          ...found,
+          href: `/read/${workId}/${row.chapterId}#p=${found.paragraphIndex}&rev=${row.revisionId}`,
+        });
       }
     }
-    const nextOffset = offset + results.length < total ? offset + results.length : null;
-    return c.json({ query: q, total, offset, nextOffset, truncated: nextOffset !== null, results });
+    return c.json({ query: q, total: null, offset, nextCursor, hasMore: nextCursor !== null, results });
   });
 
   app.get('/api/admin/works/:workId/export-versions', async (c) => {

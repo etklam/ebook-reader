@@ -16,11 +16,17 @@ export function captureScrollIndex(container: HTMLElement, root: HTMLElement, vi
   const paras = root.querySelectorAll<HTMLElement>(`[${PARA_ATTR}]`);
   const cRect = container.getBoundingClientRect();
   const line = cRect.top + cRect.height * viewportAnchor;
-  for (const p of paras) {
-    if (p.getBoundingClientRect().bottom > line) return Number(p.getAttribute(PARA_ATTR));
+  // Paragraph bottoms are ordered in vertical text flow. Read fresh geometry
+  // in O(log n), so font/image reflow needs no stale height cache invalidation.
+  let lo = 0;
+  let hi = paras.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (paras[mid].getBoundingClientRect().bottom > line) hi = mid;
+    else lo = mid + 1;
   }
-  const last = paras[paras.length - 1];
-  return last ? Number(last.getAttribute(PARA_ATTR)) : 0;
+  const paragraph = paras[Math.min(lo, paras.length - 1)];
+  return paragraph ? Number(paragraph.getAttribute(PARA_ATTR)) : 0;
 }
 
 // Fraction within the captured paragraph, for smoother restore on reflow.

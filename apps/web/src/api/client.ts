@@ -24,7 +24,7 @@ const json = (method: string, body: unknown, extra?: RequestInit): RequestInit =
 });
 
 import type {
-  BookmarkEntry, CatalogResponse, FollowEntry, LibraryEntry, Me, PublishPreviewResponse,
+  BookmarksResponse, CatalogResponse, FollowEntry, LibraryEntry, Me, PublishPreviewResponse,
   PublishResponse, ReaderChapter, ReaderPreferencesDto, ReaderWork, ServerProgress,
   TaxonomyListResponse, TocResponse, WorkDetail, WorkMemberState,
 } from './types.ts';
@@ -39,6 +39,7 @@ export const register = (username: string, email: string, password: string, invi
 // --- catalog -------------------------------------------------------------------
 export interface CatalogQuery {
   q?: string; type?: string; categoryIds?: string[]; tagIds?: string[];
+  excludeTagIds?: string[]; hideFinished?: boolean;
   tagMode?: 'all' | 'any'; serialStatus?: string[]; sort?: string; limit?: number;
   /** opaque keyset cursor from a previous response's nextCursor */
   cursor?: string;
@@ -50,6 +51,8 @@ export function catalogQueryString(query: CatalogQuery): string {
   if (query.type) p.set('type', query.type);
   if (query.categoryIds?.length) p.set('categoryIds', query.categoryIds.join(','));
   if (query.tagIds?.length) p.set('tagIds', query.tagIds.join(','));
+  if (query.excludeTagIds?.length) p.set('excludeTagIds', [...new Set(query.excludeTagIds)].sort().join(','));
+  if (query.hideFinished) p.set('hideFinished', 'true');
   if (query.tagIds?.length && query.tagMode) p.set('tagMode', query.tagMode);
   if (query.serialStatus?.length) p.set('serialStatus', query.serialStatus.join(','));
   if (query.sort) p.set('sort', query.sort);
@@ -58,21 +61,26 @@ export function catalogQueryString(query: CatalogQuery): string {
   return p.toString();
 }
 
-export const getCatalog = (query: CatalogQuery) => api<CatalogResponse>(`/api/works?${catalogQueryString(query)}`);
+export const getCatalog = (query: CatalogQuery) => api<CatalogResponse>(`/api/works?${catalogQueryString(query)}`, { cache: 'no-store' });
 // takes the same filters as getCatalog — the server applies one shared
 // predicate builder, so a count without the active filters would disagree with
 // the list it is meant to describe (§03A-F)
 export const getCatalogCount = (query: CatalogQuery = {}) => {
   const { limit: _l, cursor: _c, ...filters } = query;
   const qs = catalogQueryString(filters);
-  return api<{ count: number }>(`/api/works/count${qs ? `?${qs}` : ''}`);
+  return api<{ count: number }>(`/api/works/count${qs ? `?${qs}` : ''}`, { cache: 'no-store' });
 };
 export const getWorkDetail = (id: string) => api<WorkDetail>(`/api/works/${id}`);
 
 // --- public reader ---------------------------------------------------------------
 export const getWork = (id: string) => api<ReaderWork>(`/api/reader/works/${id}`);
-export const getToc = (id: string, limit: number, offset: number) =>
-  api<TocResponse>(`/api/reader/works/${id}/chapters?limit=${limit}&offset=${offset}`);
+export const getToc = (id: string, limit: number, offset: number, options: {
+  aroundChapterId?: string; latest?: boolean; q?: string; order?: 'asc' | 'desc'; version?: string;
+} = {}) => {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  for (const [key, value] of Object.entries(options)) if (value !== undefined) params.set(key, String(value));
+  return api<TocResponse>(`/api/reader/works/${id}/chapters?${params}`);
+};
 export const getChapter = (id: string) => api<ReaderChapter>(`/api/reader/chapters/${id}`);
 
 // --- member state ------------------------------------------------------------------
@@ -105,8 +113,13 @@ export const saveProgress = (workId: string, body: {
 export const markRead = (chapterId: string) => api<{ ok: true }>('/api/me/reads', json('POST', { chapterId }));
 export const getReads = (workId: string) => api<{ reads: Array<{ chapterId: string; lastReadAt: string }> }>(`/api/me/reads?workId=${workId}`);
 
-export const getBookmarks = (workId?: string) =>
-  api<{ bookmarks: BookmarkEntry[] }>(`/api/me/bookmarks${workId ? `?workId=${workId}` : ''}`);
+export const getBookmarks = (workId?: string, offset = 0) => {
+  const params = new URLSearchParams({ limit: '100', offset: String(offset) });
+  if (workId) params.set('workId', workId);
+  return api<BookmarksResponse>(`/api/me/bookmarks?${params}`);
+};
+export const updateBookmarkNote = (id: string, note: string) =>
+  api<{ ok: true }>(`/api/me/bookmarks/${id}`, json('PATCH', { note }));
 export const createBookmark = (body: { workId: string; chapterId: string; revisionId: string; paragraphIndex: number; note?: string }) =>
   api<{ id: string }>('/api/me/bookmarks', json('POST', body));
 export const deleteBookmark = (id: string) => api<{ ok: true }>(`/api/me/bookmarks/${id}`, { method: 'DELETE' });

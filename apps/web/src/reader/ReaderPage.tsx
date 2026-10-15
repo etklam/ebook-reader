@@ -30,10 +30,11 @@ import { createBookmark } from '../api/client.ts';
 import { SkeletonChapter } from '../components/Skeleton.tsx';
 import { count } from '../lib/format.ts';
 import { ReportTypo } from './ReportTypo.tsx';
-import { createChapterLoader } from './chapter-loader.ts';
+import { createChapterLoader, shouldPrefetchNext } from './chapter-loader.ts';
 import { FullTextSearch } from './FullTextSearch.tsx';
 import { SpeechControls, useSpeechReader } from './SpeechControls.tsx';
 import { useReadingTimeTracker } from '../account/reading-time.ts';
+import { BookmarkNoteEditor } from '../account/BookmarkNoteEditor.tsx';
 
 type LoadState =
   | { phase: 'loading' }
@@ -71,14 +72,25 @@ const COLUMN_GAP = 48;
 const SWIPE_MIN = 44;
 
 export function ReaderPage({ workId, initialChapterId }: { workId: string; initialChapterId: string | null }) {
-  const chapterLoader = useMemo(() => createChapterLoader(getChapter), [workId]);
   const [work, setWork] = useState<ReaderWork | null>(null);
+  const releaseRef = useRef<string | null>(null);
+  const chapterLoader = useMemo(() => createChapterLoader(getChapter, Date.now, async () => {
+    // Validate visibility and current publication before consuming a body
+    // fetched earlier. Metadata is small; a changed release fetches fresh text.
+    const latest = await getWork(workId);
+    const valid = latest.releaseId === releaseRef.current;
+    releaseRef.current = latest.releaseId;
+    setWork(latest);
+    return valid;
+  }), [workId]);
   const [chapter, setChapter] = useState<ReaderChapter | null>(null);
   const [state, setState] = useState<LoadState>({ phase: 'loading' });
   const [settings, setSettings] = useState<ReaderSettings>(() => loadSettings());
   const [converted, setConverted] = useState<string[] | null>(null);
   const [chromeVisible, setChromeVisible] = useState(false);
-  const [sheet, setSheet] = useState<null | 'toc' | 'settings' | 'report'>(null);
+  const [sheet, setSheet] = useState<null | 'toc' | 'settings' | 'report' | 'bookmark'>(null);
+  const [bookmarkId, setBookmarkId] = useState<string | null>(null);
+  const [bookmarkSaving, setBookmarkSaving] = useState(false);
   const [page, setPage] = useState(0);
   const [pageCount, setPageCount] = useState(1);
   const [vpWidth, setVpWidth] = useState(0);
@@ -116,6 +128,8 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     if (pendingAnchor.current || restoreInFlight.current) anchorDisplaced.current = true;
   }, []);
   const ruleRef = useRef<HTMLSpanElement | null>(null);
+  const prefetchedFor = useRef<string | null>(null);
+  useEffect(() => () => chapterLoader.clear(), [chapterLoader]);
 
   const updateSettings = useCallback((patch: Partial<ReaderSettings>) => {
     setSettings((prev) => {
@@ -200,7 +214,6 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
       if (seq !== seqRef.current) return; // stale response — ignore (§13)
       setChapter(ch);
       setState({ phase: 'ready' });
-      chapterLoader.prefetch(ch.nextChapterId);
       if (restore && restore.chapterId === ch.chapterId) {
         const exact = restore.revisionId === ch.revisionId;
         queueAnchor(exact ? restore : remapPosition(restore, ch.revisionId, splitParagraphs(ch.body).length));
@@ -224,6 +237,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         const w = await getWork(workId);
         if (cancelled) return;
         setWork(w);
+        releaseRef.current = w.releaseId;
         const entry = await resolveMemberEntry(workId);
         if (cancelled) return;
         setMember(entry);
@@ -283,6 +297,24 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     debounce((wid: string, pos: ReadingPosition | null) => { if (pos) savePosition(wid, pos); }, 400),
   ).current;
 
+  const maybePrefetchNext = useCallback(() => {
+    const vp = viewportRef.current;
+    if (!vp || !chapter || !converted || state.phase !== 'ready' || work?.visibility === 'draft') return;
+    if (pendingAnchor.current || restoreInFlight.current) return;
+    const key = `${chapter.chapterId}:${chapter.revisionId}`;
+    if (prefetchedFor.current === key || !shouldPrefetchNext(settings.mode, {
+      scrollTop: vp.scrollTop, scrollHeight: vp.scrollHeight, viewportHeight: vp.clientHeight, page,
+      pageCount: settings.mode === 'paginated' && stripRef.current ? columnCount(stripRef.current, vp) : pageCount,
+    })) return;
+    prefetchedFor.current = key;
+    chapterLoader.prefetch(chapter.nextChapterId);
+  }, [chapter, converted, state.phase, work?.visibility, settings.mode, page, pageCount, chapterLoader]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => maybePrefetchNext());
+    return () => cancelAnimationFrame(frame);
+  }, [maybePrefetchNext]);
+
   // position within the chapter, written straight to the DOM: a progress rule
   // that re-rendered on every scroll event would be a frame budget spent on
   // nothing. In paginated mode the width comes from page/pageCount in render.
@@ -298,9 +330,25 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   useEffect(() => {
     if (!chapter) return;
     const vp = viewportRef.current;
-    const onSave = () => { savePositionDebounced(workId, captureAnchor()); syncSaver(); paintRule(); };
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    // Coalesce high-frequency scroll events before reading paragraph geometry;
+    // explicit navigation/hide paths still capture the current anchor at once.
+    const onSave = () => {
+      paintRule();
+      if (timer !== null) return;
+      timer = setTimeout(() => {
+        timer = null;
+        savePositionDebounced(workId, captureAnchor());
+        syncSaver();
+        maybePrefetchNext();
+      }, 80);
+    };
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') {
+        if (timer !== null) clearTimeout(timer);
+        timer = null;
+        chapterLoader.clear();
+        prefetchedFor.current = null;
         savePositionDebounced.cancel();
         const p = captureAnchor();
         if (p) savePosition(workId, p);
@@ -314,12 +362,13 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     vp?.addEventListener('touchmove', displaceAnchor, { passive: true });
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
+      if (timer !== null) clearTimeout(timer);
       vp?.removeEventListener('scroll', onSave);
       vp?.removeEventListener('wheel', displaceAnchor);
       vp?.removeEventListener('touchmove', displaceAnchor);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [chapter, settings.mode, captureAnchor, savePositionDebounced, workId, paintRule, displaceAnchor]);
+  }, [chapter, settings.mode, captureAnchor, savePositionDebounced, workId, paintRule, displaceAnchor, maybePrefetchNext, chapterLoader]);
 
   // transient notices clear themselves — a toast that never leaves is a banner
   useEffect(() => {
@@ -395,6 +444,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         // the reader already moved on; their place wins over the queued one
         if (!displaced) restoreScrollPosition(vp, root, anchor.paragraphIndex, anchor.fraction ?? 0);
         paintRule();
+        maybePrefetchNext();
       } else {
         // the page count is a fact about the layout and is always refreshed;
         // only the jump to the anchor is skipped
@@ -406,7 +456,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         setPage(clampPage(columnIndexForParagraph(root, anchor.paragraphIndex, vp, 0), count));
       }
     }));
-  }, [state.phase, chapter, converted, settings.mode, settings.fontSize, settings.lineHeight, settings.paragraphSpacing, paintRule]);
+  }, [state.phase, chapter, converted, settings.mode, settings.fontSize, settings.lineHeight, settings.paragraphSpacing, paintRule, maybePrefetchNext]);
 
   // viewport resize / orientation: re-anchor the visible paragraph, recompute
   // pages. The current page is read through a ref rather than a dependency:
@@ -475,8 +525,18 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     void loadChapter(chapterId, saved?.chapterId === chapterId ? saved : null);
   }, [loadChapter, workId]);
 
+  const speakingElement = useRef<HTMLElement | null>(null);
+  const highlightSpeech = useCallback((index: number | null) => {
+    speakingElement.current?.removeAttribute('data-speaking');
+    const element = index === null ? null : stripRef.current?.querySelector<HTMLElement>(`[${PARA_ATTR}="${index}"]`) ?? null;
+    element?.setAttribute('data-speaking', 'true');
+    speakingElement.current = element;
+  }, []);
   const speech = useSpeechReader({ chapterId: chapter?.chapterId ?? null,
     text: converted?.join('\n\n') ?? '', hasNextChapter: !!chapter?.nextChapterId,
+    contentVersion: `${chapter?.revisionId ?? ''}:${settings.conversion}`,
+    getParagraphIndex: () => captureRef.current()?.paragraphIndex ?? 0,
+    onParagraph: highlightSpeech,
     onNextChapter: () => goChapter(chapter?.nextChapterId ?? null) });
 
   const turnPage = useCallback((dir: 1 | -1): 'moved' | 'chapter-end' | 'chapter-start' => {
@@ -714,11 +774,14 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         onConversion={(conversion) => changeLayout({ conversion })}
         onBookmark={() => {
           if (!member?.isMember) { setSyncNotice('登入後可加入書籤'); return; }
+          if (bookmarkSaving) return;
           const p = captureAnchor();
           if (!p) return;
+          setBookmarkSaving(true);
           void createBookmark({ workId, chapterId: p.chapterId, revisionId: p.revisionId, paragraphIndex: p.paragraphIndex })
-            .then(() => setSyncNotice('已加入書籤'))
-            .catch(() => setSyncNotice('書籤加入失敗'));
+            .then(({ id }) => { setBookmarkId(id); setSheet('bookmark'); setSyncNotice('已加入書籤'); })
+            .catch(() => setSyncNotice('書籤加入失敗'))
+            .finally(() => setBookmarkSaving(false));
         }}
       />
 
@@ -732,6 +795,10 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
       </BottomSheet>
       <BottomSheet open={sheet === 'report'} title="回報章節錯字" onClose={() => setSheet(null)}>
         <ReportTypo key={`${chapter.chapterId}:${reportParagraphIndex}`} chapter={chapter} paragraphIndex={reportParagraphIndex} isMember={Boolean(member?.isMember)} />
+      </BottomSheet>
+      <BottomSheet open={sheet === 'bookmark'} title="書籤備註" onClose={() => setSheet(null)}>
+        {bookmarkId && <BookmarkNoteEditor key={bookmarkId} bookmarkId={bookmarkId} cancelLabel="略過"
+          onCancel={() => setSheet(null)} onSaved={() => { setSheet(null); setSyncNotice('已儲存書籤備註'); }} />}
       </BottomSheet>
       <BottomSheet open={sheet === 'settings'} title="閱讀設定" onClose={() => setSheet(null)}>
         <button className="btn" onClick={openReport}>回報錯字</button>

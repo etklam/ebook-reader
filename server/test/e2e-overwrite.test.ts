@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
+import { createHash } from 'node:crypto';
 
 process.env.STORAGE_ROOT = mkdtempSync(join(tmpdir(), 'ebook-e2e-m4-'));
 const { app } = await import('../src/index.ts');
@@ -186,6 +187,10 @@ test('IMP-10 + IMP-13: Idempotency-Key — replay returns the stored result, key
 
   const first = await apply(importId, { baseEditVersion: 1, mode: 'incremental' }, key);
   assert.equal(first.status, 200);
+  const legacyHash = createHash('sha256').update(JSON.stringify({ jobId: importId, mode: 'incremental',
+    baseEditVersion: 1, confirmAppend: false, resolutions: null })).digest('hex');
+  const [record] = await q('select request_hash from app.apply_idempotency where key=$1', [key]);
+  assert.equal(record.request_hash, legacyHash, 'requests without analysis tokens preserve pre-upgrade replay identity');
   const chaptersAfterFirst = (await q(`select count(*)::int as n from app.chapters where work_id=$1`, [workId]))[0].n;
 
   // IMP-13: response lost → client retries with the same key AND payload
