@@ -24,7 +24,12 @@ Production runs on g2 (K3s) at `82.22.63.196`, in namespace `ebook-reader`, at `
 4. The job applies the namespace, PVC and PostgreSQL manifests; waits for PostgreSQL; runs the migration Job; applies API, worker, web and Ingress resources; waits for the deployments and certificate; then checks the home page, public catalogue API, and unauthenticated protected API.
 5. Treat the release as successful only when the workflow prints `Release verified: <SHA>...` and finishes successfully. The protected API smoke test is expected to return HTTP 401 when no session is supplied.
 
-The workflow uses the static Docker CLI, which does not include buildx. Keep `DOCKER_BUILDKIT` disabled and use the legacy `docker build` command unless the runner is deliberately changed to install and verify buildx.
+The workflow uses the static Docker CLI. As of `16bfa13`-equivalent changes
+in the diary-v3 runner setup, that CLI may be paired with a buildx plugin;
+this repository's Dockerfile deliberately contains no BuildKit-only syntax
+(such as `RUN --mount=type=cache`), so the legacy builder remains fine. Do
+not add BuildKit-only Dockerfile syntax without first installing and
+verifying buildx on the runner.
 
 ## Verify independently
 
@@ -42,6 +47,7 @@ Expected: API, DB, web and worker deployments are ready; `ebook-migrate` complet
 ## Troubleshooting
 
 - **Build says BuildKit is enabled but buildx is missing:** the static CLI lacks buildx. Remove `DOCKER_BUILDKIT=1`; do not assume `docker buildx` exists.
+- **API pod CrashLoopBackOff with `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX: TypeScript parameter property is not supported in strip-only mode` (2026-10-16, fixed in `f4be148`):** the server runs TypeScript directly with Node's strip-only mode, which rejects constructor parameter properties (`constructor(readonly x: string)`). The web bundle (Vite) and the migrate job are unaffected, so a deploy can pass smoke while the API crashes at startup. Rule: inside `server/src`, declare fields explicitly instead of using `readonly`/`public`/`private` parameter properties; reproduce locally with `node --experimental-strip-types`.
 - **PostgreSQL cannot read `/tmp/pg-tls/server.crt`:** the DB startup command must make `/tmp/pg-tls` traversable by `postgres` and transfer ownership of the copied certificate files and directory. The production manifest uses mode `0755` and `chown -R postgres:postgres`.
 - **PostgreSQL reports `database "ebook" does not exist` after an interrupted first initialization:** inspect the DB pod and init logs first. For a brand-new deployment only, after confirming the PVC contains no data that must be retained, recreate the database PVC so the official image can complete initdb. Never delete a production PVC to repair an existing database.
 - **Ingress exists but the hostname does not resolve:** verify/create the Cloudflare A record manually, then check the cert-manager Certificate and retry HTTPS verification.
