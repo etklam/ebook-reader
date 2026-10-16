@@ -36,7 +36,10 @@ const BATCH = 500;
 // unwind the transaction rather than return — a half-committed unclassified
 // draft is exactly the state this feature exists to prevent.
 class TaxonomyRollback extends Error {
-  constructor(readonly detail: string) { super(detail); }
+  // Node runs this file in strip-only TS mode, which rejects constructor
+  // parameter properties; declare the field explicitly instead.
+  detail: string;
+  constructor(detail: string) { super(detail); this.detail = detail; }
 }
 
 export async function commitImport(
