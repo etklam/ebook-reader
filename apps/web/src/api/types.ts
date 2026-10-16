@@ -174,7 +174,7 @@ export interface BookmarksResponse {
 }
 
 export interface ReaderPreferencesDto {
-  theme: 'light' | 'sepia' | 'dark';
+  theme: 'light' | 'sepia' | 'dark' | 'system';
   fontSize: number;
   lineHeight: number;
   paragraphSpacing: number;

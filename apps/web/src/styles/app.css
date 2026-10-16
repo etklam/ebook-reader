@@ -230,7 +230,7 @@ button.row-title:hover { color: var(--brand); text-decoration: underline; text-u
 
 /* --- field ---------------------------------------------------------------- */
 .field { display: flex; flex-direction: column; gap: var(--sp-1); }
-.field > label { font-size: var(--text-sm); color: var(--ink-2); }
+.field > label, .field > .field-label { font-size: var(--text-sm); color: var(--ink-2); }
 .field .hint { margin-top: 2px; }
 .input {
   width: 100%;
@@ -928,6 +928,30 @@ h2.sec-head, .sec-head h2 {
 .draft-categories legend { padding: 0 var(--sp-2); }
 .draft-categories .check-line { display: flex; align-items: center; gap: var(--sp-2); min-height: var(--tap); }
 
+/* --- taxonomy picker: category/tag assignment, shared by import, publish and
+   the taxonomy tab. Suggestions sit above the browse lists because acting on
+   what the source already told us should take one click, not a search. ----- */
+.taxonomy-picker { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+.taxonomy-picker > .field { max-width: 24rem; }
+.taxonomy-chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
+.taxonomy-group { display: flex; flex-direction: column; gap: var(--sp-2); }
+.taxonomy-group-head { font-size: var(--text-sm); color: var(--ink-2); }
+.taxonomy-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.taxonomy-suggestions > .hint { margin: 0; }
+/* dashed = "does not exist yet / not yet applied", distinct from a plain
+   selectable chip without relying on colour alone */
+.chip-create { border-style: dashed; }
+.chip-suggested { border-style: dashed; color: var(--ink); }
+.chip-retired { color: var(--ink-3); text-decoration: line-through; }
+
 /* Admin uses the desktop workspace width instead of the reading measure. */
 .import-source, .import-metadata, .import-actions { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
 .admin-shell details { margin: var(--sp-3) 0; }
@@ -951,7 +975,6 @@ h2.sec-head, .sec-head h2 {
   .admin-publish > .meta-grid, .admin-publish > .tally { max-width: 48rem; }
   .admin-publish > details > .field { max-width: 42rem; }
   .draft-settings > .btn { justify-self: start; grid-column: 1 / -1; }
-  .draft-categories { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--sp-4); }
   .draft-body { max-width: 75ch; }
   .admin-publish .draft-description { max-width: 75ch; }
 }

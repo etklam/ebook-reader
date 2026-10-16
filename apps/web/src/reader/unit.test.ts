@@ -14,8 +14,8 @@ const mem: Store = {};
 };
 
 const { splitParagraphs } = await import('./paragraphs.ts');
-const { normalizeSettings, remapPosition, loadPosition, savePosition, loadSettings, parsePositionHash, DEFAULT_SETTINGS } = await import('./reader-state.ts');
-const { clampPage, pageStep, debounce } = await import('./pagination.ts');
+const { normalizeSettings, remapPosition, loadPosition, savePosition, loadSettings, saveSettings, resolveTheme, parsePositionHash, DEFAULT_SETTINGS } = await import('./reader-state.ts');
+const { clampPage, pageStep, debounce, tapZone, TAP_BAND } = await import('./pagination.ts');
 const { convertParagraphs } = await import('./conversion.ts');
 
 // --- paragraphs -------------------------------------------------------------------
@@ -46,6 +46,44 @@ test('normalizeSettings: clamps out-of-range values, keeps valid ones', () => {
   assert.equal(s.theme, 'dark');
   assert.equal(s.mode, 'paginated');
   assert.equal(s.conversion, 'cn');
+});
+
+// --- theme ------------------------------------------------------------------------
+test("theme defaults to following the system", () => {
+  assert.equal(DEFAULT_SETTINGS.theme, 'system');
+  assert.equal(normalizeSettings({}).theme, 'system');
+  assert.equal(normalizeSettings({ theme: 'nonsense' }).theme, 'system');
+});
+
+test("v1 settings: a stored 'light' was the old default, so it migrates to system", () => {
+  assert.equal(normalizeSettings({ theme: 'light', fontSize: 20 }).theme, 'system');
+  // the rest of a v1 payload is untouched by the migration
+  assert.equal(normalizeSettings({ theme: 'light', fontSize: 20 }).fontSize, 20);
+});
+
+test('v1 settings: a deliberate 護眼/深色 choice is never overwritten', () => {
+  assert.equal(normalizeSettings({ theme: 'sepia' }).theme, 'sepia');
+  assert.equal(normalizeSettings({ theme: 'dark' }).theme, 'dark');
+});
+
+test("v2 settings: an explicit 'light' is a real choice and survives", () => {
+  assert.equal(normalizeSettings({ theme: 'light', v: 2 }).theme, 'light');
+  assert.equal(normalizeSettings({ theme: 'system', v: 2 }).theme, 'system');
+});
+
+test('saved settings carry the version, so the migration runs exactly once', () => {
+  saveSettings({ ...DEFAULT_SETTINGS, theme: 'light' });
+  assert.equal(loadSettings().theme, 'light');
+  // storage is shared across tests in this file; a later case asserts defaults
+  localStorage.removeItem('ebook:reader-settings');
+});
+
+test('resolveTheme: only system consults the OS', () => {
+  assert.equal(resolveTheme('system', true), 'dark');
+  assert.equal(resolveTheme('system', false), 'light');
+  assert.equal(resolveTheme('light', true), 'light');
+  assert.equal(resolveTheme('sepia', true), 'sepia');
+  assert.equal(resolveTheme('dark', false), 'dark');
 });
 
 // --- position -----------------------------------------------------------------------
@@ -88,6 +126,22 @@ test('clampPage and pageStep', () => {
   assert.equal(clampPage(99, 10), 9);
   assert.equal(clampPage(0, 0), 0);
   assert.equal(pageStep(390, 48), 438);
+});
+
+// §9.2: the bottom band turns forward, the top band back, the middle half is
+// the chrome — and an unmeasured box never turns a page by accident
+test('tapZone: bottom band → next, top band → prev, middle → chrome', () => {
+  const h = 844;
+  assert.equal(tapZone(10, h), 'prev');
+  assert.equal(tapZone(h * TAP_BAND - 1, h), 'prev');
+  assert.equal(tapZone(h * TAP_BAND, h), 'chrome');      // the band is exclusive
+  assert.equal(tapZone(h / 2, h), 'chrome');
+  assert.equal(tapZone(h * (1 - TAP_BAND), h), 'chrome');
+  assert.equal(tapZone(h * (1 - TAP_BAND) + 1, h), 'next');
+  assert.equal(tapZone(h - 1, h), 'next');
+  // degenerate geometry: a tap must not move the saved position
+  assert.equal(tapZone(0, 0), 'chrome');
+  assert.equal(tapZone(50, Number.NaN), 'chrome');
 });
 
 test('debounce coalesces to trailing call', async () => {

@@ -138,6 +138,22 @@
   outline-offset: 0;
 }
 
+/* The page box bounds one page and clips the strip. In scroll mode it is not a
+   box at all — `display: contents` keeps .reader-body a direct child of the
+   scroll container, so the existing measure and centring are untouched. In
+   paginated mode it is exactly one column wide: on a phone that is the whole
+   viewport, on desktop a centred measure-width box (see the ≥1024px block).
+   Its own font-size must track the reader's, because --measure-prose is in em
+   and the measure has to grow when the reader enlarges the type. */
+.reader-page-box { display: contents; }
+.reader[data-mode='paginated'] .reader-page-box {
+  display: block;
+  height: 100%;
+  overflow: hidden;
+  margin-inline: auto;
+  font-size: var(--reader-font-size, 18px);
+}
+
 /* Paginated strip fills the viewport height; columns flow horizontally.
    The side inset lives on the paragraphs, not on the strip: padding on the
    multi-column box shrinks the column by 2×inset while the page step is one
@@ -467,6 +483,41 @@
 }
 .toc-more { width: 100%; margin-top: var(--sp-4); }
 
+/* --- page turn affordance (desktop, paginated) -----------------------------
+   Hidden by default: a phone turns pages by swipe and by the tap zones, and a
+   control parked over the prose would be noise. Revealed only where there is a
+   fine pointer and a margin wide enough to hold it (the ≥1024px block). */
+.reader-turns { display: none; }
+.reader-turn {
+  position: absolute;
+  top: 50%;
+  translate: 0 -50%;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 72px;
+  color: var(--ink-faint);
+  background: none;
+  border: none;
+  border-radius: var(--r-lg);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease-out-quart),
+              color var(--dur-fast) var(--ease-out-quart),
+              background var(--dur-fast) var(--ease-out-quart);
+  z-index: var(--z-dropdown);
+}
+.reader-turn svg { width: 28px; height: 28px; }
+.reader-turn-next svg { transform: scaleX(-1); }
+/* the whole reader is the hover target, not the 48px button: aiming for an
+   invisible control is not an interaction */
+.reader:hover .reader-turn { opacity: 1; }
+.reader-turn:hover:not(:disabled) { color: var(--ink); background: var(--press); }
+/* a dead end stays visible but obviously inert, rather than vanishing and
+   leaving the reader wondering where the control went */
+.reader:hover .reader-turn:disabled { opacity: 0.25; cursor: not-allowed; }
+.reader-turn:focus-visible { opacity: 1; }
+
 /* ADR-08 image blocks: an image occupies a whole canonical paragraph, so it
    participates in paragraph anchoring like any other block. Width is capped to
    the text measure and height to the viewport so a tall illustration cannot
@@ -494,4 +545,94 @@
 .reader-figure-missing {
   padding-block: var(--sp-4);
   border: 1px dashed var(--rule);
+}
+
+/* --- desktop (≥1024px) -----------------------------------------------------
+   The reader is phone-first everywhere above; this block is the only place it
+   acknowledges a wide viewport. It changes nothing structurally — same chrome,
+   same controls, same single column — it stops the surface from stretching
+   past the measure and parks the chrome where a pointer expects it.
+
+   Paginated mode was the real defect: the strip took the full viewport width,
+   so a 1440px window gave roughly 78 CJK characters per line against the 34em
+   the scroll mode has always honoured. Clamping the page box fixes the measure
+   and frees the margins for the page-turn affordance. */
+@media (min-width: 1024px) {
+  /* one column, at the measure, centred — the padding matches the inline
+     padding the paragraphs carry inside the column */
+  .reader[data-mode='paginated'] .reader-page-box {
+    max-width: calc(var(--measure-prose) + 2 * var(--sp-6));
+  }
+
+  /* scroll mode already caps .reader-body at the measure; it only needs room
+     to breathe at the top and bottom of a tall window */
+  .reader-scroll { padding-block: var(--sp-9); }
+  .reader[data-chrome-visible] .reader-scroll {
+    padding-top: calc(var(--chrome-top) + var(--sp-7));
+    padding-bottom: calc(var(--chrome-bottom) + var(--sp-7));
+  }
+
+  /* chrome aligns to the text column instead of the window edges, so the
+     running head sits over the page it describes */
+  .reader-top { padding-inline: var(--sp-6); }
+  .reader-top-title,
+  .tb-pages,
+  .tb-chapters,
+  .tb-main {
+    width: 100%;
+    max-width: calc(var(--measure-prose) + 2 * var(--sp-6));
+    margin-inline: auto;
+  }
+  .reader-chapter-label { font-size: var(--text-lg); }
+
+  /* five tool buttons stretched across 1440px read as a dashboard, not a
+     book: give them their natural width and group them */
+  .tb-main { border-top: none; gap: var(--sp-2); padding-bottom: var(--sp-3); }
+  .tool-btn {
+    flex: 0 1 auto;
+    min-width: 88px;
+    flex-direction: row;
+    gap: var(--sp-2);
+    border-radius: var(--r-sm);
+  }
+  .tb-chapters { border-top: 1px solid var(--rule); padding-top: var(--sp-3); }
+
+  .reader-turns { display: block; }
+  /* Centred in the click zone it labels, not pinned to the window edge: onTap
+     treats the outer quarter of the window as a page turn, so the glyph marks
+     the middle of that area rather than floating in a corner of it. */
+  .reader-turn { translate: -50% -50%; }
+  .reader-turn-prev { left: 12.5%; }
+  .reader-turn-next { left: 87.5%; }
+
+  /* a page pill stretched to the full measure reads as a progress bar; let it
+     take only the width its three controls need */
+  .tb-pages { width: max-content; max-width: 100%; }
+
+  .reader-skeleton { padding-block: var(--sp-9); }
+}
+
+/* A wide but short window (a landscape laptop) must not get the taller
+   desktop padding back: the measure fix still applies, the breathing room
+   does not. */
+@media (min-width: 1024px) and (max-height: 620px) {
+  .reader-scroll { padding-block: var(--sp-6); }
+  .reader { --chrome-bottom: 84px; }
+}
+
+/* Compact the controls only where the pointer is actually fine. DESIGN.md's
+   44px floor is a *touch* requirement; a 1024px-wide coarse pointer is a
+   tablet and keeps the full targets. --chrome-bottom is pinned to the height
+   these rules actually produce — it drives the content padding, so a value
+   below the rendered toolbar height would let the chrome cover text (READ-01). */
+@media (min-width: 1024px) and (pointer: fine) {
+  .reader { --chrome-bottom: 104px; }
+  .reader[data-mode='paginated'] { --chrome-bottom: 124px; }
+
+  .tb-pages { margin-top: var(--sp-1); }
+  .tb-pages .pill-btn { min-height: 28px; }
+  .tb-chapters { padding-block: var(--sp-2); }
+  .tb-chapters .step-btn { min-height: 32px; }
+  .tool-btn { min-height: 34px; }
+  .tb-main { padding-bottom: var(--sp-2); }
 }

@@ -1,10 +1,11 @@
 // Admin taxonomy panel (§50): categories/tags CRUD + per-work assignment.
 // Minimal usable screens; alias/merge remain deferred backlog. Deactivation is
 // deliberately the only removal — history stays intact.
-import { useCallback, useEffect, useState } from 'react';
-import { api, getCategories, getTags } from '../api/client.ts';
-import type { TaxonomyItem, TaxonomyListResponse } from '../api/types.ts';
+import { useEffect, useState } from 'react';
+import { api } from '../api/client.ts';
 import { SkeletonLines } from '../components/Skeleton.tsx';
+import { TaxonomyPicker, type TaxonomySelection } from './TaxonomyPicker.tsx';
+import { useTaxonomy } from './useTaxonomy.ts';
 
 const json = (method: string, body: unknown) => ({
   method,
@@ -14,24 +15,19 @@ const json = (method: string, body: unknown) => ({
 
 export function TaxonomyPanel() {
   const [kind, setKind] = useState<'categories' | 'tags'>('categories');
-  const [items, setItems] = useState<TaxonomyItem[]>([]);
   const [name, setName] = useState('');
   const [msg, setMsg] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  const refresh = useCallback(() => {
-    const loader: (i: boolean) => Promise<TaxonomyListResponse> = kind === 'categories' ? getCategories : getTags;
-    setLoading(true);
-    loader(true).then((r) => setItems(r.items)).catch(() => setItems([])).finally(() => setLoading(false));
-  }, [kind]);
-  useEffect(() => { refresh(); }, [refresh]);
+  // shared with the import and publish pickers, so an item created there is
+  // already listed here (and vice versa) without a reload
+  const taxonomy = useTaxonomy();
+  const items = taxonomy[kind];
+  const loading = !taxonomy.loaded && !taxonomy.error;
 
   const create = async () => {
     setMsg('');
     try {
-      await api(`/api/admin/taxonomy/${kind}`, json('POST', { displayName: name.trim() }));
+      await taxonomy.create(kind, name.trim());
       setName('');
-      refresh();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : '建立失敗');
     }
@@ -40,7 +36,7 @@ export function TaxonomyPanel() {
   const patch = async (id: string, body: Record<string, unknown>) => {
     try {
       await api(`/api/admin/taxonomy/${kind}/${id}`, json('PATCH', body));
-      refresh();
+      await taxonomy.reload();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : '更新失敗');
     }
@@ -114,84 +110,75 @@ export function TaxonomyPanel() {
   );
 }
 
+type WorkOption = { id: string; title: string; author: string };
+
+// Finding a work by name instead of by pasted UUID: the admin knows the title,
+// not the id, and copying ids between tabs was the only way to use this before.
 function WorkAssignment() {
+  const [query, setQuery] = useState('');
+  const [works, setWorks] = useState<WorkOption[]>([]);
   const [workId, setWorkId] = useState('');
-  const [loaded, setLoaded] = useState<{ categories: TaxonomyItem[]; tags: TaxonomyItem[] } | null>(null);
-  const [allCats, setAllCats] = useState<TaxonomyItem[]>([]);
-  const [allTags, setAllTags] = useState<TaxonomyItem[]>([]);
+  const [selection, setSelection] = useState<TaxonomySelection | null>(null);
   const [msg, setMsg] = useState('');
   const [ok, setOk] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    Promise.all([getCategories(true), getTags(true)]).then(([c, t]) => { setAllCats(c.items); setAllTags(t.items); });
-  }, []);
+    let active = true;
+    const timer = setTimeout(() => {
+      api<{ works: WorkOption[] }>(`/api/admin/works?q=${encodeURIComponent(query)}`)
+        .then((r) => { if (active) setWorks(r.works); })
+        .catch(() => { if (active) setMsg('無法載入作品清單，請重試。'); });
+    }, query ? 250 : 0);
+    return () => { active = false; clearTimeout(timer); };
+  }, [query]);
 
-  const load = async () => {
-    setMsg(''); setOk(false);
-    try {
-      const r = await api<{ categories: TaxonomyItem[]; tags: TaxonomyItem[] }>(`/api/admin/works/${workId.trim()}/taxonomy`);
-      setLoaded({ categories: r.categories, tags: r.tags });
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : '載入失敗');
-    }
-  };
+  useEffect(() => {
+    let active = true;
+    setSelection(null); setMsg(''); setOk(false);
+    if (!workId) return;
+    api<{ categoryIds: string[]; tagIds: string[] }>(`/api/admin/works/${workId}/taxonomy`)
+      .then((r) => { if (active) setSelection({ categoryIds: r.categoryIds, tagIds: r.tagIds }); })
+      .catch(() => { if (active) setMsg('載入這部作品的指派失敗，請重選或重試。'); });
+    return () => { active = false; };
+  }, [workId]);
 
   const save = async () => {
-    if (!loaded) return;
-    setMsg(''); setOk(false);
+    if (!selection) return;
+    setBusy(true); setMsg(''); setOk(false);
     try {
-      await api(`/api/admin/works/${workId.trim()}/taxonomy`, json('PUT', {
-        categoryIds: loaded.categories.map((c) => c.id),
-        tagIds: loaded.tags.map((t) => t.id),
-      }));
+      await api(`/api/admin/works/${workId}/taxonomy`, json('PUT', selection));
       setOk(true);
       setMsg('已儲存作品的分類與標籤。');
     } catch (e) {
       setMsg(e instanceof Error ? e.message : '儲存失敗');
-    }
+    } finally { setBusy(false); }
   };
-
-  const toggle = (list: TaxonomyItem[], item: TaxonomyItem) =>
-    list.some((x) => x.id === item.id) ? list.filter((x) => x.id !== item.id) : [...list, item];
-
-  const picker = (
-    all: TaxonomyItem[],
-    chosen: TaxonomyItem[],
-    onToggle: (i: TaxonomyItem) => void,
-    label: string,
-  ) => (
-    <div className="setting-control" role="group" aria-label={label}>
-      {all.map((it) => {
-        const on = chosen.some((x) => x.id === it.id);
-        return (
-          <button key={it.id} className={`chip${on ? ' selected' : ''}`} aria-pressed={on}
-            onClick={() => onToggle(it)}>
-            {on ? '✓ ' : ''}{it.displayName}{it.isActive ? '' : '（停用）'}
-          </button>
-        );
-      })}
-      {all.length === 0 && <span className="muted">尚無可指派的項目</span>}
-    </div>
-  );
 
   return (
     <section className="admin-sub">
       <h3>作品分類／標籤指派</h3>
-      <div className="form-row">
-        <input className="input input-mono" placeholder="作品 UUID" value={workId}
-          aria-label="作品 UUID" onChange={(e) => setWorkId(e.target.value)} />
-        <button className="btn" onClick={load} disabled={!workId.trim()}>載入</button>
+      <p className="hint">匯入時已可直接指派；這裡用於事後調整既有作品。</p>
+      <div className="field">
+        <label htmlFor="assign-search">搜尋作品名稱或作者</label>
+        <input className="input" id="assign-search" type="search" value={query}
+          onChange={(e) => setQuery(e.target.value)} />
+      </div>
+      <div className="field">
+        <label htmlFor="assign-work">選擇作品</label>
+        <select className="input" id="assign-work" value={workId} onChange={(e) => setWorkId(e.target.value)}>
+          <option value="">請選擇作品</option>
+          {works.map((w) => <option key={w.id} value={w.id}>{w.title}{w.author ? `／${w.author}` : ''}</option>)}
+        </select>
+        {!works.length && <span className="hint">{query ? '沒有符合搜尋的作品。' : '尚未有作品。'}</span>}
       </div>
       {msg && <p className={ok ? 'form-ok' : 'form-error'} role="status">{msg}</p>}
-      {loaded && (
+      {selection && (
         <>
-          <h3>分類<span className="hint">　最多 5 個</span></h3>
-          {picker(allCats, loaded.categories,
-            (c) => setLoaded({ ...loaded, categories: toggle(loaded.categories, c) }), '分類')}
-          <h3>標籤<span className="hint">　最多 20 個</span></h3>
-          {picker(allTags, loaded.tags,
-            (t) => setLoaded({ ...loaded, tags: toggle(loaded.tags, t) }), '標籤')}
-          <button className="btn primary btn-block" onClick={save}>儲存指派</button>
+          <TaxonomyPicker idPrefix="assign" value={selection} onChange={setSelection} disabled={busy} />
+          <button className="btn primary btn-block" onClick={save} disabled={busy}>
+            {busy ? '儲存中…' : '儲存指派'}
+          </button>
         </>
       )}
     </section>

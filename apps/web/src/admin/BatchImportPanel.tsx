@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react';
-import { api, getCategories, getPublishPreview, publishWork } from '../api/client.ts';
+import { useRef, useState, type DragEvent } from 'react';
+import { api, getPublishPreview, publishWork } from '../api/client.ts';
 import { useImportMonitor } from './useImportMonitor.ts';
 import type { ImportJob, ImportQuality } from '../api/import-types.ts';
-import type { TaxonomyItem } from '../api/types.ts';
 import { count } from '../lib/format.ts';
 import { DEFAULT_TIDY_OPTIONS, tidyTxt, type TidyOptions, type TidyResult } from './tidy-txt.ts';
+import { TaxonomyPicker, type TaxonomySelection } from './TaxonomyPicker.tsx';
 
 type Quality = ImportQuality;
 type RulePreset = { name: string; encoding: string; chapterPattern: string; tidy: TidyOptions };
@@ -16,7 +16,12 @@ type Row = {
   encodingResult?: NonNullable<ImportJob['encodingResult']>;
   chapterCount?: number; quality?: Quality; error?: string; workId?: string;
   publishProblems?: string[]; publishedVersion?: number; cleaned?: boolean;
+  /** undefined = follow the batch default; set = this book overrides it */
+  taxonomy?: TaxonomySelection;
+  keywords?: string[];
 };
+
+const NO_TAXONOMY: TaxonomySelection = { categoryIds: [], tagIds: [] };
 
 const STORE_KEY = 'ebook-import-rule-presets-v1';
 const encodings = [
@@ -60,14 +65,12 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
   const [chapterPattern, setChapterPattern] = useState('');
   const [tidy, setTidy] = useState<TidyOptions>(DEFAULT_TIDY_OPTIONS);
   const [previews, setPreviews] = useState<Record<number, Preview | string>>({});
-  const [categories, setCategories] = useState<TaxonomyItem[]>([]);
-  const [categoryId, setCategoryId] = useState('');
+  const [batchTaxonomy, setBatchTaxonomy] = useState<TaxonomySelection>(NO_TAXONOMY);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => { void getCategories().then((result) => setCategories(result.items)).catch(() => setMessage('無法載入分類；請先檢查網絡或到「分類標籤」管理。')); }, []);
   const monitor = useImportMonitor((id, { job, quality, error }) => {
     setRows((current) => current.map((item) => {
       if (item.importId !== id) return item;
@@ -85,6 +88,7 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
         author: item.author || metadata?.author || '',
         description: item.description || metadata?.description || '',
         serialStatus: item.serialStatus || metadata?.serialStatus || '',
+        keywords: metadata?.keywords ?? item.keywords,
       };
     }));
   });
@@ -101,6 +105,8 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
     setPreviews({}); setMessage(accepted.length < files.length ? '每次最多加入 10 個 TXT／EPUB 檔案。' : '');
   };
   const update = (key: number, patch: Partial<Row>) => setRows((current) => current.map((row) => row.key === key ? { ...row, ...patch } : row));
+  // A row follows the batch default until it is given its own selection.
+  const taxonomyFor = (row: Row): TaxonomySelection => row.taxonomy ?? batchTaxonomy;
 
   const savePreset = () => {
     const name = presetName.trim();
@@ -173,19 +179,24 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
   const commitAndPublish = async () => {
     const selected = rows.filter((row) => row.selected && row.importId &&
       ['ready', 'review_required', 'committed'].includes(row.status));
-    if (!selected.length || !categoryId) return;
+    if (!selected.length || unclassified.length) return;
     setBusy(true); setMessage('');
     const prepared: Array<{ row: Row; workId: string }> = [];
     for (const row of selected) {
       monitor.stop(row.importId);
+      const { categoryIds, tagIds } = taxonomyFor(row);
       try {
         let workId = row.workId;
+        const created = !workId;
         if (!workId) {
+          // commit assigns the taxonomy in the same transaction — the draft is
+          // never briefly present and unclassified
           const result = await api<{ workId: string }>(`/api/admin/imports/${row.importId}/commit`, {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ title: row.title.trim() || '未命名作品', workType: row.workType,
               author: row.author, description: row.description,
-              serialStatus: row.workType === 'serial' ? row.serialStatus || null : null }),
+              serialStatus: row.workType === 'serial' ? row.serialStatus || null : null,
+              categoryIds, tagIds }),
           });
           workId = result.workId;
           update(row.key, { workId, status: 'committed', error: undefined });
@@ -194,8 +205,12 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
           body: JSON.stringify({ title: row.title.trim() || '未命名作品', author: row.author, description: row.description,
             workType: row.workType,
             serialStatus: row.workType === 'serial' ? row.serialStatus || null : null }) });
-        await api(`/api/admin/works/${workId}/taxonomy`, { method: 'PUT', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ categoryIds: [categoryId], tagIds: [] }) });
+        // Re-running an already-committed row: the assignment is a replace-set,
+        // so only send what this row actually shows as selected.
+        if (!created) {
+          await api(`/api/admin/works/${workId}/taxonomy`, { method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ categoryIds, tagIds }) });
+        }
         prepared.push({ row, workId });
       } catch (error) {
         update(row.key, { status: row.workId ? 'committed' : row.status,
@@ -228,8 +243,10 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
     setBusy(false);
   };
 
-  const readyCount = rows.filter((row) => row.selected && row.importId && ['ready', 'review_required', 'committed'].includes(row.status)).length;
+  const readyRows = rows.filter((row) => row.selected && row.importId && ['ready', 'review_required', 'committed'].includes(row.status));
+  const readyCount = readyRows.length;
   const uploadCount = rows.filter((row) => !row.importId && ['waiting', 'failed'].includes(row.status)).length;
+  const unclassified = readyRows.filter((row) => !taxonomyFor(row).categoryIds.length);
 
   const drag = (event: DragEvent) => { event.preventDefault(); setDragging(true); };
   return (
@@ -295,18 +312,19 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
           <button className="btn primary" disabled={busy || !uploadCount} onClick={() => void uploadWaiting()}>
             {busy ? '處理中…' : `上傳並解析 ${uploadCount} 本`}
           </button>
-          <button className="btn primary" disabled={busy || !readyCount || !categoryId} onClick={() => void commitAndPublish()}>
+          <button className="btn primary" disabled={busy || !readyCount || !!unclassified.length} onClick={() => void commitAndPublish()}>
             建立草稿並批量發布 {readyCount} 本
           </button>
         </div>
         <div className="field">
-          <label htmlFor="batch-category">批量指派分類（發布必需）</label>
-          <select className="input" id="batch-category" value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
-            <option value="">選擇一個分類</option>
-            {categories.filter((item) => item.isActive).map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}
-          </select>
-          {!categories.some((item) => item.isActive) && <span className="hint">尚無啟用分類，請先到「分類標籤」建立分類。</span>}
+          <span className="field-label">批量指派分類與標籤（發布必需至少一個分類）</span>
+          <span className="hint">這裡選的套用到所有未自訂的書；個別書可在下方「分類與標籤」覆寫。</span>
+          <TaxonomyPicker idPrefix="batch" value={batchTaxonomy} onChange={setBatchTaxonomy} disabled={busy} />
         </div>
+        {!!unclassified.length && <p className="form-warn" role="status">
+          還有 {unclassified.length} 本未指定分類：{unclassified.map((row) => row.file.name).join('、')}。
+          指定批量分類，或逐本在「分類與標籤」選擇。
+        </p>}
         <ol className="batch-list">
           {rows.map((row) => {
             const preview = previews[row.key];
@@ -355,6 +373,19 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
                   <div className="field field-wide"><label htmlFor={`batch-description-${row.key}`}>簡介</label>
                     <textarea className="input" id={`batch-description-${row.key}`} rows={3} value={row.description} disabled={row.status === 'published'}
                       onChange={(event) => update(row.key, { description: event.target.value })} /></div>
+                  <div className="field field-wide">
+                    <span className="field-label">分類與標籤</span>
+                    <p className="hint">
+                      {row.taxonomy
+                        ? '這本使用自訂指派。'
+                        : '這本跟隨上方的批量指派；改動下列任何一項即成為自訂。'}
+                      {row.taxonomy && <button className="linkish" disabled={row.status === 'published'}
+                        onClick={() => update(row.key, { taxonomy: undefined })}>改回跟隨批量指派</button>}
+                    </p>
+                    <TaxonomyPicker compact idPrefix={`batch-${row.key}`} keywords={row.keywords}
+                      value={taxonomyFor(row)} disabled={row.status === 'published'}
+                      onChange={(next) => update(row.key, { taxonomy: next })} />
+                  </div>
                 </div>
               </details>}
               {isTxt && !row.importId && <details>

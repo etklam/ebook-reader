@@ -1,7 +1,7 @@
 // Admin: upload → poll → preview → commit → diff/apply/revert (M2–M4) plus
 // publish and taxonomy (M6). Same token vocabulary as the member surfaces — the
 // person reviewing machine output deserves the same legibility as the reader.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { navigate } from '../App.tsx';
 import { PublishPanel } from './PublishPanel.tsx';
 import { TaxonomyPanel } from './TaxonomyPanel.tsx';
@@ -16,6 +16,7 @@ import type { Me } from '../api/types.ts';
 import type { ImportJob, ImportQuality, ImportChapterPage } from '../api/import-types.ts';
 import { ImportReview } from './ImportReview.tsx';
 import { useImportMonitor } from './useImportMonitor.ts';
+import { TaxonomyPicker, type TaxonomySelection } from './TaxonomyPicker.tsx';
 
 // Older incremental actions inspect HTTP error bodies to display resolution details.
 // Keep that contract while sharing credentials, parsing and transport errors.
@@ -209,6 +210,7 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
   const [author, setAuthor] = useState('');
   const [description, setDescription] = useState('');
   const [serialStatus, setSerialStatus] = useState('');
+  const [taxonomy, setTaxonomy] = useState<TaxonomySelection>({ categoryIds: [], tagIds: [] });
   const [encoding, setEncoding] = useState('');
   const [workId, setWorkId] = useState('');
   const [job, setJob] = useState<ImportJob | null>(null);
@@ -226,6 +228,7 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
     setError(nextError ?? '');
     const metadata = nextJob?.encodingResult?.metadata;
     if (metadata && !metadataAppliedRef.current) {
+      // keywords stay as suggestions; only the admin's clicks assign taxonomy
       metadataAppliedRef.current = true;
       setTitle((value) => value || metadata.title || '');
       setAuthor((value) => value || metadata.author || '');
@@ -234,6 +237,8 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
     }
   });
   const poll = monitor.watch;
+  const sourceKeywords = job?.encodingResult?.metadata?.keywords;
+  const keywords = useMemo(() => sourceKeywords ?? [], [sourceKeywords]);
   async function runImportAction(operation: () => Promise<void>) {
     setBusy(true); setError('');
     try { await operation(); }
@@ -291,7 +296,8 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
     const { status, body } = await api(`/api/admin/imports/${importId}/commit`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ title: title || '未命名作品', workType, author, description,
-        serialStatus: workType === 'serial' ? serialStatus || null : null }),
+        serialStatus: workType === 'serial' ? serialStatus || null : null,
+        categoryIds: taxonomy.categoryIds, tagIds: taxonomy.tagIds }),
     });
     if (status !== 200) { setError(`${body.error ?? 'commit 失敗'}${body.detail ? `：${body.detail}` : ''}`); return; }
     const refreshed = await api(`/api/admin/imports/${importId}`);
@@ -399,6 +405,15 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
               <option value="completed">完結</option>
             </select>
             <span className="hint" id="imp-status-hint">來源沒有註明時請自行選擇；短篇小說不設定連載狀態。</span>
+          </div>
+          <div className="field field-wide">
+            <span className="field-label" id="imp-taxonomy-label">分類與標籤</span>
+            <span className="hint">發布需要至少一個分類。在這裡選好，草稿建立時就一併寫入，不用發布前再補。</span>
+            <TaxonomyPicker idPrefix="imp" value={taxonomy} onChange={setTaxonomy}
+              keywords={keywords} disabled={busy} />
+            {!taxonomy.categoryIds.length && (
+              <p className="form-warn">尚未選分類。仍可建立草稿，但發布前必須補上至少一個。</p>
+            )}
           </div>
           </div>
           <div className="import-actions">

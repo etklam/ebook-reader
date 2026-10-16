@@ -4,13 +4,16 @@
 // operation — import/apply never publishes.
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { and, isNull, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import { and, isNull, asc, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import {
   categories, chapters, chapterRevisions, tags, workCategories, works, workReleases, workTags,
 } from '../db/schema.ts';
 import type { Storage } from '../storage.ts';
 import { publishPreview, publishWork } from '../publish/publish.ts';
+import {
+  assignWorkTaxonomy, MAX_CATEGORIES_PER_WORK, MAX_TAGS_PER_WORK, validateTaxonomyIds,
+} from '../taxonomy/assign.ts';
 
 export interface AdminWorksDeps {
   db: NodePgDatabase;
@@ -20,9 +23,8 @@ export interface AdminWorksDeps {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const routeId = (c: Context): string => c.req.param('workId') as string;
 
-// configurable assignment limits (dev-plan §03A: ~5 categories / ~20 tags)
-export const MAX_CATEGORIES_PER_WORK = 5;
-export const MAX_TAGS_PER_WORK = 20;
+// limits live with the shared assignment helper; re-exported for existing callers
+export { MAX_CATEGORIES_PER_WORK, MAX_TAGS_PER_WORK };
 
 export function adminWorkRoutes(deps: AdminWorksDeps): Hono<{ Variables: { userId: string; role: string } }> {
   const { db, storage } = deps;
@@ -238,54 +240,14 @@ export function adminWorkRoutes(deps: AdminWorksDeps): Hono<{ Variables: { userI
     const workId = routeId(c);
     if (!UUID_RE.test(workId)) return c.json({ error: 'work_not_found' }, 404);
     const body = await c.req.json().catch(() => ({}));
-    const categoryIds = Array.isArray(body?.categoryIds) ? body.categoryIds : [];
-    const tagIds = Array.isArray(body?.tagIds) ? body.tagIds : [];
-    const validIds = (ids: unknown[]): ids is string[] => ids.every((i) => typeof i === 'string' && UUID_RE.test(i));
-    if (!validIds(categoryIds) || !validIds(tagIds)) return c.json({ error: 'invalid_taxonomy', detail: 'id 格式錯誤' }, 400);
-    if (new Set(categoryIds).size !== categoryIds.length || new Set(tagIds).size !== tagIds.length) {
-      return c.json({ error: 'invalid_taxonomy', detail: 'id 重複' }, 400);
-    }
-    if (categoryIds.length > MAX_CATEGORIES_PER_WORK) {
-      return c.json({ error: 'invalid_taxonomy', detail: `分類上限 ${MAX_CATEGORIES_PER_WORK}` }, 400);
-    }
-    if (tagIds.length > MAX_TAGS_PER_WORK) {
-      return c.json({ error: 'invalid_taxonomy', detail: `標籤上限 ${MAX_TAGS_PER_WORK}` }, 400);
-    }
+    const checked = validateTaxonomyIds(body?.categoryIds, body?.tagIds);
+    if ('error' in checked) return c.json(checked, 400);
+    const { categoryIds, tagIds } = checked;
     const [work] = await db.select({ id: works.id }).from(works).where(eq(works.id, workId)).limit(1);
     if (!work) return c.json({ error: 'work_not_found' }, 404);
 
-    const currently = await db.transaction(async (tx) => {
-      const currentCats = (await tx.select({ id: workCategories.categoryId })
-        .from(workCategories).where(eq(workCategories.workId, workId))).map((r) => r.id);
-      const currentTags = (await tx.select({ id: workTags.tagId })
-        .from(workTags).where(eq(workTags.workId, workId))).map((r) => r.id);
-      // newly assigned ids must exist and be active
-      for (const [table, ids, current] of [
-        [categories, categoryIds, currentCats],
-        [tags, tagIds, currentTags],
-      ] as const) {
-        const newIds = ids.filter((id) => !current.includes(id));
-        if (newIds.length === 0) continue;
-        const rows = await tx.select({ id: table.id, isActive: table.isActive })
-          .from(table).where(inArray(table.id, newIds));
-        if (rows.length !== new Set(newIds).size) {
-          return { error: 'invalid_taxonomy' as const, detail: '包含不存在的項目' };
-        }
-        if (rows.some((r) => !r.isActive)) {
-          return { error: 'invalid_taxonomy' as const, detail: '停用中的項目不能新指派' };
-        }
-      }
-      await tx.delete(workCategories).where(eq(workCategories.workId, workId));
-      await tx.delete(workTags).where(eq(workTags.workId, workId));
-      if (categoryIds.length > 0) {
-        await tx.insert(workCategories).values(categoryIds.map((categoryId) => ({ workId, categoryId })));
-      }
-      if (tagIds.length > 0) {
-        await tx.insert(workTags).values(tagIds.map((tagId) => ({ workId, tagId })));
-      }
-      return { error: null, detail: null };
-    });
-    if (currently.error) return c.json(currently, 400);
+    const problem = await db.transaction((tx) => assignWorkTaxonomy(tx, workId, categoryIds, tagIds));
+    if (problem) return c.json(problem, 400);
     return c.json({ categoryIds, tagIds });
   });
 

@@ -3,6 +3,25 @@ export interface ImportMetadata {
   author?: string;
   description?: string;
   serialStatus?: 'ongoing' | 'completed';
+  /** Raw genre/tag words found in the source. Suggestions only — never auto-assigned. */
+  keywords?: string[];
+}
+
+const KEYWORD_SEPARATOR = /[、,，/／|｜;；]+|\s{2,}|#|＃/;
+const KEYWORD_TRIM = /^[\s【〔[(（「『]+|[\s】〕\])）」』]+$/g;
+const MAX_KEYWORDS = 20;
+
+// Source keyword fields are free text written by humans and packaging tools:
+// "玄幻、都市 / 爽文" and "#重生 #系統" are both common. Split generously, then
+// keep the result bounded — the admin picks what actually becomes taxonomy.
+export function splitKeywords(value: string): string[] {
+  const seen = new Set<string>();
+  for (const part of value.split(KEYWORD_SEPARATOR)) {
+    const word = part.replace(KEYWORD_TRIM, '');
+    if (word && word.length <= 50) seen.add(word);
+    if (seen.size >= MAX_KEYWORDS) break;
+  }
+  return [...seen];
 }
 
 export function completionStatus(text: string): ImportMetadata['serialStatus'] {
@@ -16,17 +35,20 @@ export function extractTxtMetadata(text: string): ImportMetadata {
   const metadata: ImportMetadata = {};
   let inDescription = false;
   const description: string[] = [];
+  const keywords: string[] = [];
   for (const raw of text.replace(/\r\n?/g, '\n').slice(0, 16000).split('\n').slice(0, 150)) {
     const line = raw.trim().replace(/^\uFEFF/, '');
     if (/^[第卷][0-9０-９一二三四五六七八九十零〇百千两兩]*[章回幕部節节集卷]/.test(line)) break;
-    const field = line.match(/^(書名|书名|作品名(?:稱|称)?|作者|簡介|简介|內容簡介|内容简介|狀態|状态|連載狀態|连载状态|title|author|description|status)\s*[:：]\s*(.*)$/i);
+    const field = line.match(/^(書名|书名|作品名(?:稱|称)?|作者|簡介|简介|內容簡介|内容简介|狀態|状态|連載狀態|连载状态|分類|分类|類型|类型|題材|题材|標籤|标签|關鍵詞|关键词|title|author|description|status|categor(?:y|ies)|genres?|tags?|keywords?)\s*[:：]\s*(.*)$/i);
     if (field) {
       inDescription = false;
       const [, name, value] = field;
       if (/^(書名|书名|作品名|title)/i.test(name)) metadata.title = value.slice(0, 300);
       else if (/^(作者|author)$/i.test(name)) metadata.author = value.slice(0, 300);
       else if (/簡介|简介|description/i.test(name)) { inDescription = true; description.push(value); }
-      else metadata.serialStatus = completionStatus(value);
+      else if (/分類|分类|類型|类型|題材|题材|標籤|标签|關鍵詞|关键词|categor|genre|tag|keyword/i.test(name)) {
+        keywords.push(...splitKeywords(value));
+      } else metadata.serialStatus = completionStatus(value);
     } else if (inDescription) {
       description.push(line);
     } else {
@@ -35,5 +57,6 @@ export function extractTxtMetadata(text: string): ImportMetadata {
     }
   }
   if (description.length) metadata.description = description.join('\n').trim().slice(0, 5000);
+  if (keywords.length) metadata.keywords = [...new Set(keywords)].slice(0, MAX_KEYWORDS);
   return metadata;
 }

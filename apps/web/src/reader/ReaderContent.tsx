@@ -20,15 +20,19 @@ export function ReaderContent({
   resources,
   stripRef,
   stripStyle,
+  pageBoxRef,
 }: {
   paragraphs: readonly string[];
   resources?: readonly ChapterResource[];
   stripRef: RefObject<HTMLDivElement | null>;
   stripStyle: CSSProperties;
+  /** Bounds one page and clips the strip. `display: contents` in scroll mode. */
+  pageBoxRef: RefObject<HTMLDivElement | null>;
 }) {
   const byHash = new Map((resources ?? []).map((r) => [r.contentHash, r]));
 
   return (
+    <div className="reader-page-box" ref={pageBoxRef}>
     <div id="reader-body" ref={stripRef} style={stripStyle} className="reader-body">
       {paragraphs.map((p, i) => {
         const m = p.match(IMG_RE);
@@ -58,6 +62,7 @@ export function ReaderContent({
         }
         return <p key={i} data-paragraph-index={i}>{p}</p>;
       })}
+    </div>
     </div>
   );
 }

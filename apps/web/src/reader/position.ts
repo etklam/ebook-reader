@@ -71,44 +71,50 @@ export function columnGap(strip: HTMLElement): number {
 // than off the viewport: those are the same width only while the strip carries
 // no horizontal padding, and silently disagreeing with the layout is how a
 // restore ends up pages away from where it aimed.
-export function columnStep(strip: HTMLElement, _viewport?: HTMLElement): number {
+export function columnStep(strip: HTMLElement): number {
   const cs = getComputedStyle(strip);
   const pad = (Number.parseFloat(cs.paddingLeft) || 0) + (Number.parseFloat(cs.paddingRight) || 0);
   return strip.clientWidth - pad + columnGap(strip);
 }
 
-export function columnIndexForParagraph(
-  root: HTMLElement,
-  index: number,
-  viewport: HTMLElement,
-  currentOffset: number,
-): number {
+// Measured against the strip's own origin, not the viewport's. The strip's
+// border box starts at column 0, and a translateX moves the strip and its
+// paragraphs together — so this difference is invariant under the page
+// transform and under where the strip sits horizontally. That matters once the
+// strip is narrower than the viewport and centred in it (desktop): a
+// viewport-relative reading would be skewed by the centring margin, and the
+// caller no longer has to pass the current page offset back in to compensate.
+export function columnIndexForParagraph(root: HTMLElement, index: number): number {
   const el = getParagraphElement(root, index);
   if (!el) return 0;
-  const step = columnStep(root, viewport);
+  const step = columnStep(root);
   if (step <= 0) return 0;
-  const left = el.getBoundingClientRect().left - viewport.getBoundingClientRect().left + currentOffset;
+  const left = el.getBoundingClientRect().left - root.getBoundingClientRect().left;
   return Math.max(0, Math.round(left / step));
 }
 
-export function columnCount(strip: HTMLElement, viewport: HTMLElement): number {
-  const step = columnStep(strip, viewport);
+export function columnCount(strip: HTMLElement): number {
+  const step = columnStep(strip);
   if (step <= 0) return 1;
   return Math.max(1, Math.round(strip.scrollWidth / step));
 }
 
 // First paragraph visible in the current column (paginated mode): visibility
-// is horizontal here — earlier columns sit left of the viewport edge.
+// is horizontal here — earlier columns sit left of the clip edge.
 //
-// The test is "does this paragraph still reach into the viewport", not "does it
+// `clip` is the element that actually bounds one page. On a phone that is the
+// whole viewport; on desktop it is the centred page box inside it. Passing the
+// viewport there would count columns hidden in the centring margin as visible.
+//
+// The test is "does this paragraph still reach into the page", not "does it
 // start inside it". A paragraph long enough to fragment across columns leaves
 // the column it spills into with no paragraph *starting* in it; keying on the
 // start meant such a column matched nothing and fell through to the last
 // paragraph of the chapter, which both saved a wildly wrong reading position
 // and threw page turns to the end of a long chapter.
-export function captureColumnParagraph(root: HTMLElement, viewport: HTMLElement): number {
-  const vpLeft = viewport.getBoundingClientRect().left;
-  const vpRight = vpLeft + viewport.clientWidth;
+export function captureColumnParagraph(root: HTMLElement, clip: HTMLElement): number {
+  const vpLeft = clip.getBoundingClientRect().left;
+  const vpRight = vpLeft + clip.clientWidth;
   const paras = root.querySelectorAll<HTMLElement>(`[${PARA_ATTR}]`);
   for (const p of paras) {
     // A fragmented element's rect spans its first and last fragment. Require

@@ -10,6 +10,7 @@ import { chapters, chapterRevisions, importItems, importJobs, works } from '../d
 import {
   attachRevisionResources, revisionHash, stagedLinksByItem, type StagedResourceLink,
 } from './resources.ts';
+import { assignWorkTaxonomy, validateTaxonomyIds } from '../taxonomy/assign.ts';
 
 export interface CommitRequest {
   workId?: string;
@@ -18,6 +19,9 @@ export interface CommitRequest {
   author?: string;
   description?: string;
   serialStatus?: string | null;
+  /** Assigned in the same transaction, so a draft is never born unclassified. */
+  categoryIds?: string[];
+  tagIds?: string[];
 }
 
 export type CommitResult =
@@ -28,10 +32,35 @@ export type CommitResult =
 // chapters instead of several per chapter
 const BATCH = 500;
 
+// Taxonomy problems surface only after the work row exists, so they have to
+// unwind the transaction rather than return — a half-committed unclassified
+// draft is exactly the state this feature exists to prevent.
+class TaxonomyRollback extends Error {
+  constructor(readonly detail: string) { super(detail); }
+}
+
 export async function commitImport(
   db: NodePgDatabase,
   jobId: string,
   req: CommitRequest,
+): Promise<CommitResult> {
+  const taxonomy = validateTaxonomyIds(req.categoryIds ?? [], req.tagIds ?? []);
+  if ('error' in taxonomy) return { ok: false, status: 400, error: taxonomy.error, detail: taxonomy.detail };
+  try {
+    return await commitInTransaction(db, jobId, req, taxonomy);
+  } catch (error) {
+    if (error instanceof TaxonomyRollback) {
+      return { ok: false, status: 400, error: 'invalid_taxonomy', detail: error.detail };
+    }
+    throw error;
+  }
+}
+
+async function commitInTransaction(
+  db: NodePgDatabase,
+  jobId: string,
+  req: CommitRequest,
+  taxonomy: { categoryIds: string[]; tagIds: string[] },
 ): Promise<CommitResult> {
   return db.transaction(async (tx) => {
     // row lock serializes concurrent commits of the same job
@@ -79,6 +108,11 @@ export async function commitImport(
         author: (req.author ?? '').trim(), description: (req.description ?? '').trim(), visibility: 'draft' })
         .returning({ id: works.id });
       workId = created[0].id;
+    }
+
+    if (taxonomy.categoryIds.length > 0 || taxonomy.tagIds.length > 0) {
+      const problem = await assignWorkTaxonomy(tx, workId!, taxonomy.categoryIds, taxonomy.tagIds);
+      if (problem) throw new TaxonomyRollback(problem.detail);
     }
 
     const items = await tx.select().from(importItems)

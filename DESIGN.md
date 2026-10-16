@@ -518,8 +518,11 @@ column pitch: every turn drifts by the difference and clips text at the seam.
 acceptance test.
 
 **The Unambiguous Input Rule.** The reader takes the same movement from every
-device and a gesture is never ambiguous with a selection. Tap: outer quarters
-turn the page, middle toggles chrome, suppressed over a selection or a control.
+device and a gesture is never ambiguous with a selection. Tap: the bottom
+quarter turns forward, the top quarter back, the middle half toggles chrome —
+bands across the page, not down its sides, so the thumb already holding the
+phone reaches the common action; suppressed over a selection or a control, and
+an unmeasured page box resolves to the chrome rather than a blind turn.
 Swipe: horizontal flick, **touch pointers only** (a mouse drag is a selection
 gesture and can never turn a page), 44px of travel inside 700ms. Keyboard:
 `←`/`→` turn page or chapter, `Space`/`PageUp`/`PageDown` move a screenful,

@@ -295,6 +295,44 @@ test('READ-01: keyboard moves through the chapter and the work; Escape closes on
   expect(await scrollTop()).toBeLessThan(afterPageDown + 1);
 });
 
+// §9.2: the tap bands run across the page — bottom forward, top back, the
+// middle half is the chrome. The viewport is 390×844, so the bands are the
+// top/bottom 211px and the middle runs 211–633.
+test('READ-01: paginated tap bands — bottom turns forward, top back, middle is chrome', async ({ page }) => {
+  await page.goto(`/read/${longWork}`);
+  await expect(page.locator('[data-paragraph-index="0"]')).toBeVisible({ timeout: 15_000 });
+  await page.mouse.click(195, 422);
+  await page.getByRole('button', { name: '設定' }).click();
+  await page.getByRole('button', { name: '分頁' }).click();
+  await expect(page.locator('[data-mode="paginated"]')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await page.mouse.click(195, 422);                       // chrome down
+  await page.waitForTimeout(300);
+
+  const readout = page.locator('.reader-pageinfo');
+  const first = await readout.textContent();
+  expect(first).toMatch(/^1 \/ \d+$/);
+
+  // bottom band: forward, one page per tap and no chrome
+  await page.mouse.click(195, 780);
+  await page.waitForTimeout(250);
+  await expect(readout).toHaveText(/^2 \//);
+  await expect(page.locator('.reader-toolbar[data-visible]')).toHaveCount(0);
+  await page.mouse.click(195, 780);
+  await page.waitForTimeout(250);
+  await expect(readout).toHaveText(/^3 \//);
+
+  // top band: back
+  await page.mouse.click(195, 90);
+  await page.waitForTimeout(250);
+  await expect(readout).toHaveText(/^2 \//);
+
+  // middle half: chrome only, page unchanged
+  await page.mouse.click(195, 422);
+  await expect(page.locator('.reader-toolbar[data-visible]')).toHaveCount(1);
+  await expect(readout).toHaveText(/^2 \//);
+});
+
 test('READ-01: paginated mode turns pages on a touch swipe, not on a drag-select', async ({ page }) => {
   await page.goto(`/read/${longWork}`);
   await expect(page.locator('[data-paragraph-index="0"]')).toBeVisible({ timeout: 15_000 });

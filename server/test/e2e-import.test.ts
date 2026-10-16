@@ -107,6 +107,8 @@ after(async () => {
   // FK-order teardown of everything this run created
   const works = await q(`select id from app.works where title like '%' || $1 || '%'`, [SUFFIX]);
   for (const w of works) {
+    await q(`delete from app.work_categories where work_id=$1`, [w.id]);
+    await q(`delete from app.work_tags where work_id=$1`, [w.id]);
     await q(`update app.chapters set head_revision_id=null where work_id=$1`, [w.id]);
     await q(`delete from app.chapter_revisions where chapter_id in (select id from app.chapters where work_id=$1)`, [w.id]);
     await q(`delete from app.chapters where work_id=$1`, [w.id]);
@@ -118,6 +120,8 @@ after(async () => {
     await q(`delete from app.import_jobs where id=$1`, [j.id]);
   }
   await q(`delete from app.source_files s where not exists (select 1 from app.import_jobs j where j.source_file_id = s.id) and s.created_at > now() - interval '1 hour'`);
+  await q(`delete from app.categories where display_name like '%'||$1||'%'`, [SUFFIX]);
+  await q(`delete from app.tags where display_name like '%'||$1||'%'`, [SUFFIX]);
   await q(`delete from app.sessions where user_id in (select id from app.users where email like '%'||$1||'%')`, [SUFFIX]);
   await q(`delete from app.users where email like '%'||$1||'%'`, [SUFFIX]);
   await q(`drop trigger if exists e2e_fail_on_ch100 on app.chapters`);
@@ -384,4 +388,56 @@ test('IMP-12b: mid-commit DB failure rolls back completely, job stays retryable'
   assert.equal(retry.status, 200);
   const body = await retry.json() as any;
   assert.equal(body.chapterCount, 170);
+});
+
+// --- taxonomy at commit: a draft is never born unclassified --------------------
+test('IMP-E2E: source keywords are suggested and commit assigns taxonomy atomically', async () => {
+  const createTaxonomy = async (kind: 'categories' | 'tags', displayName: string) => {
+    const res = await app.request(`/api/admin/taxonomy/${kind}`, {
+      method: 'POST', headers: { cookie: admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ displayName }),
+    });
+    assert.equal(res.status, 201, `creating ${kind} ${displayName}`);
+    return (await res.json() as { id: string }).id;
+  };
+  const categoryId = await createTaxonomy('categories', `玄幻${SUFFIX}`);
+  const tagId = await createTaxonomy('tags', `重生${SUFFIX}`);
+
+  const source = [
+    `書名：分類測試${SUFFIX}`, '作者：甲乙', `分類：玄幻${SUFFIX}、不存在的分類`, `標籤：重生${SUFFIX}`,
+    '', '第一章 開端', '正文一。', '第二章 續章', '正文二。',
+  ].join('\n');
+  const importId = await uploadAndProcess(`taxonomy-${SUFFIX}.txt`, source, admin);
+
+  // the parser surfaces source keywords as suggestions, assigning nothing
+  const job = await (await app.request(`/api/admin/imports/${importId}`, { headers: { cookie: admin } })).json() as any;
+  assert.deepEqual(job.encodingResult.metadata.keywords, [`玄幻${SUFFIX}`, '不存在的分類', `重生${SUFFIX}`]);
+
+  // a bad id fails the whole commit — no unclassified half-created work
+  const bogus = '00000000-0000-4000-8000-000000000000';
+  const rejected = await app.request(`/api/admin/imports/${importId}/commit`, {
+    method: 'POST', headers: { cookie: admin, 'content-type': 'application/json' },
+    body: JSON.stringify({ title: `分類失敗${SUFFIX}`, categoryIds: [bogus], tagIds: [] }),
+  });
+  assert.equal(rejected.status, 400);
+  assert.equal((await rejected.json() as any).error, 'invalid_taxonomy');
+  const orphans = await q(`select count(*)::int as n from app.works where title=$1`, [`分類失敗${SUFFIX}`]);
+  assert.equal(orphans[0].n, 0, 'a rejected assignment must leave no work behind');
+
+  // the real commit creates the work and its classification in one transaction
+  const committed = await app.request(`/api/admin/imports/${importId}/commit`, {
+    method: 'POST', headers: { cookie: admin, 'content-type': 'application/json' },
+    body: JSON.stringify({ title: `分類測試${SUFFIX}`, categoryIds: [categoryId], tagIds: [tagId] }),
+  });
+  assert.equal(committed.status, 200);
+  const { workId } = await committed.json() as { workId: string };
+
+  const assigned = await (await app.request(`/api/admin/works/${workId}/taxonomy`, { headers: { cookie: admin } })).json() as any;
+  assert.deepEqual(assigned.categoryIds, [categoryId]);
+  assert.deepEqual(assigned.tagIds, [tagId]);
+
+  // and that is enough to clear the first-publication category check
+  const preview = await (await app.request(`/api/admin/works/${workId}/publish-preview`, { headers: { cookie: admin } })).json() as any;
+  assert.ok(!preview.problems.includes('category_required_for_first_publication'),
+    `category check should pass, got ${JSON.stringify(preview.problems)}`);
 });

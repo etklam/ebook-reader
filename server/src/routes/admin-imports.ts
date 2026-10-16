@@ -214,6 +214,8 @@ export function adminImportRoutes(deps: ImportRoutesDeps): Hono<{ Variables: { u
       author: typeof body.author === 'string' ? body.author : undefined,
       description: typeof body.description === 'string' ? body.description : undefined,
       serialStatus: body.serialStatus === null || typeof body.serialStatus === 'string' ? body.serialStatus : undefined,
+      categoryIds: Array.isArray(body.categoryIds) ? body.categoryIds : undefined,
+      tagIds: Array.isArray(body.tagIds) ? body.tagIds : undefined,
     });
     if (!result.ok) return c.json({ error: result.error, detail: result.detail }, result.status);
     const { ok: _ok, status: _status, ...resp } = result;

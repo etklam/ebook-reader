@@ -481,7 +481,7 @@ export const bookmarks = app.table('bookmarks', {
 
 export const readerPreferences = app.table('reader_preferences', {
   userId: uuid('user_id').primaryKey().references(() => users.id),
-  theme: text('theme', { enum: ['light', 'sepia', 'dark'] }).notNull(),
+  theme: text('theme', { enum: ['light', 'sepia', 'dark', 'system'] }).notNull(),
   fontSize: integer('font_size').notNull(),
   lineHeight: real('line_height').notNull(),
   paragraphSpacing: real('paragraph_spacing').notNull(),

@@ -532,7 +532,7 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
   app.put('/api/me/reader-preferences', async (c) => {
     const userId = userIdOf(c);
     const body = await c.req.json().catch(() => ({}));
-    const theme = ['light', 'sepia', 'dark'].includes(body?.theme) ? body.theme : null;
+    const theme = ['light', 'sepia', 'dark', 'system'].includes(body?.theme) ? body.theme : null;
     const conversion = ['original', 't', 'cn'].includes(body?.conversion) ? body.conversion : null;
     const mode = ['scroll', 'paginated'].includes(body?.mode) ? body.mode : null;
     const fontSize = Number(body?.fontSize);

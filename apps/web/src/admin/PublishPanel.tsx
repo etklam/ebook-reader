@@ -1,9 +1,10 @@
 // Draft review uses editorial HEAD; readers see only explicitly published releases.
 import { useEffect, useState } from 'react';
-import { api, getCategories, getPublishPreview, publishWork } from '../api/client.ts';
-import type { PublishPreviewResponse, TaxonomyItem } from '../api/types.ts';
+import { api, getPublishPreview, publishWork } from '../api/client.ts';
+import type { PublishPreviewResponse } from '../api/types.ts';
 import { count } from '../lib/format.ts';
 import { navigate } from '../App.tsx';
+import { TaxonomyPicker, type TaxonomySelection } from './TaxonomyPicker.tsx';
 
 type WorkOption = { id: string; title: string; author: string; activeReleaseId: string | null };
 type Draft = {
@@ -232,21 +233,18 @@ function DraftSettings({ workId, work, onSaved, publishOnSave }: { workId: strin
   const [author, setAuthor] = useState(work.author);
   const [description, setDescription] = useState(work.description);
   const [status, setStatus] = useState(work.serialStatus ?? '');
-  const [categories, setCategories] = useState<TaxonomyItem[]>([]);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [tagIds, setTagIds] = useState<string[]>([]);
+  const [selection, setSelection] = useState<TaxonomySelection>({ categoryIds: [], tagIds: [] });
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
     let active = true;
-    Promise.all([getCategories(), api<{ categories: TaxonomyItem[]; tags: TaxonomyItem[] }>(`/api/admin/works/${workId}/taxonomy`)])
-      .then(([list, assignment]) => {
+    api<{ categoryIds: string[]; tagIds: string[] }>(`/api/admin/works/${workId}/taxonomy`)
+      .then((assignment) => {
         if (!active) return;
-        setCategories([...list.items, ...assignment.categories.filter((item) => !list.items.some((available) => available.id === item.id))]);
-        setSelected(assignment.categories.map((item) => item.id));
-        setTagIds(assignment.tags.map((item) => item.id)); setLoaded(true);
-      }).catch(() => { if (active) setError('無法載入分類，請按「重新載入」再試。'); });
+        setSelection({ categoryIds: assignment.categoryIds, tagIds: assignment.tagIds });
+        setLoaded(true);
+      }).catch(() => { if (active) setError('無法載入分類與標籤，請按「重新載入」再試。'); });
     return () => { active = false; };
   }, [workId]);
   async function save(e: React.FormEvent) {
@@ -254,7 +252,7 @@ function DraftSettings({ workId, work, onSaved, publishOnSave }: { workId: strin
     const json = (method: string, body: unknown) => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     try {
       await api(`/api/admin/works/${workId}`, json('PATCH', { title, author, description, serialStatus: status || null }));
-      await api(`/api/admin/works/${workId}/taxonomy`, json('PUT', { categoryIds: selected, tagIds }));
+      await api(`/api/admin/works/${workId}/taxonomy`, json('PUT', selection));
       await onSaved(publishOnSave);
     } catch { setError('未能儲存全部資料。請重新載入，確認已儲存的內容後再試。'); }
     finally { setBusy(false); }
@@ -274,17 +272,12 @@ function DraftSettings({ workId, work, onSaved, publishOnSave }: { workId: strin
           <option value="">請選擇</option><option value="ongoing">未完結</option>
           <option value="completed">完結</option><option value="paused">暫停連載</option>
         </select></div>}
-      <fieldset className="draft-categories"><legend>分類（至少一個，最多五個）</legend>
-        {!loaded ? <p className="hint">載入分類中…</p> : categories.length ? categories.map((category) =>
-          <label className="check-line" key={category.id}>
-            <input type="checkbox" checked={selected.includes(category.id)}
-              disabled={busy || (!selected.includes(category.id) && selected.length >= 5)}
-              onChange={(e) => setSelected((ids) => e.target.checked ? [...ids, category.id] : ids.filter((id) => id !== category.id))} />
-            {category.displayName}{!category.isActive ? '（已停用，請取消並選擇其他分類）' : ''}
-          </label>) : <p className="form-warn">尚未有分類。請先到「分類標籤」建立分類，再回此頁重新載入。</p>}
+      <fieldset className="draft-categories"><legend>分類（至少一個，最多五個）與標籤</legend>
+        {!loaded ? <p className="hint">載入分類與標籤中…</p>
+          : <TaxonomyPicker idPrefix="draft" value={selection} onChange={setSelection} disabled={busy} />}
       </fieldset>
       {error && <p className="form-error" role="alert">{error}</p>}
-      <button className="btn" disabled={busy || !loaded || !selected.length}>{busy ? '儲存中…' : publishOnSave ? '儲存並發布' : '儲存資料'}</button>
+      <button className="btn" disabled={busy || !loaded || !selection.categoryIds.length}>{busy ? '儲存中…' : publishOnSave ? '儲存並發布' : '儲存資料'}</button>
     </form>
   </>;
 }

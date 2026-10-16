@@ -1,4 +1,4 @@
-import { completionStatus, type ImportMetadata } from './metadata.ts';
+import { completionStatus, splitKeywords, type ImportMetadata } from './metadata.ts';
 // EPUB parsing (dev-plan §08, §19). The spine — not filename order, not the
 // TOC — defines reading order (IMP-16). Security at the trust boundary: zip
 // bomb caps, entry-name validation, and allowlist sanitization of every XHTML
@@ -260,11 +260,15 @@ export async function parseEpub(bytes: Buffer): Promise<ParsedEpub> {
   descriptionDom.window.close();
   const statusMeta = forceArray(bookMetadata?.meta).filter((m) =>
     /^(status|serialStatus|狀態|状态|連載狀態|连载状态)$/i.test(String(m?.['@name'] ?? m?.['@property'] ?? '')));
+  // dc:subject is the de-facto genre/tag field; keep it as a suggestion so the
+  // admin does not have to retype what the packager already recorded.
+  const keywords = splitKeywords(metadataText(bookMetadata?.subject));
   const metadata: ImportMetadata = {
     title: metadataText(bookMetadata?.title).slice(0, 300) || undefined,
     author: metadataText(bookMetadata?.creator).slice(0, 300) || undefined,
     description: description.slice(0, 5000) || undefined,
     serialStatus: completionStatus(statusMeta.map((m) => m['@content'] ?? m['#text'] ?? '').join(' ')),
+    keywords: keywords.length ? keywords : undefined,
   };
 
   const manifestItems = new Map<string, { href: string; type: string; properties: string }>();

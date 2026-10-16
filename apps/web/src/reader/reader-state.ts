@@ -4,10 +4,13 @@
 import type { ConversionMode } from './conversion.ts';
 
 export type ReadingMode = 'scroll' | 'paginated';
+/** A theme that can actually be painted. */
 export type Theme = 'light' | 'sepia' | 'dark';
+/** What the reader picked. 'system' resolves to light or dark at render time. */
+export type ThemeChoice = Theme | 'system';
 
 export interface ReaderSettings {
-  theme: Theme;
+  theme: ThemeChoice;
   fontSize: number;      // px
   lineHeight: number;    // unitless
   paragraphSpacing: number; // em
@@ -19,7 +22,7 @@ export const FONT_SIZE_MIN = 14;
 export const FONT_SIZE_MAX = 28;
 
 export const DEFAULT_SETTINGS: ReaderSettings = {
-  theme: 'light',
+  theme: 'system',
   fontSize: 18,
   lineHeight: 1.9,
   paragraphSpacing: 0.9,
@@ -28,6 +31,9 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
 };
 
 const SETTINGS_KEY = 'ebook:reader-settings';
+// v2 added the 'system' theme choice. The version marker exists only so the
+// migration below can tell a stored 'light' apart from "never chose anything".
+const SETTINGS_VERSION = 2;
 const posKey = (workId: string) => `ebook:pos:${workId}`;
 
 export interface ReadingPosition {
@@ -42,15 +48,35 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
 
+// 'system' is the default, so the reader inherits the OS light/dark setting
+// instead of always opening white. A v1 payload stored 'light' whether or not
+// anyone picked it — it was the old default — so a v1 'light' is treated as
+// "never chose" and migrated to 'system'. 護眼 and 深色 were never defaults,
+// which makes them unambiguous choices, and they survive untouched.
+function normalizeTheme(r: Partial<ReaderSettings> & { v?: unknown }): ThemeChoice {
+  const stored = r.theme;
+  const version = Number(r.v) || 1;
+  if (version < SETTINGS_VERSION && (stored === 'light' || stored === undefined)) return 'system';
+  return stored === 'light' || stored === 'sepia' || stored === 'dark' || stored === 'system'
+    ? stored
+    : DEFAULT_SETTINGS.theme;
+}
+
+/** Pure: what to actually paint, given the choice and the current OS setting. */
+export function resolveTheme(choice: ThemeChoice, prefersDark: boolean): Theme {
+  if (choice === 'system') return prefersDark ? 'dark' : 'light';
+  return choice;
+}
+
 export function normalizeSettings(raw: unknown): ReaderSettings {
-  const r = (raw ?? {}) as Partial<ReaderSettings>;
+  const r = (raw ?? {}) as Partial<ReaderSettings> & { v?: unknown };
   const num = (v: unknown, def: number) => {
     if (v === null || v === undefined || v === '') return def;
     const n = Number(v);
     return Number.isFinite(n) ? n : def;
   };
   return {
-    theme: r.theme === 'sepia' || r.theme === 'dark' ? r.theme : DEFAULT_SETTINGS.theme,
+    theme: normalizeTheme(r),
     fontSize: clamp(num(r.fontSize, DEFAULT_SETTINGS.fontSize), FONT_SIZE_MIN, FONT_SIZE_MAX),
     lineHeight: clamp(num(r.lineHeight, DEFAULT_SETTINGS.lineHeight), 1.4, 2.6),
     paragraphSpacing: clamp(num(r.paragraphSpacing, DEFAULT_SETTINGS.paragraphSpacing), 0, 3),
@@ -68,7 +94,7 @@ export function loadSettings(): ReaderSettings {
 }
 
 export function saveSettings(s: ReaderSettings): void {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...s, v: SETTINGS_VERSION }));
 }
 
 export function loadPosition(workId: string): ReadingPosition | null {

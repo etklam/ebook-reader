@@ -9,13 +9,14 @@ import { splitParagraphs } from './paragraphs.ts';
 import { convertParagraphs } from './conversion.ts';
 import {
   loadPosition, loadSettings, normalizeSettings, parsePositionHash, remapPosition,
-  savePosition, saveSettings, type ReaderSettings, type ReadingPosition,
+  resolveTheme, savePosition, saveSettings, type ReaderSettings, type ReadingPosition,
 } from './reader-state.ts';
+import { useSystemDark } from './use-system-dark.ts';
 import {
   captureColumnParagraph, captureScrollIndex, columnCount,
   columnIndexForParagraph, fractionInParagraph, restoreScrollPosition, PARA_ATTR,
 } from './position.ts';
-import { clampPage, debounce } from './pagination.ts';
+import { clampPage, debounce, tapZone } from './pagination.ts';
 import { ReaderContent } from './ReaderContent.tsx';
 import { ReaderToolbar } from './ReaderToolbar.tsx';
 import { BottomSheet } from './BottomSheet.tsx';
@@ -28,6 +29,7 @@ import {
 } from './member-sync.ts';
 import { createBookmark } from '../api/client.ts';
 import { SkeletonChapter } from '../components/Skeleton.tsx';
+import { Icon } from '../components/Icon.tsx';
 import { count } from '../lib/format.ts';
 import { ReportTypo } from './ReportTypo.tsx';
 import { createChapterLoader, shouldPrefetchNext } from './chapter-loader.ts';
@@ -86,6 +88,8 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   const [chapter, setChapter] = useState<ReaderChapter | null>(null);
   const [state, setState] = useState<LoadState>({ phase: 'loading' });
   const [settings, setSettings] = useState<ReaderSettings>(() => loadSettings());
+  // 'system' follows the OS and flips live; the other three are literal
+  const theme = resolveTheme(settings.theme, useSystemDark());
   const [converted, setConverted] = useState<string[] | null>(null);
   const [chromeVisible, setChromeVisible] = useState(false);
   const [sheet, setSheet] = useState<null | 'toc' | 'settings' | 'report' | 'bookmark'>(null);
@@ -93,7 +97,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   const [bookmarkSaving, setBookmarkSaving] = useState(false);
   const [page, setPage] = useState(0);
   const [pageCount, setPageCount] = useState(1);
-  const [vpWidth, setVpWidth] = useState(0);
+  const [pageWidth, setPageWidth] = useState(0);
   const [approxRestore, setApproxRestore] = useState(false);
   const [member, setMember] = useState<MemberEntry | null>(null);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
@@ -108,6 +112,9 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   const seqRef = useRef(0);           // stale-fetch guard (§13)
   const stripRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  // The element that bounds one page and clips the strip: the viewport
+  // itself on a phone, a centred measure-width box on desktop.
+  const pageBoxRef = useRef<HTMLDivElement | null>(null);
   // Anchor waiting to be applied, plus whether the reader has moved since it
   // was queued. Restoring is asynchronous (fonts, then conversion, which on a
   // 200k-character chapter takes a moment), and until now a scroll made inside
@@ -159,7 +166,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     return {
       chapterId: chapter.chapterId,
       revisionId: chapter.revisionId,
-      paragraphIndex: captureColumnParagraph(root, vp),
+      paragraphIndex: captureColumnParagraph(root, pageBoxRef.current ?? vp),
       fraction: 0,
     };
   }, [chapter, settings.mode]);
@@ -304,7 +311,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     const key = `${chapter.chapterId}:${chapter.revisionId}`;
     if (prefetchedFor.current === key || !shouldPrefetchNext(settings.mode, {
       scrollTop: vp.scrollTop, scrollHeight: vp.scrollHeight, viewportHeight: vp.clientHeight, page,
-      pageCount: settings.mode === 'paginated' && stripRef.current ? columnCount(stripRef.current, vp) : pageCount,
+      pageCount: settings.mode === 'paginated' && stripRef.current ? columnCount(stripRef.current) : pageCount,
     })) return;
     prefetchedFor.current = key;
     chapterLoader.prefetch(chapter.nextChapterId);
@@ -448,12 +455,12 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
       } else {
         // the page count is a fact about the layout and is always refreshed;
         // only the jump to the anchor is skipped
-        const count = columnCount(stripRef.current!, vp);
+        const count = columnCount(stripRef.current!);
         setPageCount(count);
         if (displaced) return;
         // the viewport div is shared across modes: drop any scroll-mode offset
         vp.scrollTop = 0;
-        setPage(clampPage(columnIndexForParagraph(root, anchor.paragraphIndex, vp, 0), count));
+        setPage(clampPage(columnIndexForParagraph(root, anchor.paragraphIndex), count));
       }
     }));
   }, [state.phase, chapter, converted, settings.mode, settings.fontSize, settings.lineHeight, settings.paragraphSpacing, paintRule, maybePrefetchNext]);
@@ -467,30 +474,31 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   pageRef.current = page;
   useEffect(() => {
     if (settings.mode !== 'paginated' || state.phase !== 'ready') return;
-    const vp = viewportRef.current;
-    if (!vp) return;
-    // the column width is known as soon as the viewport exists; publishing it
+    // The page box, not the viewport: on desktop it is clamped to the prose
+    // measure, so the viewport's width is not the column's width.
+    const box = pageBoxRef.current;
+    if (!box) return;
+    // the column width is known as soon as the box exists; publishing it
     // here rather than from the observer means the restore pass below measures
     // the layout it will actually render in
-    setVpWidth(vp.clientWidth);
+    setPageWidth(box.clientWidth);
     let primed = false;
     const ro = new ResizeObserver(() => {
       if (!primed) { primed = true; return; }   // the delivery `observe` itself causes
       const root = stripRef.current;
       if (!root) return;
       // capture before the new width reflows the columns, re-derive after
-      const index = captureColumnParagraph(root, vp);
-      setVpWidth(vp.clientWidth);
+      const index = captureColumnParagraph(root, box);
+      setPageWidth(box.clientWidth);
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const strip = stripRef.current;
         if (!strip) return;
-        const count = columnCount(strip, vp);
-        const step = vp.clientWidth + COLUMN_GAP;
+        const count = columnCount(strip);
         setPageCount(count);
-        setPage(clampPage(columnIndexForParagraph(strip, index, vp, pageRef.current * step), count));
+        setPage(clampPage(columnIndexForParagraph(strip, index), count));
       }));
     });
-    ro.observe(vp);
+    ro.observe(box);
     return () => ro.disconnect();
   }, [settings.mode, state.phase]);
 
@@ -557,6 +565,10 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   }, [turnPage, goChapter, chapter, displaceAnchor]);
 
   // --- tap zones (conservative, §9.2) ----------------------------------------------
+  // The bands run across the page, not down its sides: the thumb holding a
+  // phone rests at the bottom, so the common action — forward — gets the
+  // nearest band, and the top band mirrors it for going back. The page still
+  // *travels* sideways (one column pitch per turn); only the zones are vertical.
   const swipeStart = useRef<{ x: number; y: number; t: number } | null>(null);
   const swipeHandled = useRef(false);
 
@@ -567,9 +579,12 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     if (window.getSelection()?.toString()) return;
     if ((e.target as HTMLElement).closest('a, button')) return;
     if (settings.mode === 'paginated') {
-      const x = e.clientX / window.innerWidth;
-      if (x < 0.25) { stepPage(-1); return; }
-      if (x > 0.75) { stepPage(1); return; }
+      // the viewport's own box, not the window: with the chrome open the bands
+      // still belong to the page the reader can see
+      const box = e.currentTarget.getBoundingClientRect();
+      const zone = tapZone(e.clientY - box.top, box.height);
+      if (zone === 'next') { stepPage(1); return; }
+      if (zone === 'prev') { stepPage(-1); return; }
     }
     setChromeVisible((v) => !v);
   }, [settings.mode, stepPage]);
@@ -651,7 +666,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   // loading placeholder forever with nothing to act on
   if (state.phase === 'error') {
     return (
-      <div className={`reader theme-${settings.theme}`}>
+      <div className={`reader theme-${theme}`}>
         <div className="reader-msg" data-testid="reader-error">
           <h2>{ERROR_TEXT[state.code] ?? '發生錯誤'}</h2>
           <p>{ERROR_HINT[state.code] ?? '請稍後再試，或回書庫換一本。'}</p>
@@ -684,7 +699,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   // paragraph lands where the eye is already looking
   if (!chapter || !work || state.phase === 'loading') {
     return (
-      <div className={`reader theme-${settings.theme}`} data-testid="reader-loading">
+      <div className={`reader theme-${theme}`} data-testid="reader-loading">
         <SkeletonChapter />
       </div>
     );
@@ -693,7 +708,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   const paginated = settings.mode === 'paginated';
   // one column per viewport: the strip carries no horizontal padding (see
   // reader.css), so column width + gap is exactly the distance a turn travels
-  const columnWidth = vpWidth || 360;
+  const columnWidth = pageWidth || 360;
   const step = columnWidth + COLUMN_GAP;
   const stripStyle: React.CSSProperties = paginated ? {
     height: '100%',
@@ -705,7 +720,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
 
   return (
     <div
-      className={`reader theme-${settings.theme}`}
+      className={`reader theme-${theme}`}
       data-mode={settings.mode}
       data-chrome-visible={chromeVisible || undefined}
       style={{
@@ -748,8 +763,37 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         data-testid="reader-viewport"
       >
         <ReaderContent paragraphs={paragraphs} resources={chapter?.resources}
-          stripRef={stripRef} stripStyle={stripStyle} />
+          stripRef={stripRef} stripStyle={stripStyle} pageBoxRef={pageBoxRef} />
       </div>
+
+      {/* Desktop page turns. The centred page box leaves the margins empty, and
+          a pointer has no swipe — so the margin becomes the affordance, shown
+          on hover/focus only (CSS) so it never sits over the prose. They sit
+          left/right because that is the direction the page travels, while the
+          tap bands in onTap are top/bottom; both reach the same stepPage, so
+          whichever one the reader finds first is the right one. Not disabled at
+          a chapter edge: stepPage rolls into the next chapter, exactly as the
+          toolbar's chapter buttons do. */}
+      {paginated && (
+        <div className="reader-turns">
+          <button
+            className="reader-turn reader-turn-prev"
+            aria-label="上一頁"
+            disabled={page <= 0 && !chapter.previousChapterId}
+            onClick={() => stepPage(-1)}
+          >
+            <Icon name="back" />
+          </button>
+          <button
+            className="reader-turn reader-turn-next"
+            aria-label="下一頁"
+            disabled={page >= pageCount - 1 && !chapter.nextChapterId}
+            onClick={() => stepPage(1)}
+          >
+            <Icon name="back" />
+          </button>
+        </div>
+      )}
 
       {/* visual only: the toolbar's readout is the single live region, so the
           page number is never announced twice when the chrome is open */}

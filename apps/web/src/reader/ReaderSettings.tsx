@@ -7,6 +7,8 @@ import { FONT_SIZE_MAX, FONT_SIZE_MIN, type ReaderSettings } from './reader-stat
 import type { ConversionMode } from './conversion.ts';
 
 const THEMES: Array<{ id: ReaderSettings['theme']; label: string }> = [
+  // first, and the default: the reader opens in whatever the OS is already set to
+  { id: 'system', label: '跟隨系統' },
   { id: 'light', label: '亮色' },
   { id: 'sepia', label: '護眼' },
   { id: 'dark', label: '深色' },
@@ -105,6 +107,14 @@ export function ReaderSettingsPanel({
         settings.mode,
         (mode) => onLayoutChange({ mode }),
       ), '排版方式')}
+
+      {/* the tap bands are invisible by design, so the one place that explains
+          them is here, next to the switch that turns the mode on */}
+      {settings.mode === 'paginated' && (
+        <p className="hint sheet-hint">
+          分頁模式：輕觸畫面下方往下一頁、上方回上一頁、中間呼出工具列；左右滑動同樣可以翻頁。
+        </p>
+      )}
 
       <p className="hint sheet-hint">
         設定會記在這台裝置上；登入後也會同步到帳號。繁簡只影響顯示，原文內容不變。

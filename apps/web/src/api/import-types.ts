@@ -1,6 +1,8 @@
 // Mirrors the import HTTP DTOs; parser hints stay editable rather than trusted metadata.
 export interface ImportMetadata {
   title?: string; author?: string; description?: string; serialStatus?: 'ongoing' | 'completed';
+  /** Genre/tag words found in the source; suggestions only, never auto-assigned. */
+  keywords?: string[];
 }
 export interface ImportJob {
   id: string; status: string; workId: string | null;
