@@ -144,14 +144,16 @@ test('READ-01: open reader → paragraph 0, chrome toggle, bottom sheet, prev/ne
   await expect(page.locator('[data-paragraph-index="0"]')).toBeVisible();
   await expect(page.locator('.reader-chapter-label')).toHaveText(/序章/);
 
-  // center tap toggles chrome; chrome must not cover text
+  // Mobile chrome floats above the article without moving its paragraphs.
+  const para0 = page.locator('[data-paragraph-index="0"]');
+  const beforeMenu = await para0.boundingBox();
   await page.mouse.click(195, 422);
   await expect(page.locator('.reader-toolbar[data-visible]')).toBeVisible();
-  const toolbarBox = await page.locator('.reader-toolbar').boundingBox();
-  const para0Box = await page.locator('[data-paragraph-index="0"]').boundingBox();
-  // para 0 must sit fully outside both chrome bars (header on top, toolbar at bottom)
-  const clearOfToolbar = para0Box!.y + para0Box!.height <= toolbarBox!.y || para0Box!.y >= toolbarBox!.y + toolbarBox!.height;
-  expect(clearOfToolbar).toBe(true);
+  expect(await para0.boundingBox()).toEqual(beforeMenu);
+  await page.mouse.click(195, 422);
+  await expect(page.locator('.reader-toolbar[data-visible]')).toHaveCount(0);
+  expect(await para0.boundingBox()).toEqual(beforeMenu);
+  await page.mouse.click(195, 422);
 
   // bottom sheet: TOC with verbatim irregular labels
   await page.getByRole('button', { name: '目錄' }).click();
@@ -327,10 +329,19 @@ test('READ-01: paginated tap bands — bottom turns forward, top back, middle is
   await page.waitForTimeout(250);
   await expect(readout).toHaveText(/^2 \//);
 
-  // middle half: chrome only, page unchanged
+  // Opening and closing mobile chrome preserves the page, page count and layout.
+  const beforeMenu = await page.locator('#reader-body').boundingBox();
+  const beforeReadout = await readout.textContent();
   await page.mouse.click(195, 422);
   await expect(page.locator('.reader-toolbar[data-visible]')).toHaveCount(1);
-  await expect(readout).toHaveText(/^2 \//);
+  await page.waitForTimeout(300); // allow any resize-triggered pagination to settle
+  await expect(readout).toHaveText(beforeReadout!);
+  expect(await page.locator('#reader-body').boundingBox()).toEqual(beforeMenu);
+  await page.mouse.click(195, 422);
+  await expect(page.locator('.reader-toolbar[data-visible]')).toHaveCount(0);
+  await page.waitForTimeout(300);
+  await expect(readout).toHaveText(beforeReadout!);
+  expect(await page.locator('#reader-body').boundingBox()).toEqual(beforeMenu);
 });
 
 test('READ-01: paginated mode turns pages on a touch swipe, not on a drag-select', async ({ page }) => {

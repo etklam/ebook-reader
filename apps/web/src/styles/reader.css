@@ -13,8 +13,8 @@
   background: var(--bg);
   color: var(--ink);
 
-  /* chrome heights drive the content padding, so open chrome can never cover
-     text (acceptance READ-01) */
+  /* Chrome heights reserve content space on desktop. Mobile controls float
+     above the page without changing its layout. */
   --chrome-top: 56px;
   --chrome-bottom: 112px;
   --column-gap: 48px;
@@ -102,15 +102,8 @@
            calc(env(safe-area-inset-bottom, 0px) + var(--sp-8));
 }
 
-/* open chrome pushes the text instead of overlaying it (READ-01) */
-.reader[data-chrome-visible] .reader-scroll {
-  padding-top: calc(env(safe-area-inset-top, 0px) + var(--chrome-top) + var(--sp-4));
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--chrome-bottom) + var(--sp-6));
-}
-.reader[data-chrome-visible] .reader-viewport {
-  padding-top: calc(env(safe-area-inset-top, 0px) + var(--chrome-top) + var(--sp-4));
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--chrome-bottom) + var(--sp-2));
-}
+/* Mobile chrome overlays both reading modes: toggling it must not change
+   content padding, scroll position, or the height used for pagination. */
 
 /* --- prose ----------------------------------------------------------------- */
 .reader-body {
@@ -570,6 +563,11 @@
   .reader[data-chrome-visible] .reader-scroll {
     padding-top: calc(var(--chrome-top) + var(--sp-7));
     padding-bottom: calc(var(--chrome-bottom) + var(--sp-7));
+  }
+
+  .reader[data-chrome-visible] .reader-viewport {
+    padding-top: calc(env(safe-area-inset-top, 0px) + var(--chrome-top) + var(--sp-4));
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--chrome-bottom) + var(--sp-2));
   }
 
   /* chrome aligns to the text column instead of the window edges, so the
