@@ -109,6 +109,8 @@ export function parseLabel(raw: string): ParsedLabel {
   const withMarker = bare.match(/^(?:第|卷)(.+?)(?:章|回|幕|部|節|节|集|卷)(?:.+)?$/);
   if (withMarker) {
     numSrc = withMarker[1];
+  } else if (/^(?:（[^（）]+）|\([^()]+\))$/.test(bare)) {
+    numSrc = bare.slice(1, -1);
   } else if (/^[\d.]+$/.test(bare)) {
     numSrc = bare; // bare number label
   }

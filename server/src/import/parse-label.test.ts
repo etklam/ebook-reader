@@ -2,6 +2,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseLabel, compareLabels, sameNumberCandidate } from './parse-label.ts';
 
+test('parenthesized numbers retain their raw labels and share numeric candidate keys', () => {
+  for (const raw of ['（十二）', '(十二)', '（１２）', '(012)']) {
+    assert.equal(parseLabel(raw).raw, raw);
+    assert.equal(parseLabel(raw).key, 'ch:12');
+    assert.ok(sameNumberCandidate(parseLabel(raw), parseLabel('第12章')));
+  }
+  assert.equal(parseLabel('（一）（下）').key, 'ch:1#下');
+  assert.equal(parseLabel('（註）').key, null);
+});
+
 test('plain chapter numbers', () => {
   assert.equal(parseLabel('第12章').key, 'ch:12');
   assert.equal(parseLabel('第1章 潮汐').key, 'ch:1');

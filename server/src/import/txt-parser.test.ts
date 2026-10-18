@@ -7,6 +7,23 @@ import { parseTxt } from './txt-parser.ts';
 
 const FIXTURES = fileURLToPath(new URL('../../../m0/fixtures/txt', import.meta.url));
 
+test('parenthesized chapter numbers split automatically and retain labels and titles', () => {
+  for (const [first, second] of [['（一）', '（二）'], ['(一)', '(二)'], ['（１）', '（２）'], ['(1)', '(2)']]) {
+    const { chapters, warnings } = parseTxt(`${first} 起風\n第一段。\n\n${second}\n第二段。`);
+    assert.deepEqual(chapters.map((c) => [c.labelRaw, c.title, c.body, c.parsed?.key]), [
+      [first, '起風', '第一段。', 'ch:1'], [second, '', '第二段。', 'ch:2'],
+    ]);
+    assert.deepEqual(warnings, []);
+  }
+});
+
+test('parenthesized prose and nonnumeric parentheses are kept as content', () => {
+  const { chapters } = parseTxt('（一） 開始\n正文。\n\n（二）這是正文列舉。\n\n（註）這是補充。\n\n（三） 結束\n結尾。');
+  assert.equal(chapters.length, 2);
+  assert.ok(chapters[0].body.includes('（二）這是正文列舉。'));
+  assert.ok(chapters[0].body.includes('（註）這是補充。'));
+});
+
 test('base-180: exactly 180 ordered chapters with raw labels', () => {
   const text = readFileSync(join(FIXTURES, 'base-180.txt'), 'utf8');
   const { chapters, warnings } = parseTxt(text);
