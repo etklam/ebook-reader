@@ -48,68 +48,75 @@ export async function resolveMemberEntry(workId: string): Promise<MemberEntry> {
   }
 }
 
-interface SyncState {
-  version: number;
-  chapterId: string | null;
-  revisionId: string | null;
-}
+// Serialize across reader instances as well as chapter changes. A departing
+// reader may still be draining its final captured position when another mounts.
+const workQueues = new Map<string, Promise<void>>();
 
-// create a debounced progress writer for a signed-in reader; returns null for
-// guests so call sites skip cleanly
 export function createProgressSync(
   workId: string,
   getAnchor: () => ReadingPosition | null,
   onConflict: (server: ReadingPosition) => void,
   onError: () => void,
-): {
-  flush(): void;
-  cancel(): void;
-} | null {
-  const state: SyncState = { version: -1, chapterId: null, revisionId: null };
+) {
+  let version = -1;
+  let pending: ReadingPosition | null = null;
+  let running = false;
+  let closed = false;
+  let cancelled = false;
+  let notify = true;
+  let lastSaved = '';
+  const signature = (p: ReadingPosition) => JSON.stringify([p.chapterId, p.revisionId, p.paragraphIndex, p.fraction ?? null]);
 
-  const write = async () => {
-    const anchor = getAnchor();
-    if (!anchor) return;
-    if (state.version < 0) {
-      // initialize from the server once
+  const drain = async () => {
+    while (pending) {
+      const anchor = pending;
+      pending = null;
+      if (signature(anchor) === lastSaved) continue;
       try {
-        const p = await getProgress(workId);
-        state.version = p.progress?.syncVersion ?? 0;
-      } catch {
-        return; // retry on next tick
-      }
-    }
-    try {
-      const r = await saveProgress(workId, {
-        chapterId: anchor.chapterId,
-        revisionId: anchor.revisionId,
-        paragraphIndex: anchor.paragraphIndex,
-        fraction: anchor.fraction ?? null,
-        baseVersion: Math.max(0, state.version),
-      });
-      state.version = r.syncVersion;
-    } catch (e) {
-      if (e instanceof ApiRequestError && e.status === 409) {
-        // a newer device won: adopt the server position deliberately (§30)
-        const p = (e.body as { progress?: ServerProgressLike }).progress;
-        if (p) {
-          state.version = p.syncVersion;
-          onConflict({
-            chapterId: p.chapterId,
-            revisionId: p.revisionId,
-            paragraphIndex: p.paragraphIndex,
-            fraction: p.fraction ?? undefined,
-          });
-        }
-      } else {
-        onError(); // transient failure: local state stays, retry next tick (§44)
+        if (version < 0) version = (await getProgress(workId)).progress?.syncVersion ?? 0;
+        // cancel invalidates initialization too; finish deliberately drains it.
+        if (cancelled) return;
+        const result = await saveProgress(workId, {
+          ...anchor, fraction: anchor.fraction ?? null, baseVersion: version,
+        });
+        version = result.syncVersion;
+        lastSaved = signature(anchor);
+      } catch (error) {
+        // A genuine competing device wins. Never replay queued local anchors
+        // over its position without the reader making another movement.
+        pending = null;
+        if (error instanceof ApiRequestError && error.status === 409) {
+          const server = (error.body as { progress?: ServerProgressLike })?.progress;
+          if (server) {
+            version = server.syncVersion;
+            if (notify) onConflict({ ...server, fraction: server.fraction ?? undefined });
+          }
+        } else if (notify) onError();
       }
     }
   };
-
+  const start = () => {
+    if (running) return;
+    running = true;
+    const previous = workQueues.get(workId) ?? Promise.resolve();
+    const job = previous.catch(() => undefined).then(drain).finally(() => {
+      running = false;
+      if (workQueues.get(workId) === job) workQueues.delete(workId);
+      if (pending) start();
+    });
+    workQueues.set(workId, job);
+  };
   return {
-    flush: () => void write(),
-    cancel: () => undefined,
+    flush() {
+      if (closed) return;
+      const anchor = getAnchor();
+      if (!anchor) return;
+      pending = { ...anchor };
+      start();
+    },
+    cancel() { closed = true; cancelled = true; pending = null; notify = false; /* invalidate callbacks and queued work */ },
+    // Keep already captured final writes, detach UI, reject future flushes.
+    finish() { closed = true; notify = false; },
   };
 }
 

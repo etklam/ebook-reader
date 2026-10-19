@@ -8,7 +8,7 @@ import type { ReaderChapter, ReaderWork } from '../api/types.ts';
 import { splitParagraphs } from './paragraphs.ts';
 import { convertParagraphs } from './conversion.ts';
 import {
-  loadPosition, loadSettings, normalizeSettings, parsePositionHash, remapPosition,
+  loadSettings, remapPosition,
   resolveTheme, savePosition, saveSettings, type ReaderSettings, type ReadingPosition,
 } from './reader-state.ts';
 import { useSystemDark } from './use-system-dark.ts';
@@ -27,7 +27,7 @@ import { readPath, samePath, workPath } from '../lib/slug.ts';
 import { applyHead, describe, title } from '../lib/head.ts';
 import {
   createProgressSync, pushPreferences,
-  resolveMemberEntry, scheduleReadMarking, type MemberEntry,
+  scheduleReadMarking, type MemberEntry,
 } from './member-sync.ts';
 import { createBookmark } from '../api/client.ts';
 import { SkeletonChapter } from '../components/Skeleton.tsx';
@@ -38,6 +38,9 @@ import { createChapterLoader, shouldPrefetchNext } from './chapter-loader.ts';
 import { FullTextSearch } from './FullTextSearch.tsx';
 import { SpeechControls, useSpeechReader } from './SpeechControls.tsx';
 import { useReadingTimeTracker } from '../account/reading-time.ts';
+import { useReaderKeyboard } from './use-reader-keyboard.ts';
+import { useReaderEntry } from './use-reader-entry.ts';
+import { useMemberProgress } from './use-member-progress.ts';
 import { BookmarkNoteEditor } from '../account/BookmarkNoteEditor.tsx';
 import { t } from '../i18n/translate.ts';
 
@@ -93,20 +96,23 @@ const SWIPE_MIN = 44;
  * keys were written against uuids and the position contract outlives any URL
  * scheme (ADR-07, §14).
  */
-export function ReaderPage({ workRef, initialChapterRef }: { workRef: string; initialChapterRef: string | null }) {
+export function ReaderPage({ workRef, initialChapterRef, initialHash = '' }: { workRef: string; initialChapterRef: string | null; initialHash?: string }) {
+  // The App key equates legacy UUID and public-id aliases. Keep request
+  // dependencies stable when the URL is canonicalized within the same work.
+  const workAddress = useRef(workRef).current;
   const [work, setWork] = useState<ReaderWork | null>(null);
   const releaseRef = useRef<string | null>(null);
   // `work` is passed on every chapter fetch so a chapter public id — unique per
   // work, not globally — can be resolved. A uuid id ignores it.
-  const chapterLoader = useMemo(() => createChapterLoader((id) => getChapter(id, workRef), Date.now, async () => {
+  const chapterLoader = useMemo(() => createChapterLoader((id) => getChapter(id, workAddress), Date.now, async () => {
     // Validate visibility and current publication before consuming a body
     // fetched earlier. Metadata is small; a changed release fetches fresh text.
-    const latest = await getWork(workRef);
+    const latest = await getWork(workAddress);
     const valid = latest.releaseId === releaseRef.current;
     releaseRef.current = latest.releaseId;
     setWork(latest);
     return valid;
-  }), [workRef]);
+  }), [workAddress]);
   const [chapter, setChapter] = useState<ReaderChapter | null>(null);
   const [state, setState] = useState<LoadState>({ phase: 'loading' });
   const [settings, setSettings] = useState<ReaderSettings>(() => loadSettings());
@@ -135,6 +141,7 @@ export function ReaderPage({ workRef, initialChapterRef }: { workRef: string; in
   // persisted key hangs off this, never off the ref.
   const workId = work?.id ?? null;
 
+  const requestedChapter = useRef<{ chapterId: string; restore: ReadingPosition | null } | null>(null);
   const seqRef = useRef(0);           // stale-fetch guard (§13)
   const stripRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -233,12 +240,13 @@ export function ReaderPage({ workRef, initialChapterRef }: { workRef: string; in
       if (anchor && settings.mode === 'scroll') lastScrollAnchor.current = anchor;
     }
     updateSettings(patch);
-  }, [captureAnchor, updateSettings, settings.mode, chapter]);
+  }, [captureAnchor, updateSettings, settings.mode, chapter, queueAnchor]);
 
   // --- data loading ----------------------------------------------------------------
   // `ref` addresses the chapter: a uuid for every in-app navigation, or the
   // URL's `<slug>-<publicId>` segment on a first load.
   const loadChapter = useCallback(async (ref: string, restore: ReadingPosition | null) => {
+    requestedChapter.current = { chapterId: ref, restore };
     const seq = ++seqRef.current;
     setState({ phase: 'loading' });
     setConverted(null);
@@ -270,46 +278,16 @@ export function ReaderPage({ workRef, initialChapterRef }: { workRef: string; in
     }
   }, [chapterLoader, queueAnchor]);
 
-  // initial load: work metadata + entry chapter (route id → saved position → first)
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const w = await getWork(workRef);
-        if (cancelled) return;
-        setWork(w);
-        releaseRef.current = w.releaseId;
-        const entry = await resolveMemberEntry(w.id);
-        if (cancelled) return;
-        setMember(entry);
-        if (entry.settings) {
-          const merged = normalizeSettings({ ...loadSettings(), ...entry.settings });
-          saveSettings(merged);
-          setSettings(merged);
-        }
-        const saved = loadPosition(w.id);
-        const pos = entry.position ?? saved;
-        const target = initialChapterRef ?? pos?.chapterId ?? w.firstChapterId;
-        if (!target) { setState({ phase: 'error', code: 'chapter_not_found', retryable: false }); return; }
-        // a `#p=…&rev=…` deep link (a bookmark) names the paragraph explicitly
-        // and outranks the resumed position; it is consumed once, so scrolling
-        // away and reloading keeps the new place rather than snapping back
-        const deep = initialChapterRef ? parsePositionHash(location.hash) : null;
-        // the anchor is consumed here; the canonicalizing effect below then
-        // rewrites the path once the chapter's own label is known
-        if (deep) history.replaceState(null, '', location.pathname);
-        // restore whenever the saved position is for THIS chapter — reload and
-        // back-navigation land on the same paragraph regardless of entry path;
-        // loadChapter ignores restores for other chapters
-        await loadChapter(target, deep ? { chapterId: target, ...deep } : pos);
-      } catch (e) {
-        if (cancelled) return;
-        const code = e instanceof ApiRequestError ? e.code : 'network';
-        setState({ phase: 'error', code, retryable: retryableError(e, code) });
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [workRef, reloadToken]);
+  useReaderEntry({ workRef: workAddress, initialChapterRef, initialHash, reloadToken, loadChapter,
+    onWork: (w) => { setWork(w); releaseRef.current = w.releaseId; },
+    onMember: setMember,
+    onNavigate: () => { setSheet(null); setChromeVisible(false); },
+    onSettings: setSettings,
+    onError: (e) => {
+      const code = e instanceof ApiRequestError ? e.code : 'network';
+      setState({ phase: 'error', code, retryable: retryableError(e, code) });
+    },
+  });
 
   // a chapter counts as read after 10s of reading (never via prefetch, §33)
   useEffect(() => {
@@ -325,7 +303,7 @@ export function ReaderPage({ workRef, initialChapterRef }: { workRef: string; in
     if (!work || !chapter) return;
     const canonical = readPath(work, { id: chapter.chapterId, publicId: chapter.publicId,
       labelRaw: chapter.labelRaw, title: chapter.title });
-    if (!samePath(location.pathname, canonical)) history.replaceState(null, '', encodeURI(canonical));
+    if (!samePath(location.pathname, canonical)) history.replaceState(history.state, '', encodeURI(canonical));
     const label = [chapter.labelRaw, chapter.title].filter(Boolean).join(' ');
     applyHead({
       title: title(`${label} - ${work.title}`),
@@ -385,6 +363,12 @@ export function ReaderPage({ workRef, initialChapterRef }: { workRef: string; in
     rule.style.transform = `scaleX(${progress / 100})`;
   }, [settings.mode]);
 
+  // member server sync: debounced writes + flush on hide (§42/§43)
+  const syncRef = useRef<ReturnType<typeof createProgressSync>>(null);
+  // 8s trailing debounce over scroll activity (§43); flush happens directly on
+  // chapter change / visibility hidden
+  const syncSaver = useRef(debounce(() => syncRef.current?.flush(), 8000)).current;
+
   useEffect(() => {
     if (!chapter) return;
     const vp = viewportRef.current;
@@ -426,7 +410,7 @@ export function ReaderPage({ workRef, initialChapterRef }: { workRef: string; in
       vp?.removeEventListener('touchmove', displaceAnchor);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [chapter, settings.mode, captureAnchor, savePositionDebounced, workId, paintRule, displaceAnchor, maybePrefetchNext, chapterLoader]);
+  }, [chapter, settings.mode, captureAnchor, savePositionDebounced, workId, paintRule, displaceAnchor, maybePrefetchNext, chapterLoader, syncSaver]);
 
   // transient notices clear themselves — a toast that never leaves is a banner
   useEffect(() => {
@@ -440,11 +424,6 @@ export function ReaderPage({ workRef, initialChapterRef }: { workRef: string; in
     return () => clearTimeout(t);
   }, [approxRestore]);
 
-  // member server sync: debounced writes + flush on hide (§42/§43)
-  const syncRef = useRef<ReturnType<typeof createProgressSync>>(null);
-  // 8s trailing debounce over scroll activity (§43); flush happens directly on
-  // chapter change / visibility hidden
-  const syncSaver = useRef(debounce(() => syncRef.current?.flush(), 8000)).current;
   // The reader is an SPA route, so leaving it does not trigger visibilitychange.
   // Flush both local and account progress before browser/app navigation.
   useEffect(() => {
@@ -463,23 +442,15 @@ export function ReaderPage({ workRef, initialChapterRef }: { workRef: string; in
     };
   }, [workId, savePositionDebounced, syncSaver]);
 
-  useEffect(() => {
-    if (!member?.isMember || !workId) { syncRef.current = null; return; }
-    const sync = createProgressSync(
-      workId,
-      () => captureRef.current(),
-      (server) => {
-        // a newer device won (§30): adopt the account position deliberately
-        setSyncNotice(t('已同步至帳號最新閱讀位置'));
-        queueAnchor(server);
-        setApproxRestore(true);
-        if (chapter && server.chapterId !== chapter.chapterId) void loadChapter(server.chapterId, server);
-      },
-      () => setSyncNotice(t('進度同步暫時失敗，稍後自動重試')),
-    );
-    syncRef.current = sync;
-    return () => { syncRef.current = null; };
-  }, [member?.isMember, workId, chapter, loadChapter]);
+  useMemberProgress({ workId, isMember: Boolean(member?.isMember && workId), syncRef, captureRef,
+    onConflict: (server) => {
+      setSyncNotice(t('已同步至帳號最新閱讀位置'));
+      queueAnchor(server);
+      setApproxRestore(true);
+      if (server.chapterId !== chapter?.chapterId) navigate(`/read/${workId}/${server.chapterId}#p=${server.paragraphIndex}&rev=${server.revisionId}`);
+    },
+    onError: () => setSyncNotice(t('進度同步暫時失敗，稍後自動重試')),
+  });
 
   // after content mounts with a pending anchor: re-anchor, then derive the page
   useEffect(() => {
@@ -577,12 +548,15 @@ export function ReaderPage({ workRef, initialChapterRef }: { workRef: string; in
     if (!chapterId) return;
     setChromeVisible(false);
     setSheet(null);
-    const p = captureAnchor();
-    if (p && workId) savePosition(workId, p);
+    const p = captureRef.current();
+    if (p && workId) {
+      savePosition(workId, p);
+      history.replaceState({ ...history.state, readerPosition: p }, '');
+    }
+    syncSaver.cancel();
     syncRef.current?.flush();
-    const saved = workId ? loadPosition(workId) : null;
-    void loadChapter(chapterId, saved?.chapterId === chapterId ? saved : null);
-  }, [loadChapter, workId]);
+    if (work) navigate(readPath(work, { id: chapterId }));
+  }, [workId, work, syncSaver]);
 
   const speakingElement = useRef<HTMLElement | null>(null);
   const highlightSpeech = useCallback((index: number | null) => {
@@ -663,53 +637,9 @@ export function ReaderPage({ workRef, initialChapterRef }: { workRef: string; in
     stepPage(dx < 0 ? 1 : -1);
   };
 
-  // --- keyboard (§09.5) -------------------------------------------------------------
-  // Until now the reader was pointer-only: on a desktop or with a switch/keyboard
-  // the only way to advance was to open the chrome and hit a button. Arrow keys
-  // move in the mode's own unit, Space/PageDown move by a screenful, Escape
-  // dismisses the chrome.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (sheet) return;                       // an open sheet owns the keyboard
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      const target = e.target as Element | null;
-      if (e.key !== 'Escape' && target?.closest('input, textarea, select, button, a, [role="button"], [contenteditable]')) return;
-      const vp = viewportRef.current;
-      const paginated = settings.mode === 'paginated';
-      const screenful = (dir: 1 | -1, fraction = 0.9) => {
-        if (paginated || !vp) { stepPage(dir); return; }
-        displaceAnchor();
-        // instant, like every other movement in the reader: DESIGN.md keeps
-        // reader content un-animated so the anchor stays measurable, and a
-        // smooth scroll is silently dropped while a long chapter is still
-        // laying itself out
-        vp.scrollBy({ top: dir * vp.clientHeight * fraction, behavior: 'auto' });
-      };
-      switch (e.key) {
-        // in scroll mode there is no horizontal axis, so ←/→ address chapters
-        case 'ArrowRight':
-          if (paginated) stepPage(1); else goChapter(chapter?.nextChapterId ?? null);
-          break;
-        case 'ArrowLeft':
-          if (paginated) stepPage(-1); else goChapter(chapter?.previousChapterId ?? null);
-          break;
-        // ↓/↑ nudge rather than jump. The scroll container is not focusable, so
-        // without this the browser's own arrow scrolling never reaches it.
-        case 'ArrowDown': if (paginated) stepPage(1); else screenful(1, 0.25); break;
-        case 'ArrowUp': if (paginated) stepPage(-1); else screenful(-1, 0.25); break;
-        case 'PageDown': screenful(1); break;
-        case 'PageUp': screenful(-1); break;
-        case ' ': screenful(e.shiftKey ? -1 : 1); break;
-        case 'Home': displaceAnchor(); if (paginated) setPage(0); else vp?.scrollTo({ top: 0 }); break;
-        case 'End': displaceAnchor(); if (paginated) setPage(pageCount - 1); else vp?.scrollTo({ top: vp.scrollHeight }); break;
-        case 'Escape': if (!chromeVisible) return; setChromeVisible(false); break;
-        default: return;
-      }
-      e.preventDefault();                      // only for keys we actually used
-    };
-    addEventListener('keydown', onKey);
-    return () => removeEventListener('keydown', onKey);
-  }, [sheet, settings.mode, stepPage, goChapter, chapter, pageCount, chromeVisible, displaceAnchor]);
+  useReaderKeyboard({ sheet, mode: settings.mode, viewportRef,
+    nextChapterId: chapter?.nextChapterId ?? null, previousChapterId: chapter?.previousChapterId ?? null,
+    pageCount, chromeVisible, stepPage, goChapter, displaceAnchor, setPage, setChromeVisible });
 
   // --- render -----------------------------------------------------------------------
   // the error branch comes first: a failure on the very first load leaves
@@ -730,7 +660,8 @@ export function ReaderPage({ workRef, initialChapterRef }: { workRef: string; in
                   // re-resolve from the top: work → member entry → chapter.
                   // Retrying only the chapter would strand a reader whose
                   // failure happened before any chapter was known.
-                  if (chapter) void loadChapter(chapter.chapterId, workId ? loadPosition(workId) : null);
+                  const request = requestedChapter.current;
+                  if (request) void loadChapter(request.chapterId, request.restore);
                   else setReloadToken((n) => n + 1);
                 }}
               >

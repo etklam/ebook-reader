@@ -7,7 +7,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { registrationInvites, users, sessions } from '../db/schema.ts';
-import { hashPassword, verifyPassword } from '../auth/password.ts';
+import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from '../auth/password.ts';
 import { SESSION_COOKIE, tokenId, newSession, cookieOpts } from '../auth/session.ts';
 import type { ApiConfig } from '../config.ts';
 import { clientIp, createRateLimiter, rateLimit } from '../http/rate-limit.ts';
@@ -17,6 +17,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export interface AuthDeps {
   db: NodePgDatabase;
+  verifyPassword?: typeof verifyPassword;
   config: Pick<ApiConfig, 'registrationMode' | 'authRateLimit' | 'trustProxy'>;
 }
 
@@ -60,7 +61,8 @@ export function authRoutes(deps: AuthDeps): Hono<{ Variables: { userId: string; 
       .from(users).where(eq(users.email, email.toLowerCase())).limit(1);
     const user = rows[0];
     // uniform error: no account enumeration
-    if (!user || !(await verifyPassword(password, user.passwordHash))) {
+    const validPassword = await (deps.verifyPassword ?? verifyPassword)(password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
+    if (!user || !validPassword) {
       return c.json({ error: 'invalid_credentials' }, 401);
     }
     // credit the successful attempt: the limit exists to stop guessing, not to

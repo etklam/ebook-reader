@@ -17,6 +17,17 @@ export function TableOfContents({ workId, currentChapterId, onJump }: {
 }) {
   const [entries, setEntries] = useState<TocEntry[]>([]);
   const [query, setQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const controller = useRef<AbortController | null>(null);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const commitQuery = (value: string) => {
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    setSearchQuery(value);
+  };
+  useEffect(() => {
+    debounceTimer.current = setTimeout(() => setSearchQuery(query), 250);
+    return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
+  }, [query]);
   const [order, setOrder] = useState<'asc' | 'desc'>('asc');
   const [location, setLocation] = useState<{ target: 'current' | 'latest'; nonce: number }>({ target: 'current', nonce: 0 });
   const [page, setPage] = useState<{ total: number; start: number; next: number | null; version: string } | null>(null);
@@ -29,16 +40,19 @@ export function TableOfContents({ workId, currentChapterId, onJump }: {
   const centre = useRef(true);
 
   const load = useCallback((request: Request) => {
+    controller.current?.abort();
+    const abort = new AbortController();
+    controller.current = abort;
     const generation = ++requestId.current;
     retry.current = request;
     setLoading(true);
     setError(null);
     const replacing = request.direction === 'replace';
     void getToc(workId, request.limit ?? WINDOW, request.offset, {
-      q: query.trim(), order, version: request.version,
-      ...(replacing && !query.trim() ? location.target === 'latest' ? { latest: true }
+      q: searchQuery.trim(), order, version: request.version,
+      ...(replacing && !searchQuery.trim() ? location.target === 'latest' ? { latest: true }
         : currentChapterId ? { aroundChapterId: currentChapterId } : {} : {}),
-    }).then((response) => {
+    }, abort.signal).then((response) => {
       if (generation !== requestId.current) return;
       setEntries((previous) => replacing ? response.chapters
         : request.direction === 'before' ? [...response.chapters, ...previous] : [...previous, ...response.chapters]);
@@ -49,18 +63,18 @@ export function TableOfContents({ workId, currentChapterId, onJump }: {
       }));
       if (replacing) setAnchorMissing(response.anchorMissing);
     }).catch((failure: unknown) => {
-      if (generation !== requestId.current) return;
+      if (generation !== requestId.current || abort.signal.aborted) return;
       setError(failure instanceof ApiRequestError && failure.code === 'toc_version_changed' ? 'version' : 'request');
     }).finally(() => { if (generation === requestId.current) setLoading(false); });
-  }, [workId, currentChapterId, query, order, location]);
+  }, [workId, currentChapterId, searchQuery, order, location]);
 
   useEffect(() => {
-    setEntries([]);
-    setPage(null);
     setAnchorMissing(false);
     centre.current = true;
     load({ offset: 0, direction: 'replace' });
-    return () => { requestId.current++; };
+    // Counter invalidation intentionally increments the latest request generation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { requestId.current++; controller.current?.abort(); };
   }, [load]);
 
   useEffect(() => {
@@ -71,7 +85,7 @@ export function TableOfContents({ workId, currentChapterId, onJump }: {
 
   const locate = (target: 'current' | 'latest') => {
     requestId.current++;
-    setQuery('');
+    setQuery(''); commitQuery('');
     setLocation((previous) => ({ target, nonce: previous.nonce + 1 }));
   };
 
@@ -86,7 +100,9 @@ export function TableOfContents({ workId, currentChapterId, onJump }: {
         <input id="toc-search" className="input" type="search" value={query} maxLength={200}
           onChange={(event) => {
             requestId.current++;
+            controller.current?.abort();
             setQuery(event.target.value);
+            if (!event.target.value) commitQuery('');
             setLocation((previous) => previous.target === 'current' ? previous : { ...previous, target: 'current' });
           }} />
       </div>
@@ -94,6 +110,7 @@ export function TableOfContents({ workId, currentChapterId, onJump }: {
         <label className="field">{t('章節順序')}
           <select className="input" value={order} onChange={(event) => {
             requestId.current++;
+            commitQuery(query);
             setOrder(event.target.value as 'asc' | 'desc');
           }}>
             <option value="asc">{t('正序')}</option><option value="desc">{t('倒序')}</option>

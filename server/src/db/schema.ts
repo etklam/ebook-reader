@@ -75,6 +75,7 @@ export const works = app.table('works', {
   serialStatus: text('serial_status', { enum: ['ongoing', 'completed', 'paused'] }),
   description: text('description').notNull().default(''),
   editVersion: integer('edit_version').notNull().default(1),
+  tocVersion: text('toc_version').notNull().default('initial'),
   // composite FK works_active_release_fk (active_release_id, id) →
   // work_releases(id, work_id) added by hand in 0004_m6 — a work can never
   // point at another work's release
@@ -183,7 +184,6 @@ export const chapters = app.table('chapters', {
   // chapters_work_position_uq is DEFERRABLE INITIALLY DEFERRED in the
   // migration SQL (§16A-C) — mid-sequence insertions shift a range in one tx
   unique('chapters_work_position_uq').on(t.workId, t.editorialPosition),
-  index('chapters_work_position_idx').on(t.workId, t.editorialPosition),
   unique('chapters_id_work_uq').on(t.id, t.workId),
   unique('chapters_work_public_id_uq').on(t.workId, t.publicId),
   index('chapters_merged_into_idx').on(t.mergedIntoChapterId),
@@ -440,7 +440,6 @@ export const userFollows = app.table('user_follows', {
   followedAt: createdAt(),
 }, (t) => [
   primaryKey({ columns: [t.userId, t.workId] }),
-  index('user_follows_user_idx').on(t.userId),
 ]);
 
 export const readingProgress = app.table('reading_progress', {

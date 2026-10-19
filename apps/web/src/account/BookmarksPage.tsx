@@ -53,6 +53,8 @@ export function BookmarksPage() {
     setEntries(null);
     setEditingId(null);
     if (me) void refresh();
+    // Counter invalidation intentionally increments the latest request generation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => { generation.current++; };
   }, [me, refresh]);
 

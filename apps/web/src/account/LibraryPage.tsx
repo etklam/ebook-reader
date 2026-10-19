@@ -77,6 +77,8 @@ export function LibraryPage() {
   }, [readingStatus, groupFilter]);
   useEffect(() => {
     if (me) { setEntries(null); setNextCursor(null); void refresh(); }
+    // Counter invalidation intentionally increments the latest request generation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => { requestVersion.current++; };
   }, [me, refresh]);
 

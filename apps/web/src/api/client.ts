@@ -1,8 +1,12 @@
 // Shared API client: same-origin credentials, JSON parsing, typed errors.
 // Member state endpoints throw ProgressConflict so the reader can resolve.
 export class ApiRequestError extends Error {
-  constructor(public status: number, public code: string, public body?: unknown) {
+  public status: number;
+  public code: string;
+  public body?: unknown;
+  constructor(status: number, code: string, body?: unknown) {
     super(`api ${status}: ${code}`);
+    this.status = status; this.code = code; this.body = body;
   }
 }
 
@@ -76,10 +80,10 @@ export const getWorkDetail = (id: string) => api<WorkDetail>(`/api/works/${encod
 export const getWork = (id: string) => api<ReaderWork>(`/api/reader/works/${encodeURIComponent(id)}`);
 export const getToc = (id: string, limit: number, offset: number, options: {
   aroundChapterId?: string; latest?: boolean; q?: string; order?: 'asc' | 'desc'; version?: string;
-} = {}) => {
+} = {}, signal?: AbortSignal) => {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   for (const [key, value] of Object.entries(options)) if (value !== undefined) params.set(key, String(value));
-  return api<TocResponse>(`/api/reader/works/${encodeURIComponent(id)}/chapters?${params}`);
+  return api<TocResponse>(`/api/reader/works/${encodeURIComponent(id)}/chapters?${params}`, { signal });
 };
 // `work` is only needed when `id` is a chapter public id, which is unique per
 // work rather than globally (server/src/db/schema.ts). Internal navigation

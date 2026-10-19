@@ -78,7 +78,7 @@ let work = '';            // public, published
 let hidden = '';          // unlisted, published — readable by URL, never listed
 let categoryId = '';
 let workPublicId = '';
-let firstChapter = { id: '', publicId: '', labelRaw: '' };
+let firstChapter = { id: '', publicId: '', labelRaw: '', title: '' };
 
 before(async () => {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL ?? '', max: 1 });
@@ -108,9 +108,12 @@ before(async () => {
 
   [{ public_id: workPublicId }] = await q(`select public_id from app.works where id=$1`, [work]) as Array<{ public_id: string }>;
   const [row] = await q(
-    `select id, public_id, label_raw from app.chapters where work_id=$1 order by editorial_position limit 1`, [work],
-  ) as Array<{ id: string; public_id: string; label_raw: string }>;
-  firstChapter = { id: row.id, publicId: row.public_id, labelRaw: row.label_raw };
+    `select c.id, c.public_id, ri.label_raw, ri.title
+       from app.chapters c join app.release_items ri on ri.chapter_id=c.id
+       join app.works w on w.active_release_id=ri.release_id
+       where w.id=$1 order by ri.editorial_position limit 1`, [work],
+  ) as Array<{ id: string; public_id: string; label_raw: string; title: string }>;
+  firstChapter = { id: row.id, publicId: row.public_id, labelRaw: row.label_raw, title: row.title };
 });
 
 after(async () => {
@@ -154,7 +157,7 @@ test('SEO-01: public_id is generated from the row id and is unique', async () =>
   // generated always: it cannot be written, so no insert path can get it wrong
   await assert.rejects(
     () => q(`update app.works set public_id='deadbeef' where id=$1`, [work]),
-    /generated/i,
+    { code: '428C9' }, // generated_always; independent of PostgreSQL error wording
   );
 });
 
@@ -267,7 +270,7 @@ test('SEO-08: work and chapter sitemaps carry canonical slug URLs, and never an 
   const chapters = await (await app.request('/sitemap-chapters-1.xml')).text();
   const chapterUrl = readPath(
     { title: TITLE(), publicId: workPublicId },
-    { labelRaw: firstChapter.labelRaw, title: '', publicId: firstChapter.publicId },
+    { labelRaw: firstChapter.labelRaw, title: firstChapter.title, publicId: firstChapter.publicId },
   );
   assert.ok(chapters.includes(encodeURI(chapterUrl)), `chapters sitemap should contain ${chapterUrl}`);
 

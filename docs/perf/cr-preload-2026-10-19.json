@@ -1,0 +1,21 @@
+{
+  "recordedAt": "2026-10-19T15:57:51.635Z",
+  "browser": "153.0.8010.0",
+  "viewport": "390x844",
+  "font": "24px/2 serif",
+  "conditions": "one sample per case, real localhost API + PostgreSQL + file storage, warm filesystem; fresh anonymous browser contexts; no network throttling",
+  "cases": [
+    {
+      "preloaded": false,
+      "navigationMs": 297.77765699999964,
+      "bodyRequestsBeforeNavigation": 0,
+      "bodyRequestsDuringNavigation": 1
+    },
+    {
+      "preloaded": true,
+      "navigationMs": 304.08032300000013,
+      "bodyRequestsBeforeNavigation": 1,
+      "bodyRequestsDuringNavigation": 0
+    }
+  ]
+}

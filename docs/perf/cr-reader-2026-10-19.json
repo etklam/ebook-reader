@@ -1,0 +1,31 @@
+{
+  "recordedAt": "2026-10-19T15:55:53.572Z",
+  "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.0 Safari/537.36",
+  "viewport": "390x844",
+  "font": "18px/1.9 serif",
+  "mode": "scroll",
+  "images": 0,
+  "scenario": "90 near-end position lookups, 80–99% of chapter, one per animation frame",
+  "results": [
+    {
+      "paragraphs": 100,
+      "captures": 90,
+      "geometryReads": 609,
+      "p50Ms": 0.09999999403953552,
+      "p95Ms": 0.20000000298023224,
+      "frameP95Ms": 16.799999999999955,
+      "longTasksMs": []
+    },
+    {
+      "paragraphs": 5000,
+      "captures": 90,
+      "geometryReads": 1121,
+      "p50Ms": 0.29999999701976776,
+      "p95Ms": 0.5,
+      "frameP95Ms": 16.800000000000182,
+      "longTasksMs": [
+        1332
+      ]
+    }
+  ]
+}

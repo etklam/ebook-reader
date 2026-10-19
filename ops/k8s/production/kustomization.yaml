@@ -7,3 +7,4 @@ resources:
   - 03-api-worker.yaml
   - 04-web-ingress.yaml
   - 05-migrate.yaml
+  - 06-network-policy.yaml

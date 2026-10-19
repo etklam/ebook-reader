@@ -5,7 +5,7 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
 import type { Storage } from '../storage.ts';
 import { searchExportRoutes } from './search-export.ts';
-import { works } from '../db/schema.ts';
+import { works, chapters as chapterTable } from '../db/schema.ts';
 
 const workId = '00000000-0000-0000-0000-000000000001';
 const releaseId = '00000000-0000-0000-0000-000000000002';
@@ -33,7 +33,7 @@ function fixture(visibility = 'public', missing = false, count = 55, hits?: Set<
     if (missing) throw new Error('missing');
     return Buffer.from(!hits || hits.has(Number(key)) ? '序言\n\n小龍出現了。' : '沒有搜尋用字');
   } } as unknown as Storage;
-  return { app: searchExportRoutes({ db, storage }), filters, reads, work, chapters };
+  return { app: searchExportRoutes({ db, storage }), filters, reads, work, chapters, storage };
 }
 
 test('search route pages in release order and links exact canonical paragraph/revision', async () => {
@@ -132,4 +132,54 @@ test('book search rate-limits repeated requests before scanning storage', async 
   assert.equal(response.status, 429);
   assert.ok(Number(response.headers.get('retry-after')) > 0);
   assert.equal(filters.length, 0);
+});
+
+test('body candidate rejection preserves a title-only hit without reading canonical bodies', async () => {
+  const { app, storage, chapters, reads } = fixture('public', false, 3);
+  storage.searchCandidate = async () => false;
+  chapters[2].title = 'Title-only keyword';
+  const response = await app.request(`/api/reader/works/${workId}/search?q=keyword`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.results.length, 1);
+  assert.equal(body.results[0].chapterId, 'chapter-2');
+  assert.equal(body.results[0].paragraphIndex, 0);
+  assert.deepEqual(reads, []);
+});
+
+test('export route rejects over-budget data before reads and admits one serializer at a time', async () => {
+  const { EXPORT_MAX_BYTES } = await import('../export/formatters.ts');
+  const work = { id: workId, title: 'Export test', author: null, description: null, visibility: 'draft' };
+  const chapter = { chapterId: 'c', revisionId: 'r', contentKey: 'body', title: 'Chapter', labelRaw: '1' };
+  const db = { select() {
+    let rows: unknown[] = [];
+    const chain = {
+      from(table: unknown) { rows = table === works ? [work] : table === chapterTable ? [chapter] : []; return chain; },
+      leftJoin() { return chain; }, where() { return chain; },
+      limit() { return Promise.resolve(rows); }, orderBy() { return Promise.resolve(rows); },
+      then(resolve: (value: unknown[]) => unknown) { return Promise.resolve(rows).then(resolve); },
+    }; return chain;
+  } } as unknown as NodePgDatabase;
+  let bytes = EXPORT_MAX_BYTES + 1;
+  let reads = 0;
+  let release!: (value: Buffer) => void;
+  const storage = {
+    async size() { return bytes; },
+    async get() { reads++; return new Promise<Buffer>(resolve => { release = resolve; }); },
+  } as unknown as Storage;
+  const app = searchExportRoutes({ db, storage });
+  const path = `/api/admin/works/${workId}/export?version=head&format=txt`;
+  const rejected = await app.request(path);
+  assert.equal(rejected.status, 413); assert.equal((await rejected.json()).error, 'export_too_large');
+  assert.equal(reads, 0);
+  bytes = 5;
+  const first = app.request(path);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(reads, 1);
+  const busy = await app.request(path);
+  assert.equal(busy.status, 429); assert.equal((await busy.json()).error, 'export_busy');
+  assert.equal(busy.headers.get('retry-after'), '5');
+  release(Buffer.from('hello'));
+  const completed = await first;
+  assert.equal(completed.status, 200); assert.match(await completed.text(), /hello/);
 });

@@ -17,7 +17,7 @@ const entry = { id: B, workId: W, workTitle: '長篇目錄測試', chapterId: C,
 async function readerMocks(page: Page) {
   await page.route('**/api/me', (route) => route.fulfill({ json: { user: null } }));
   await page.route(`**/api/reader/works/${W}`, (route) => route.fulfill({ json: metadata }));
-  await page.route(`**/api/reader/chapters/${C}`, (route) => route.fulfill({ json: chapter }));
+  await page.route(`**/api/reader/chapters/${C}*`, (route) => route.fulfill({ json: chapter }));
   await page.goto(`/read/${W}/${C}`);
   await expect(page.locator('[data-paragraph-index="0"]')).toBeVisible();
   await page.locator('[data-paragraph-index="0"]').click();
@@ -153,4 +153,32 @@ test('bookmarks: retain failed note input, clear/save, remote work choices, pagi
   await expect(card).toBeVisible();
   expect(undo).toMatchObject({ workId: OLD, chapterId: C, revisionId: R, paragraphIndex: 0, note: 'x'.repeat(500) });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('TOC coalesces a typing burst and clearing search loads immediately', async ({ page }) => {
+  const queries: string[] = [];
+  await page.route(`**/api/reader/works/${W}/chapters?*`, route => {
+    const q = new URL(route.request().url()).searchParams.get('q') ?? '';
+    queries.push(q);
+    return route.fulfill({ json: { total: 1, offset: 0, version: 'v1', anchorMissing: false,
+      previousOffset: null, nextOffset: null,
+      chapters: [{ id: C, labelRaw: '第847章', title: q || '故事', editorialPosition: 847, revisionId: R, volumeId: null }],
+    } });
+  });
+  await page.clock.install({ time: new Date('2026-10-19T00:00:00Z') });
+  await readerMocks(page);
+  await expect(page.getByRole('navigation', { name: '章節目錄' }).getByText('故事')).toBeVisible();
+  await page.clock.pauseAt(new Date('2026-10-19T00:01:00Z'));
+  const search = page.getByLabel('搜尋章名或章號');
+  const initial = queries.length;
+  for (const word of ['山', '山川', '山川河', '山川河流']) {
+    await search.fill(word); await page.clock.fastForward(40);
+  }
+  expect(queries.length).toBe(initial);
+  await page.clock.fastForward(250);
+  await expect.poll(() => queries.slice(initial)).toEqual(['山川河流']);
+  expect(queries.at(-1)).toBe('山川河流');
+  await page.getByRole('button', { name: '清除搜尋', exact: true }).click();
+  await expect.poll(() => queries.slice(initial)).toEqual(['山川河流', '']);
+  expect(queries.at(-1)).toBe('');
 });

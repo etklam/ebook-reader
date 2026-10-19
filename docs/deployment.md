@@ -56,3 +56,17 @@ Expected: API, DB, web and worker deployments are ready; `ebook-migrate` complet
 ## Rollback
 
 For an application-only regression, first verify the previous immutable image is still available. Then use `kubectl -n ebook-reader rollout undo deployment/ebook-api`, `ebook-worker`, or `ebook-web` for the affected workload and confirm readiness and HTTPS/API behavior. Do not roll back PostgreSQL schema changes independently: migrations must remain compatible with the immediately previous application release, and data/schema recovery requires the database backup procedure in [`beta-runbook.md`](beta-runbook.md).
+
+## 2026-10-20 CR hardening rollout
+
+Migration 0014 adds `works.toc_version` and bulk chapter mutation triggers; 0015 removes duplicate indexes while retaining the deferrable unique constraint and follows primary key. Apply migrations before the new API. Rollback details and local evidence are in [CR verification](tickets/codebase-review-2026-10-19/verification.md).
+
+The trusted path is external client → Traefik → nginx → API. Before enabling `TRUST_PROXY=true`, apply `06-network-policy.yaml` and verify the CNI enforces it: only the selected kube-system Traefik pods reach web:8080, and only web pods reach API:3000. Verify the actual Traefik namespace/labels and disable `forwardedHeaders.insecure`; trust only explicitly configured upstream CIDRs if a CDN/proxy precedes Traefik. nginx takes Traefik's sanitized `X-Real-IP` and sends one validated address to the API, overwriting client XFF. Do not expose this nginx config outside that isolation. The API default remains `TRUST_PROXY=false`.
+
+HTML uses enforce CSP and `no-cache`; `/assets/` uses immutable cache and missing assets return 404. Preserve assets across deployments if old open tabs must keep loading old chunks: cache headers cannot preserve files. HSTS is set for this HTTPS-only ingress topology. Plain HTTP deployments must remove HSTS and configure forwarded protocol for their own topology.
+
+Run `BASE_URL=https://book.7182818.xyz pnpm ops:check-web` after rollout. The release workflow also checks HTML CSP, nosniff and no-cache. `client_max_body_size 55m` supports the current 50MiB EPUB upload limit including multipart overhead; increases to `IMPORT_MAX_EPUB_BYTES` or `IMPORT_MAX_TXT_BYTES` require a matching nginx limit increase.
+
+Canonical TXT objects get private `.sidx` candidate filters. Existing objects backfill on first search; an optional serial backfill is `STORAGE_ROOT=/data node server/scripts/backfill-search-index.mjs` in the worker environment. Missing/corrupt filters fall back to canonical scanning. The removal command is the same with `--remove`; stop index-generating code first. Short queries and saturated filters may still scan a full work.
+
+Exports admit one serializer per API process and at most 16MiB of canonical text plus attachments. Over-budget exports return 413 `export_too_large`; concurrent serialization returns 429 `export_busy`. This conservative budget was selected after local peak-RSS tests, including dense XML escapes and millions of paragraphs. Re-measure before raising the cap, increasing replicas or changing container memory limits.

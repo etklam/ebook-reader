@@ -1,0 +1,47 @@
+{
+  "recordedAt": "2026-10-19T15:43:03.967Z",
+  "node": "v24.22.0",
+  "platform": "linux/x64",
+  "chapters": 5000,
+  "corpusBytes": 512000000,
+  "storage": "real temporary local files, warm filesystem cache",
+  "metadata": "stubbed; does not measure PostgreSQL, network, rate-limit throughput or production performance",
+  "cases": [
+    {
+      "query": "小龍",
+      "concurrency": 1,
+      "samples": 3,
+      "p50Ms": 48.37066099999993,
+      "p95Ms": 49.75302599999986,
+      "readsPerRequest": 56,
+      "bytesPerRequest": 5734400
+    },
+    {
+      "query": "小龍",
+      "concurrency": 4,
+      "samples": 12,
+      "p50Ms": 156.0186990000002,
+      "p95Ms": 171.40849200000002,
+      "readsPerRequest": 56,
+      "bytesPerRequest": 5734400
+    },
+    {
+      "query": "未命中詞",
+      "concurrency": 1,
+      "samples": 3,
+      "p50Ms": 2447.9815390000003,
+      "p95Ms": 2483.06218,
+      "readsPerRequest": 5000,
+      "bytesPerRequest": 512000000
+    },
+    {
+      "query": "未命中詞",
+      "concurrency": 4,
+      "samples": 12,
+      "p50Ms": 7218.062793000001,
+      "p95Ms": 7741.65034,
+      "readsPerRequest": 5000,
+      "bytesPerRequest": 512000000
+    }
+  ]
+}

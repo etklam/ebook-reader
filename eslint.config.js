@@ -5,10 +5,16 @@
 // install per TS 7 announcement). Packages keep their own typescript 7.0.2.
 import tseslint from 'typescript-eslint';
 import globals from 'globals';
+import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   { ignores: ['**/dist/**', '**/node_modules/**', 'm0/**'] },
   ...tseslint.configs.recommended,
+  {
+    files: ['apps/web/src/**/*.{ts,tsx}'],
+    plugins: { 'react-hooks': reactHooks },
+    rules: { 'react-hooks/rules-of-hooks': 'error', 'react-hooks/exhaustive-deps': 'error' },
+  },
   {
     languageOptions: {
       globals: { ...globals.node, ...globals.browser },

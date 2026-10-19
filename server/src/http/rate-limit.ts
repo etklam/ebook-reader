@@ -9,6 +9,7 @@
 // Why login needs this at all: scrypt at N=16384 costs ~50-100 ms of CPU per
 // attempt, so an unthrottled /api/auth/login is simultaneously an unlimited
 // password-guessing oracle and a cheap CPU-exhaustion vector.
+import { isIP } from 'node:net';
 import type { Context, MiddlewareHandler } from 'hono';
 
 export interface RateLimitRule {
@@ -111,10 +112,10 @@ export function createRateLimiter(rule: RateLimitRule, maxKeys = 10_000): RateLi
  */
 export function clientIp(c: Context, trustProxy: boolean): string {
   if (trustProxy) {
-    // left-most entry is the original client; the proxy appends its own peer
-    const fwd = c.req.header('x-forwarded-for');
-    const first = fwd?.split(',')[0]?.trim();
-    if (first) return first;
+    // nginx overwrites XFF with one address after trusted ingress validation.
+    // Reject chains instead of selecting an attacker-controlled first element.
+    const forwarded = c.req.header('x-forwarded-for')?.trim();
+    if (forwarded && isIP(forwarded)) return forwarded;
   }
   const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
   return env?.incoming?.socket?.remoteAddress ?? 'unknown';

@@ -21,10 +21,12 @@
     "perf:measure": "pnpm --filter server perf:measure",
     "backup": "pnpm --filter server backup",
     "restore:verify": "pnpm --filter server restore:verify",
-    "ops:check": "pnpm --filter server ops:check"
+    "ops:check": "pnpm --filter server ops:check",
+    "ops:check-web": "node server/scripts/check-web-headers.mjs"
   },
   "devDependencies": {
     "eslint": "^10.11.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.12.0",
     "typescript": "6.0.3",
     "typescript-eslint": "^8.71.0"

@@ -189,7 +189,7 @@ export function CatalogPage() {
     setNextCursor(null);
     setTotal(null);
     if (sessionLoading) return;
-    if (filter.hideFinished && !me) {
+    if (filter.hideFinished && !me?.id) {
       setLoading(false);
       setFailed(false);
       setLoginRequired(true);

@@ -1,8 +1,9 @@
 // Private storage adapter (§16A-D): local volume now, S3-compatible later.
 // Keys are server-generated only; callers can never pass a raw path.
+import { buildBodyIndex, bodyIndexMayContain } from './search/body-index.ts';
 import { randomUUID } from 'node:crypto';
 import { access, mkdir, readFile, readdir, stat, writeFile, unlink } from 'node:fs/promises';
-import type { Dirent } from 'node:fs';
+import { constants, type Dirent } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 const KEY_RE = /^[0-9a-f]{2}\/[0-9a-f-]+\.[a-z0-9]+$/;
@@ -10,6 +11,10 @@ const KEY_RE = /^[0-9a-f]{2}\/[0-9a-f-]+\.[a-z0-9]+$/;
 export interface Storage {
   put(data: Buffer, ext: string): Promise<string>; // → storage key
   get(key: string): Promise<Buffer>;
+  /** object size without loading content; optional for alternate adapters */
+  size?(key: string): Promise<number>;
+  /** Optional conservative candidate filter; true means inspect canonical body. */
+  searchCandidate?(key: string, variants: readonly string[]): Promise<boolean>;
   /** cheap existence check (publish validation must not read every body) */
   exists(key: string): Promise<boolean>;
   /** idempotent: deleting an already-missing object is success */
@@ -39,11 +44,32 @@ export function localStorage(root: string): Storage {
       const path = join(root, key);
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, data);
+      // Derived index failures never fail an import or affect canonical content.
+      if (ext === 'txt') await writeFile(`${path}.sidx`, buildBodyIndex(data.toString('utf8'))).catch(() => undefined);
       return key;
     },
     async get(key) {
       return readFile(resolve(key));
     },
+    async searchCandidate(key, variants) {
+      if (variants.some(term => Array.from(term).length < 3)) return true;
+      const path = resolve(key);
+      try {
+        await access(path, constants.R_OK); // a stale sidecar must not hide unreadable content
+        return bodyIndexMayContain(await readFile(`${path}.sidx`), variants);
+      }
+      catch {
+        // Existing objects backfill on first access. Missing/failed indexes fall
+        // back to canonical reads, never to an empty result set.
+        try {
+          const body = await readFile(path);
+          const index = buildBodyIndex(body.toString('utf8'));
+          await writeFile(`${path}.sidx`, index);
+          return bodyIndexMayContain(index, variants);
+        } catch { return true; }
+      }
+    },
+    async size(key) { return (await stat(resolve(key))).size; },
     async exists(key) {
       try {
         await access(resolve(key));
@@ -53,6 +79,7 @@ export function localStorage(root: string): Storage {
       }
     },
     async delete(key) {
+      await unlink(`${resolve(key)}.sidx`).catch(() => undefined);
       await unlink(resolve(key)).catch((e: NodeJS.ErrnoException) => {
         if (e.code !== 'ENOENT') throw e;
       });

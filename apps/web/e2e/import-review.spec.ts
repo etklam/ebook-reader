@@ -14,7 +14,8 @@ async function setup(page: Page, stale = false) {
     const url = new URL(route.request().url()); const path = url.pathname;
     if (!path.startsWith('/api/')) return route.continue();
     let json: unknown = {};
-    if (path === '/api/me') json = { user: { id: 'admin', role: 'admin', isMember: true } };
+    if (path.startsWith('/api/admin/taxonomy/')) json = { items: [] };
+    else if (path === '/api/me') json = { user: { id: 'admin', role: 'admin', isMember: true } };
     else if (path === '/api/admin/imports' && route.request().method() === 'POST') return route.fulfill({ status: 201, json: { importId: id, sourceFileId: 'source-file' } });
     else if (path === `/api/admin/imports/${id}`) json = { id, workId: work, status: applied ? 'applied' : 'ready', detectedEncoding: 'utf-8', chapterCount: 4, encodingResult: { confidence: 'high', reason: 'UTF-8', warnings: [] }, stagedChapters: 4, stagedNeedsReview: 0, committedWorkId: null, sourceFile: null };
     else if (path.endsWith('/chapters')) json = { total: 0, page: 1, limit: 50, chapters: [] };

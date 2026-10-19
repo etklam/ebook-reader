@@ -1,0 +1,42 @@
+# IP trust depends on this ingress isolation and a CNI enforcing NetworkPolicy.
+# Keep selectors aligned with the installed Traefik deployment.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ebook-web-from-traefik
+  namespace: ebook-reader
+spec:
+  podSelector:
+    matchLabels:
+      app: ebook-web
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ebook-api-from-web
+  namespace: ebook-reader
+spec:
+  podSelector:
+    matchLabels:
+      app: ebook-api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ebook-web
+      ports:
+        - protocol: TCP
+          port: 3000

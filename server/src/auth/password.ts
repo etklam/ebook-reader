@@ -19,6 +19,8 @@ export async function hashPassword(password: string): Promise<string> {
 
 // Robust against malformed/corrupted stored hashes (stabilization §16): a
 // bad row must fail closed (false), never crash the login path.
+export const DUMMY_PASSWORD_HASH = `scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$${Buffer.alloc(64).toString('base64')}`;
+
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const parts = stored.split('$');
   if (parts.length !== 6 || parts[0] !== 'scrypt') return false;

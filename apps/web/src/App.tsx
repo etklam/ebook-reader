@@ -116,21 +116,21 @@ function staticHead(): Partial<Record<ReturnType<typeof parsePath>['page'], Head
 
 // SPA navigate: pushState + popstate so back/forward behave natively
 export function navigate(path: string): void {
-  if (location.pathname + location.search === path) return;
+  if (location.pathname + location.search + location.hash === path) return;
   history.pushState(null, '', path);
   dispatchEvent(new PopStateEvent('popstate'));
 }
 
 export function App() {
-  const [loc, setLoc] = useState(location.pathname + location.search);
+  const [loc, setLoc] = useState(location.pathname + location.search + location.hash);
   const { locale } = useLocale();
   useEffect(() => {
-    const onPop = () => setLoc(location.pathname + location.search);
+    const onPop = () => setLoc(location.pathname + location.search + location.hash);
     addEventListener('popstate', onPop);
     return () => removeEventListener('popstate', onPop);
   }, []);
 
-  const path = loc.split('?')[0];
+  const path = loc.split(/[?#]/)[0];
   const route = parsePath(path);
 
   // Head for the routes whose title is known from the path alone. /works and
@@ -143,8 +143,11 @@ export function App() {
 
   // the reader owns its whole surface; no global chrome there
   if (route.page === 'reader') {
+    const ref = parseRef(route.route.workRef)!;
+    // public_id is generated from the first eight UUID hex characters.
+    const workKey = 'uuid' in ref ? ref.uuid.slice(0, 8) : ref.publicId;
     return <PageBoundary key={route.page}><Suspense fallback={<main className="app-main"><PageLoading /></main>}>
-      <ReaderPage key={route.route.workRef} workRef={route.route.workRef} initialChapterRef={route.route.chapterRef} />
+      <ReaderPage key={workKey} workRef={route.route.workRef} initialChapterRef={route.route.chapterRef} initialHash={loc.includes('#') ? loc.slice(loc.indexOf('#')) : ''} />
     </Suspense></PageBoundary>;
   }
 

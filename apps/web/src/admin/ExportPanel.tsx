@@ -61,6 +61,8 @@ export function ExportPanel({ workId, refresh = 0 }: { workId: string; refresh?:
       const code = error instanceof ApiRequestError ? error.code : '';
       setMessage(error instanceof ApiRequestError && [401, 403].includes(error.status)
         ? t('管理員登入已失效或權限不足，請重新登入管理後台。')
+        : code === 'export_too_large' ? t('這個版本超過匯出容量上限（正文及附件合計 16 MiB），請縮小作品或移除不需要的附件。')
+        : code === 'export_busy' ? t('另一項匯出正在處理，請稍後再試。')
         : code === 'content_unavailable'
           ? t('這個版本的章節或圖片檔案缺失，無法完整匯出。請先檢查並修復儲存檔案，或選擇其他完整版本。')
           : code === 'no_chapters' ? t('這個版本沒有可匯出的章節，請選擇其他版本。')

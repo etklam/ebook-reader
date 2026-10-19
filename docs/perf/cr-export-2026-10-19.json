@@ -1,0 +1,55 @@
+{
+  "recordedAt": "2026-10-19T15:55:30.151Z",
+  "node": "v24.22.0",
+  "environment": "Linux x64, one fresh child per case, local canonical file, 512MiB V8 heap, maxRSS includes runtime",
+  "results": [
+    {
+      "content": "prose",
+      "format": "txt",
+      "rawBytes": 16777216,
+      "responseBytes": 16777274,
+      "ms": 139.89538900000002,
+      "peakRssMiB": 132.36328125
+    },
+    {
+      "content": "prose",
+      "format": "epub",
+      "rawBytes": 16777216,
+      "responseBytes": 57626,
+      "ms": 874.529187,
+      "peakRssMiB": 214.64453125
+    },
+    {
+      "content": "xml-escape",
+      "format": "txt",
+      "rawBytes": 16777216,
+      "responseBytes": 16777272,
+      "ms": 109.09347900000003,
+      "peakRssMiB": 172.51953125
+    },
+    {
+      "content": "xml-escape",
+      "format": "epub",
+      "rawBytes": 16777216,
+      "responseBytes": 124258,
+      "ms": 3498.927376,
+      "peakRssMiB": 532.73046875
+    },
+    {
+      "content": "paragraphs",
+      "format": "txt",
+      "rawBytes": 16777216,
+      "responseBytes": 16777272,
+      "ms": 139.74921799999998,
+      "peakRssMiB": 172.453125
+    },
+    {
+      "content": "paragraphs",
+      "format": "epub",
+      "rawBytes": 16777216,
+      "responseBytes": 99762,
+      "ms": 5581.959648999999,
+      "peakRssMiB": 448.421875
+    }
+  ]
+}

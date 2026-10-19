@@ -6,7 +6,8 @@ import { seedEnv } from '../e2e/seed.ts';
 const output = process.argv[2];
 if (!output) throw new Error('usage: node scripts/preload-performance.mjs /tmp/preload.json (api + worker + web required)');
 const seed = await seedEnv(`prefetch-${Date.now().toString(36)}`);
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+  ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE, args: ['--no-sandbox'] } : {}) });
 try {
   const workId = await seed.publish('base-180.txt', '預載量測暫存作品');
   const work = await (await fetch(`http://localhost:3000/api/reader/works/${workId}`)).json();
@@ -15,6 +16,9 @@ try {
   const cases = [];
   for (const preloaded of [false, true]) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    // Keep the fixture longer than one screen on Linux/macOS font metrics;
+    // short chapters intentionally prefetch at the top and cannot be a control.
+    await context.addInitScript(() => localStorage.setItem('ebook:reader-settings', JSON.stringify({ v: 2, fontSize: 24, lineHeight: 2, mode: 'scroll' })));
     const page = await context.newPage();
     let chapterRequests = 0;
     page.on('request', (request) => {
@@ -28,7 +32,7 @@ try {
       await page.locator('.reader-scroll').evaluate((element) => { element.scrollTop = element.scrollHeight * 0.9; });
       expect((await response).status()).toBe(200);
     } else {
-      expect(chapterRequests).toBe(0);
+      expect(chapterRequests, JSON.stringify(await page.locator('.reader-scroll').evaluate(el => ({ top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })))).toBe(0);
     }
     await page.locator('.reader-scroll').click({ position: { x: 180, y: 200 } });
     await expect(page.getByRole('button', { name: '下一章', exact: true })).toBeVisible();
@@ -40,7 +44,7 @@ try {
       bodyRequestsBeforeNavigation: beforeNavigation, bodyRequestsDuringNavigation: chapterRequests - beforeNavigation });
     await context.close();
   }
-  const result = { recordedAt: new Date().toISOString(), browser: browser.version(), viewport: '390x844',
+  const result = { recordedAt: new Date().toISOString(), browser: browser.version(), viewport: '390x844', font: '24px/2 serif',
     conditions: 'one sample per case, real localhost API + PostgreSQL + file storage, warm filesystem; fresh anonymous browser contexts; no network throttling', cases };
   await writeFile(output, JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));

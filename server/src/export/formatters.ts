@@ -4,6 +4,10 @@ import type { Storage } from '../storage.ts';
 
 const IMAGE_RE = /\[\[img:([0-9a-f]{64})\]\]/gi;
 export class ExportContentUnavailable extends Error {}
+export class ExportTooLarge extends Error {}
+// Input budget leaves room for Unicode strings, escaped XML, ZIP and response
+// buffers in the 768Mi API container. Only one export is admitted at a time.
+export const EXPORT_MAX_BYTES = 16 * 1024 * 1024;
 export type ExportChapter = { chapterId: string; revisionId: string | null; labelRaw: string; title: string | null; contentKey: string | null };
 export type ExportResource = { revisionId: string; hash: string; alt: string; mediaType: string | null; storageKey: string | null };
 type LoadedResource = ExportResource & { mediaType: string; storageKey: string };
@@ -20,8 +24,23 @@ export interface BookFormatter {
 }
 
 function xml(value: string): string {
-  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;').replaceAll("'", '&apos;');
+  // Bound replaceAll's temporary ropes for adversarially dense '&' text.
+  const chunks: string[] = [];
+  for (let start = 0; start < value.length; start += 16_384) {
+    chunks.push(value.slice(start, start + 16_384).replaceAll('&', '&amp;').replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;'));
+  }
+  return chunks.join('');
+}
+
+function* exportParagraphs(body: string) {
+  const text = body.trim();
+  let start = 0;
+  for (const match of text.matchAll(/\n\s*\n/g)) {
+    yield text.slice(start, match.index);
+    start = match.index + match[0].length;
+  }
+  yield text.slice(start);
 }
 
 function imageExtension(mediaType: string): string | null {
@@ -30,8 +49,30 @@ function imageExtension(mediaType: string): string | null {
 
 export async function loadExportBook(
   metadata: Pick<ExportBook, 'work' | 'versionLabel' | 'modifiedAt'>,
-  chapters: ExportChapter[], resources: ExportResource[], storage: Pick<Storage, 'get'>,
+  chapters: ExportChapter[], resources: ExportResource[], storage: Pick<Storage, 'get' | 'size'>, maxBytes = EXPORT_MAX_BYTES,
 ): Promise<ExportBook> {
+  let loadedBytes = 0;
+  const checkBudget = (bytes: number) => {
+    loadedBytes += bytes;
+    if (loadedBytes > maxBytes) throw new ExportTooLarge();
+  };
+  // Reject before loading all bodies/images. Resource rows may include unused
+  // attachments; counting them conservatively keeps this check inexpensive.
+  if (storage.size) {
+    const keys = new Set([...chapters.map((c) => c.contentKey), ...resources.map((r) => r.storageKey)]);
+    let total = 0;
+    for (const key of keys) {
+      if (!key) continue;
+      try { total += await storage.size(key); } catch { throw new ExportContentUnavailable(); }
+      if (total > maxBytes) throw new ExportTooLarge();
+    }
+  }
+  const read = async (key: string) => {
+    let bytes: Buffer;
+    try { bytes = await storage.get(key); } catch { throw new ExportContentUnavailable(); }
+    checkBudget(bytes.length);
+    return bytes;
+  };
   const book: ExportBook = { ...metadata, chapters: [], images: new Map() };
   const resourcesByRevision = new Map<string, Map<string, ExportResource>>();
   for (const resource of resources) {
@@ -41,9 +82,7 @@ export async function loadExportBook(
   }
   for (const chapter of chapters) {
     if (!chapter.contentKey || !chapter.revisionId) throw new ExportContentUnavailable();
-    let body: string;
-    try { body = (await storage.get(chapter.contentKey)).toString('utf8'); }
-    catch { throw new ExportContentUnavailable(); }
+    const body = (await read(chapter.contentKey)).toString('utf8');
     const chapterResources: LoadedResource[] = [];
     const byHash = resourcesByRevision.get(chapter.revisionId);
     for (const marker of body.matchAll(IMAGE_RE)) {
@@ -52,9 +91,7 @@ export async function loadExportBook(
       const loaded = { ...resource, hash: resource.hash.toLowerCase(), mediaType: resource.mediaType, storageKey: resource.storageKey };
       chapterResources.push(loaded);
       if (!imageExtension(loaded.mediaType) || book.images.has(loaded.hash)) continue;
-      let bytes: Buffer;
-      try { bytes = await storage.get(loaded.storageKey); }
-      catch { throw new ExportContentUnavailable(); }
+      const bytes = await read(loaded.storageKey);
       book.images.set(loaded.hash, { ...loaded, bytes });
     }
     book.chapters.push({ ...chapter, body, resources: chapterResources });
@@ -99,7 +136,10 @@ export const epubFormatter: BookFormatter = {
     for (const [i, chapter] of chapters.entries()) {
       const resourceByHash = new Map(chapter.resources.map((r) => [r.hash, r]));
       const body = chapter.body;
-      const html = body.trim().split(/\n\s*\n/).map((paragraph) => {
+      const htmlChunks: string[] = [];
+      let chunk: string[] = [];
+      let chunkLength = 0;
+      for (const paragraph of exportParagraphs(body)) {
         const content = paragraph.split(/(\[\[img:[0-9a-f]{64}\]\])/gi).map((part) => {
           const marker = part.match(/^\[\[img:([0-9a-f]{64})\]\]$/i);
           if (!marker) return xml(part).replace(/\r?\n/g, '<br />');
@@ -108,8 +148,12 @@ export const epubFormatter: BookFormatter = {
           if (!image) return xml(resource?.alt ? `［圖片：${resource.alt}］` : '［圖片］');
           return `<img src="../${xml(image.path)}" alt="${xml(resource?.alt ?? '')}" />`;
         }).join('');
-        return `<p>${content}</p>`;
-      }).join('\n');
+        const line = `<p>${content}</p>`;
+        chunk.push(line); chunkLength += line.length;
+        if (chunkLength >= 65_536) { htmlChunks.push(chunk.join('\n')); chunk = []; chunkLength = 0; }
+      }
+      if (chunk.length) htmlChunks.push(chunk.join('\n'));
+      const html = htmlChunks.join('\n');
       const title = chapter.title || chapter.labelRaw;
       const path = `text/chapter-${i + 1}.xhtml`;
       zip.file(`OEBPS/${path}`, `<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="zh-Hant" xml:lang="zh-Hant"><head><title>${xml(title)}</title><meta charset="utf-8"/><link rel="stylesheet" type="text/css" href="../style.css"/></head><body><h1>${xml(title)}</h1>${html}</body></html>`);

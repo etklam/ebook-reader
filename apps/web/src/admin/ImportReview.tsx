@@ -123,6 +123,8 @@ function ReviewItem({ importId, row, review, decision, disabled, onDecision, onS
   const [searchedTargets, setSearchedTargets] = useState(false);
   const [retry, setRetry] = useState(0);
   const [searching, setSearching] = useState(false);
+  const onStaleRef = useRef(onStale);
+  onStaleRef.current = onStale;
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController(); setError(''); setDetail(null);
@@ -131,7 +133,7 @@ function ReviewItem({ importId, row, review, decision, disabled, onDecision, onS
     if (target) params.set('chapterId', target);
     api<Detail>(`/api/admin/imports/${importId}/review/detail?${params}`, { signal: controller.signal }).then(setDetail).catch((error) => {
       if (controller.signal.aborted) return; setError(failure(error));
-      if (error instanceof ApiRequestError && error.status === 409) onStale();
+      if (error instanceof ApiRequestError && error.status === 409) onStaleRef.current();
     });
     return () => controller.abort();
   }, [open, target, offset, importId, row.itemId, review.analysisVersion, review.editVersion, retry]);

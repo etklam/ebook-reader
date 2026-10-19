@@ -12,7 +12,9 @@ export default defineConfig({
   retries: 0,
   workers: 1,             // shared seeded works; serial execution
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173',
+    launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE, args: ['--no-sandbox'] } : {},
     viewport: { width: 390, height: 844 }, // iPhone-class priority viewport
   },
 });

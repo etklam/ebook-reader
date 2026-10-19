@@ -109,6 +109,9 @@ jobs:
           ssh -i ~/.ssh/id_ed25519 "$G2_USER@$G2_HOST" "SHA='$IMAGE_SHA' bash -se" <<'REMOTE'
           set -euo pipefail
           dir="/tmp/ebook-reader-$SHA"
+          test -n "$(kubectl -n kube-system get pods -l app.kubernetes.io/name=traefik -o name)"
+          # Isolate the trusted ingress path before enabling API proxy trust.
+          kubectl apply -f "$dir/06-network-policy.yaml"
           kubectl apply -f "$dir/03-api-worker.yaml"
           kubectl apply -f "$dir/04-web-ingress.yaml"
           kubectl -n ebook-reader rollout status deployment/ebook-api --timeout=600s
@@ -120,6 +123,10 @@ jobs:
           REMOTE
           curl --retry 12 --retry-all-errors --retry-delay 5 -fsS https://book.7182818.xyz/ -o "$RUNNER_TEMP/ebook-home.html"
           grep -q '<div id="root"' "$RUNNER_TEMP/ebook-home.html"
+          curl -fsSI https://book.7182818.xyz/ > "$RUNNER_TEMP/ebook-home.headers"
+          grep -qi '^content-security-policy:.*frame-ancestors' "$RUNNER_TEMP/ebook-home.headers"
+          grep -qi '^x-content-type-options: nosniff' "$RUNNER_TEMP/ebook-home.headers"
+          grep -qi '^cache-control: no-cache' "$RUNNER_TEMP/ebook-home.headers"
           curl --retry 12 --retry-all-errors --retry-delay 5 -fsS https://book.7182818.xyz/api/works -o "$RUNNER_TEMP/ebook-works.json"
           curl -sS -o "$RUNNER_TEMP/ebook-auth.json" -w '%{http_code}' https://book.7182818.xyz/api/me/library > "$RUNNER_TEMP/ebook-auth.status"
           test "$(cat "$RUNNER_TEMP/ebook-auth.status")" = 401

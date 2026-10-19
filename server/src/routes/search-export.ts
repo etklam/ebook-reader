@@ -2,7 +2,7 @@
 import { Hono } from 'hono';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { bookFormatters, ExportContentUnavailable, loadExportBook, type ExportChapter as SelectedExportChapter, type ExportResource } from '../export/formatters.ts';
+import { bookFormatters, ExportContentUnavailable, ExportTooLarge, loadExportBook, type ExportChapter as SelectedExportChapter, type ExportResource } from '../export/formatters.ts';
 import {
   chapterRevisionResources, chapterRevisions, chapters, releaseItems, resources,
   workReleases, works,
@@ -21,6 +21,8 @@ export interface SearchExportRoutesDeps {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+let exportInFlight = false;
+
 const MAX_RESULTS = 50;
 
 function filenamePart(value: string): string {
@@ -100,6 +102,10 @@ export function searchExportRoutes(deps: SearchExportRoutesDeps): Hono<{ Variabl
     scan: for (let start = first; start < rows.length; start += 8) {
       const batch = rows.slice(start, start + 8);
       const matches = await Promise.all(batch.map(async (row) => {
+        const titleMatch = findChapterMatch('', row.title, variants);
+        if (storage.searchCandidate && !(await storage.searchCandidate(row.contentKey, variants))) {
+          return { row, found: titleMatch };
+        }
         let body: string;
         try { body = (await storage.get(row.contentKey)).toString('utf8'); }
         catch { return { unavailable: true } as const; }
@@ -203,6 +209,11 @@ export function searchExportRoutes(deps: SearchExportRoutesDeps): Hono<{ Variabl
     const filename = filenamePart(`${work.title}-${versionLabel}`);
     const asciiFilename = filename.replace(/[^\x20-\x7E]/g, '_');
 
+    if (exportInFlight) {
+      c.header('Retry-After', '5');
+      return c.json({ error: 'export_busy' }, 429);
+    }
+    exportInFlight = true;
     let bytes: Uint8Array;
     const formatter = bookFormatters[format];
     try {
@@ -210,8 +221,9 @@ export function searchExportRoutes(deps: SearchExportRoutesDeps): Hono<{ Variabl
       bytes = await formatter.serialize(book);
     } catch (error) {
       if (error instanceof ExportContentUnavailable) return c.json({ error: 'content_unavailable' }, 409);
+      if (error instanceof ExportTooLarge) return c.json({ error: 'export_too_large' }, 413);
       throw error;
-    }
+    } finally { exportInFlight = false; }
     c.header('Content-Type', formatter.mediaType);
     c.header('Content-Disposition', `attachment; filename="${asciiFilename}.${format}"; filename*=UTF-8''${encodeURIComponent(filename)}.${format}`);
     return c.body(Buffer.from(bytes));

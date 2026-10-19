@@ -185,7 +185,7 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
       ranked as (select *, (row_number() over (order by "editorialPosition" ${direction}) - 1)::int as ordinal
         from base where ${matches}),
       stats as (select count(*)::int as total,
-        ${source === 'head' ? sql`'head:' || md5(coalesce((select string_agg(row(base.*)::text, ',' order by "editorialPosition") from base), ''))`
+        ${source === 'head' ? sql`'head:' || (select toc_version from app.works where id = ${id})`
           : sql`${work.activeReleaseId ?? 'none'}::text`} as version,
         (select ordinal from ranked where id = ${around ?? null}::uuid) as anchor,
         (select ordinal from ranked order by "editorialPosition" desc limit 1) as latest from ranked),

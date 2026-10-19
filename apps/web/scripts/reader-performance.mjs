@@ -4,7 +4,8 @@ import { writeFile } from 'node:fs/promises';
 
 const output = process.argv[2];
 if (!output) throw new Error('usage: node scripts/reader-performance.mjs /tmp/reader-before.json');
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+  ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE, args: ['--no-sandbox'] } : {}) });
 try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   await context.tracing.start({ screenshots: false, snapshots: true });

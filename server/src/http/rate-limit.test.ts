@@ -56,3 +56,19 @@ test('rejects nonsensical rules instead of silently allowing everything', () => 
   assert.throws(() => createRateLimiter({ windowMs: 1_000, max: 0 }), /max must be/);
   assert.throws(() => createRateLimiter({ windowMs: 0, max: 1 }), /windowMs must be/);
 });
+
+test('client IP trusts only one validated address supplied by the isolated proxy', async () => {
+  const { Hono } = await import('hono');
+  const { clientIp } = await import('./rate-limit.ts');
+  for (const trust of [false, true]) {
+    const app = new Hono();
+    app.get('/', c => c.text(clientIp(c, trust)));
+    const request = (value?: string) => app.request('/', { headers: value ? { 'x-forwarded-for': value } : {} },
+      { incoming: { socket: { remoteAddress: '10.0.0.5' } } });
+    assert.equal(await (await request('198.51.100.1')).text(), trust ? '198.51.100.1' : '10.0.0.5');
+    assert.equal(await (await request('1.2.3.4, 198.51.100.1')).text(), '10.0.0.5');
+    assert.equal(await (await request('malformed')).text(), '10.0.0.5');
+    assert.equal(await (await request()).text(), '10.0.0.5');
+    assert.equal(await (await request('2001:db8::1')).text(), trust ? '2001:db8::1' : '10.0.0.5');
+  }
+});

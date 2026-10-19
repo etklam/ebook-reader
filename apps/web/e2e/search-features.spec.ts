@@ -82,6 +82,7 @@ test('book search encodes literal input, pages both ways and jumps to the matchi
   expect(searchRequests.at(-1)!.searchParams.get('cursor')).toBeNull();
   await page.getByRole('link', { name: /首批結果/ }).click();
   await expect(page.locator('.reader-chapter-label')).toHaveText(/第2章/);
+  await expect(page.getByRole('dialog', { name: /目錄/ })).toHaveCount(0);
   await expect.poll(() => page.locator('.reader-scroll').evaluate((container) => {
     const target = document.querySelector('[data-paragraph-index="20"]')!;
     const viewport = container.getBoundingClientRect();
@@ -123,6 +124,7 @@ test('next chapter preload is consumed once and cannot mark an unread chapter re
   await page.mouse.click(195, 422);
   await page.getByRole('button', { name: '下一章', exact: true }).click();
   await expect(page.locator('.reader-chapter-label')).toHaveText(/第2章/);
+  await expect(page.getByRole('dialog', { name: /目錄/ })).toHaveCount(0);
   expect(chapterRequests).toEqual([first, second]);
   expect(readMarks).toEqual([first]);
   await page.clock.runFor(10_100);

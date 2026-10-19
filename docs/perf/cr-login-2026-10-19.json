@@ -1,0 +1,17 @@
+{
+  "recordedAt": "2026-10-19T16:00:32.177Z",
+  "node": "v24.22.0",
+  "environment": "local handler, real scrypt, stub DB, alternating paths, 2 warmups each; no network or production limiter throughput",
+  "cases": {
+    "missing": {
+      "samples": 100,
+      "medianMs": 35.86897300000055,
+      "p95Ms": 68.14597099999992
+    },
+    "wrongPassword": {
+      "samples": 100,
+      "medianMs": 33.81884100000002,
+      "p95Ms": 70.17639700000018
+    }
+  }
+}

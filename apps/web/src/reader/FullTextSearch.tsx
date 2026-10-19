@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { navigate } from '../App.tsx';
 import { api } from '../api/client.ts';
 import { t } from '../i18n/translate.ts';
 
@@ -91,7 +92,10 @@ export function FullTextSearch({ workId }: { workId: string }) {
           : t('沒有找到相符章節。')}</p>
         {response.results.length > 0 && <div className="rows">
           {response.results.map((result) => (
-            <a className="row" key={result.chapterId} href={result.href}>
+            <a className="row" key={result.chapterId} href={result.href} onClick={(event) => {
+              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              event.preventDefault(); navigate(result.href);
+            }}>
               <span className="row-main">
                 <span className="row-title">{result.title || result.labelRaw}</span>
                 <span className="row-author">{result.labelRaw} · {t('第 {n} 段', { n: result.paragraphIndex + 1 })}</span>

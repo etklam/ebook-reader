@@ -52,3 +52,30 @@ test('case insensitive image markers resolve the same resource', async () => {
   const zip = await JSZip.loadAsync(await bookFormatters.epub.serialize(book));
   assert.match(await zip.file('OEBPS/text/chapter-1.xhtml')!.async('string'), /<img src=/);
 });
+
+test('export preflight rejects over budget before reading any content', async () => {
+  const { ExportTooLarge } = await import('./formatters.ts');
+  let reads = 0;
+  await assert.rejects(loadExportBook(metadata, [chapter], [resource], {
+    async size(key) { return key === 'body' ? 90 : 20; },
+    async get() { reads++; return Buffer.alloc(0); },
+  }, 100), ExportTooLarge);
+  assert.equal(reads, 0);
+});
+
+test('export permits exact budget and guards adapters without size support', async () => {
+  const { ExportTooLarge } = await import('./formatters.ts');
+  const plain = { ...chapter, contentKey: 'plain' };
+  const adapter = { async get() { return Buffer.from('hello'); } };
+  assert.equal((await loadExportBook(metadata, [plain], [], adapter, 5)).chapters[0].body, 'hello');
+  await assert.rejects(loadExportBook(metadata, [plain], [], adapter, 4), ExportTooLarge);
+});
+
+test('chunked EPUB escaping preserves Unicode and every paragraph across chunk boundaries', async () => {
+  const text = Array.from({ length: 4000 }, () => '<&😀').join('\n\n');
+  const book = await loadExportBook(metadata, [chapter], [], { get: async () => Buffer.from(text) });
+  const zip = await JSZip.loadAsync(await bookFormatters.epub.serialize(book));
+  const html = await zip.file('OEBPS/text/chapter-1.xhtml')!.async('string');
+  assert.equal(html.match(/<p>/g)?.length, 4000);
+  assert.equal(html.match(/&lt;&amp;😀/g)?.length, 4000);
+});
