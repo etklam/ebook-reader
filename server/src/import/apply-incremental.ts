@@ -7,7 +7,7 @@
 // the insert→renumber mapping deterministic, and one set-based UPDATE applies
 // all final positions instead of one UPDATE per chapter.
 import { createHash, randomUUID } from 'node:crypto';
-import { and, isNotNull, isNull, asc, eq, sql } from 'drizzle-orm';
+import { and, isNull, asc, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { chapters, chapterRevisions, importItems, importJobs, works, applyIdempotency } from '../db/schema.ts';
 import { matchChapters, type MatchResult } from './match.ts';
@@ -148,7 +148,7 @@ export async function applyIncremental(
       headRevisionId: chapters.headRevisionId,
     }).from(chapters)
       .leftJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
-      .where(and(eq(chapters.workId, job.workId), isNull(chapters.mergedIntoChapterId)))
+      .where(and(eq(chapters.workId, job.workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt)))
       .orderBy(asc(chapters.editorialPosition));
 
     const items = await tx.select().from(importItems)
@@ -381,14 +381,14 @@ export async function applyIncremental(
         update app.chapters c set head_revision_id = v.rev
         from unnest(${sql.param(revisionChanges.map((r) => r.chapterId))}::uuid[],
                     ${sql.param(revisionChanges.map((r) => r.newRevisionId))}::uuid[]) as v(id, rev)
-        where c.id = v.id and c.merged_into_chapter_id is null`);
+        where c.id = v.id and c.merged_into_chapter_id is null and c.deleted_at is null`);
     }
 
     // renumber everything to the merged order in one set-based statement; the
     // DEFERRABLE unique tolerates transient duplicates inside the tx
     // Tombstones keep their reserved positions; active rows skip those slots.
     const absorbed = await tx.select({ position: chapters.editorialPosition }).from(chapters)
-      .where(and(eq(chapters.workId, targetWorkId), isNotNull(chapters.mergedIntoChapterId)));
+      .where(and(eq(chapters.workId, targetWorkId), sql`(${chapters.mergedIntoChapterId} is not null or ${chapters.deletedAt} is not null)`));
     const reservedPositions = new Set(absorbed.map((row) => row.position));
     let position = 1;
     const finalIds: string[] = [];
@@ -404,14 +404,14 @@ export async function applyIncremental(
     await tx.execute(sql`
       update app.chapters c set editorial_position = v.pos
       from unnest(${sql.param(finalIds)}::uuid[], ${sql.param(finalPos)}::int[]) as v(id, pos)
-      where c.id = v.id and c.merged_into_chapter_id is null`);
+      where c.id = v.id and c.merged_into_chapter_id is null and c.deleted_at is null`);
 
     // wire head_revision_id for the new chapters (exactly one revision each)
     const newIds = [...insertId.values()];
     await tx.execute(sql`
       update app.chapters c set head_revision_id = r.id
       from app.chapter_revisions r
-      where r.chapter_id = c.id and c.merged_into_chapter_id is null and c.id = any(${sql.param(newIds)}::uuid[])`);
+      where r.chapter_id = c.id and c.merged_into_chapter_id is null and c.deleted_at is null and c.id = any(${sql.param(newIds)}::uuid[])`);
 
     assertTransition(job.status, 'applied');
     const newEditVersion = work.editVersion + 1;
@@ -471,7 +471,7 @@ export async function diffImport(
     bodyCompareHash: chapterRevisions.bodyCompareHash,
   }).from(chapters)
     .leftJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
-    .where(and(eq(chapters.workId, job.workId), isNull(chapters.mergedIntoChapterId)))
+    .where(and(eq(chapters.workId, job.workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt)))
     .orderBy(asc(chapters.editorialPosition));
 
   const items = await db.select().from(importItems)

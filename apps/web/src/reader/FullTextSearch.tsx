@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api } from '../api/client.ts';
+import { t } from '../i18n/translate.ts';
 
 type SearchResult = {
   chapterId: string;
@@ -49,9 +50,9 @@ export function FullTextSearch({ workId }: { workId: string }) {
       }
     } catch (e) {
       if (requestId.current === id) setError(e instanceof Error && 'status' in e && e.status === 403
-        ? '這部作品尚未公開。' : e instanceof Error && 'status' in e && e.status === 429
-          ? '搜尋次數較多，請一分鐘後再試。' : e instanceof Error && 'status' in e && e.status === 409
-            ? '作品版本或內容已變動，請重新搜尋；若仍失敗，請稍後重試。' : '搜尋失敗，請稍後再試。');
+        ? t('這部作品尚未公開。') : e instanceof Error && 'status' in e && e.status === 429
+          ? t('搜尋次數較多，請一分鐘後再試。') : e instanceof Error && 'status' in e && e.status === 409
+            ? t('作品版本或內容已變動，請重新搜尋；若仍失敗，請稍後重試。') : t('搜尋失敗，請稍後再試。'));
     } finally {
       if (requestId.current === id) setBusy(false);
     }
@@ -64,43 +65,46 @@ export function FullTextSearch({ workId }: { workId: string }) {
   };
 
   return (
-    <section aria-label="全文搜尋">
-      <h2>搜尋本書</h2>
+    <section aria-label={t('全文搜尋')}>
+      <h2>{t('搜尋本書')}</h2>
       <form onSubmit={search}>
         <div className="form-row">
           <input className="input" type="search" value={query} maxLength={100}
-            aria-label="搜尋本書內容" placeholder="輸入關鍵字" onChange={(event) => {
+            aria-label={t('搜尋本書內容')} placeholder={t('輸入關鍵字')} onChange={(event) => {
               requestId.current += 1;
               setBusy(false); setResponse(null); setError('');
               setCursors([null]); setPageIndex(0);
               setQuery(event.target.value);
             }} />
-          <button className="btn primary" disabled={busy || !query.trim()}>{busy ? '搜尋中…' : '搜尋'}</button>
+          <button className="btn primary" disabled={busy || !query.trim()}>{busy ? t('搜尋中…') : t('搜尋')}</button>
         </div>
       </form>
-      <p className="hint">搜尋目前可閱讀的版本，支援繁簡字互查。</p>
+      <p className="hint">{t('搜尋目前可閱讀的版本，支援繁簡字互查。')}</p>
       {error && <p className="form-error" role="alert">{error}</p>}
-      {busy && <p className="hint" role="status">正在搜尋章節內容…</p>}
+      {busy && <p className="hint" role="status">{t('正在搜尋章節內容…')}</p>}
       {response && <>
         <p className="hint" role="status">{response.results.length
-          ? `顯示第 ${response.offset + 1}–${response.offset + response.results.length} 個相符章節${response.hasMore ? '，還有更多結果。' : '。'}`
-          : '沒有找到相符章節。'}</p>
+          ? t(response.hasMore
+              ? '顯示第 {from}–{to} 個相符章節，還有更多結果。'
+              : '顯示第 {from}–{to} 個相符章節。',
+            { from: response.offset + 1, to: response.offset + response.results.length })
+          : t('沒有找到相符章節。')}</p>
         {response.results.length > 0 && <div className="rows">
           {response.results.map((result) => (
             <a className="row" key={result.chapterId} href={result.href}>
               <span className="row-main">
                 <span className="row-title">{result.title || result.labelRaw}</span>
-                <span className="row-author">{result.labelRaw} · 第 {result.paragraphIndex + 1} 段</span>
+                <span className="row-author">{result.labelRaw} · {t('第 {n} 段', { n: result.paragraphIndex + 1 })}</span>
                 <span className="row-meta">{highlighted(result.snippet, result.matchStart, result.matchLength)}</span>
               </span>
             </a>
           ))}
         </div>}
-        {(pageIndex > 0 || response.hasMore) && <div className="form-row" aria-label="搜尋結果分頁">
+        {(pageIndex > 0 || response.hasMore) && <div className="form-row" aria-label={t('搜尋結果分頁')}>
           <button className="btn" disabled={busy || pageIndex === 0}
-            onClick={() => void fetchPage(response.query, pageIndex - 1, cursors[pageIndex - 1])}>上一頁</button>
+            onClick={() => void fetchPage(response.query, pageIndex - 1, cursors[pageIndex - 1])}>{t('上一頁')}</button>
           <button className="btn" disabled={busy || !response.nextCursor}
-            onClick={() => { if (response.nextCursor) void fetchPage(response.query, pageIndex + 1, response.nextCursor); }}>下一頁</button>
+            onClick={() => { if (response.nextCursor) void fetchPage(response.query, pageIndex + 1, response.nextCursor); }}>{t('下一頁')}</button>
         </div>}
       </>}
     </section>

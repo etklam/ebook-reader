@@ -13,6 +13,8 @@ export interface Me {
 // --- public catalog ----------------------------------------------------------
 export interface CatalogWork {
   id: string;
+  /** short URL-facing key; canonical paths are `<slug>-<publicId>` (lib/slug.ts) */
+  publicId: string;
   title: string;
   author: string;
   description: string;
@@ -47,6 +49,7 @@ export interface WorkDetail extends Omit<CatalogWork, 'categories' | 'tags' | 'c
 // --- public reader -----------------------------------------------------------
 export interface ReaderWork {
   id: string;
+  publicId: string;
   title: string;
   author: string;
   workType: WorkType;
@@ -63,6 +66,7 @@ export interface ReaderWork {
 
 export interface TocEntry {
   id: string;
+  publicId: string;
   volumeId: string | null;
   labelRaw: string;
   title: string;
@@ -92,6 +96,7 @@ export interface ChapterResource {
 
 export interface ReaderChapter {
   chapterId: string;
+  publicId: string;
   workId: string;
   revisionId: string;
   labelRaw: string;
@@ -209,7 +214,7 @@ export interface PublishPreviewResponse {
   problems: string[];
   chapterCount: number;
   previousRelease: { id: string; version: number; chapterCount: number } | null;
-  diff: { newChapterIds: string[]; updatedChapterIds: string[]; reorderedChapterIds: string[] };
+  diff: { newChapterIds: string[]; updatedChapterIds: string[]; reorderedChapterIds: string[]; removedChapterIds: string[] };
 }
 
 export interface PublishResponse {
@@ -217,7 +222,7 @@ export interface PublishResponse {
   releaseId: string;
   version: number;
   chapterCount: number;
-  diff: { newChapterIds: string[]; updatedChapterIds: string[]; reorderedChapterIds: string[] };
+  diff: { newChapterIds: string[]; updatedChapterIds: string[]; reorderedChapterIds: string[]; removedChapterIds: string[] };
   alreadyPublished: boolean;
 }
 
@@ -229,8 +234,8 @@ export interface RankingResponse {
   period: RankingPeriod;
   days: number | null;
   timezone: string;
-  works: Array<{ id: string; title: string; author: string; workType: WorkType;
+  works: Array<{ id: string; publicId: string; title: string; author: string; workType: WorkType;
     serialStatus: SerialStatus; chapterCount: number; clicks: number; favorites: number }>;
 }
 
-export interface RelatedWork { id: string; title: string; author: string; workType: WorkType; serialStatus: SerialStatus; chapterCount: number; sharedCategories: number; sharedTags: number }
+export interface RelatedWork { id: string; publicId: string; title: string; author: string; workType: WorkType; serialStatus: SerialStatus; chapterCount: number; sharedCategories: number; sharedTags: number }

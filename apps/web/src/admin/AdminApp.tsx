@@ -17,6 +17,8 @@ import type { ImportJob, ImportQuality, ImportChapterPage } from '../api/import-
 import { ImportReview } from './ImportReview.tsx';
 import { useImportMonitor } from './useImportMonitor.ts';
 import { TaxonomyPicker, type TaxonomySelection } from './TaxonomyPicker.tsx';
+import { AppFooter } from '../components/AppFooter.tsx';
+import { t } from '../i18n/translate.ts';
 
 // Older incremental actions inspect HTTP error bodies to display resolution details.
 // Keep that contract while sharing credentials, parsing and transport errors.
@@ -28,6 +30,7 @@ async function api(path: string, init?: RequestInit): Promise<{ status: number; 
   }
 }
 
+// source strings; translated where they are rendered
 const STATUS_TEXT: Record<string, string> = {
   queued: '排隊中', processing: '解析中', review_required: '解析完成，有提示',
   ready: '解析完成', failed: '失敗', cancelled: '已取消', committed: '已儲存草稿', applied: '已套用增量',
@@ -43,7 +46,7 @@ const STATUS_TONE: Record<string, string> = {
 function Status({ status }: { status: string }) {
   return (
     <span className={`state ${STATUS_TONE[status] ?? ''}`}>
-      {STATUS_TEXT[status] ?? status}
+      {STATUS_TEXT[status] ? t(STATUS_TEXT[status]) : status}
     </span>
   );
 }
@@ -63,7 +66,7 @@ export function AdminApp() {
   if (me === undefined) {
     return (
       <div className="app-main admin-shell">
-        <SkeletonLines count={1} label="載入管理介面" />
+        <SkeletonLines count={1} label={t('載入管理介面')} />
       </div>
     );
   }
@@ -72,8 +75,8 @@ export function AdminApp() {
     return (
       <main className="app-main admin-shell">
         <div className="auth-page">
-          <h1>管理員登入</h1>
-          <p className="auth-lede">匯入、發布與分類管理需要管理員帳號。</p>
+          <h1>{t('管理員登入')}</h1>
+          <p className="auth-lede">{t('匯入、發布與分類管理需要管理員帳號。')}</p>
           <form className="auth-form" onSubmit={async (e) => {
             e.preventDefault();
             setBusy(true); setLoginError('');
@@ -82,22 +85,22 @@ export function AdminApp() {
               const result = await getMe();
               setMe(result.user);
             } catch (error) {
-              setLoginError(error instanceof ApiRequestError ? '登入失敗，請確認帳號與密碼' : '網絡連線失敗，請重試');
+              setLoginError(error instanceof ApiRequestError ? t('登入失敗，請確認帳號與密碼') : t('網絡連線失敗，請重試'));
             } finally { setBusy(false); }
           }}>
             <div className="field">
-              <label htmlFor="admin-email">電子郵件</label>
+              <label htmlFor="admin-email">{t('電子郵件')}</label>
               <input className="input" id="admin-email" type="email" value={email} required
                 autoComplete="email" onChange={(e) => setEmail(e.target.value)} />
             </div>
             <div className="field">
-              <label htmlFor="admin-password">密碼</label>
+              <label htmlFor="admin-password">{t('密碼')}</label>
               <input className="input" id="admin-password" type="password" value={password} required
                 autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} />
             </div>
             {loginError && <p className="form-error" role="alert">{loginError}</p>}
             <button className="btn primary" type="submit" disabled={busy}>
-              {busy ? '登入中…' : '登入'}
+              {busy ? t('登入中…') : t('登入')}
             </button>
           </form>
         </div>
@@ -109,15 +112,15 @@ export function AdminApp() {
     return (
       <main className="app-main admin-shell">
         <div className="empty">
-          <h2>這個帳號不是管理員</h2>
-          <p>管理後台只開放給管理員帳號。可以改用其他帳號登入，或回書庫繼續閱讀。</p>
+          <h2>{t('這個帳號不是管理員')}</h2>
+          <p>{t('管理後台只開放給管理員帳號。可以改用其他帳號登入，或回書庫繼續閱讀。')}</p>
           {loginError && <p className="form-error" role="alert">{loginError}</p>}
           <div className="row-actions">
             <button className="btn" onClick={async () => {
               try { await logout(); setMe(null); }
-              catch { setLoginError('登出失敗，請重試'); }
-            }}>登出</button>
-            <button className="btn" onClick={() => navigate('/')}>回書庫</button>
+              catch { setLoginError(t('登出失敗，請重試')); }
+            }}>{t('登出')}</button>
+            <button className="btn" onClick={() => navigate('/')}>{t('回書庫')}</button>
           </div>
         </div>
       </main>
@@ -150,17 +153,17 @@ function AdminHome({ email, onLogout }: { email: string; onLogout(): void }) {
     <main className="app-main admin-shell">
       <header className="page-head">
         <div className="head-line">
-          <h1>管理後台</h1>
+          <h1>{t('管理後台')}</h1>
           <span className="head-note">
             {email}
             {'　'}
             <button className="linkish" onClick={async () => {
               try { await logout(); onLogout(); }
-              catch { setLogoutError('登出失敗，請重試'); }
-            }}>登出</button>
+              catch { setLogoutError(t('登出失敗，請重試')); }
+            }}>{t('登出')}</button>
           </span>
         </div>
-        <div className="seg" role="tablist" aria-label="管理功能">
+        <div className="seg" role="tablist" aria-label={t('管理功能')}>
           {([
             ['import', '匯入'],
             ['publish', '草稿與發布'],
@@ -169,7 +172,7 @@ function AdminHome({ email, onLogout }: { email: string; onLogout(): void }) {
           ] as const).map(([v, label]) => (
             <button key={v} role="tab" aria-selected={tab === v} className="seg-item"
               onClick={() => setTab(v)}>
-              {label}
+              {t(label)}
             </button>
           ))}
         </div>
@@ -188,10 +191,12 @@ function AdminHome({ email, onLogout }: { email: string; onLogout(): void }) {
         setSelectedWorkId(id); setTargetChapter(chapterId); setTargetParagraph(paragraphIndex); setTab('publish');
       }} />}
       {tab === 'taxonomy' && <TaxonomyPanel />}
+      <AppFooter />
     </main>
   );
 }
 
+// labels translated at the render site: a constant runs once at import
 const ENCODINGS = [
   { v: '', label: '自動偵測' },
   { v: 'utf-8', label: 'UTF-8' },
@@ -242,7 +247,7 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
   async function runImportAction(operation: () => Promise<void>) {
     setBusy(true); setError('');
     try { await operation(); }
-    catch (error) { setError(error instanceof ApiRequestError ? error.code : '網絡連線失敗，請重試'); }
+    catch (error) { setError(error instanceof ApiRequestError ? error.code : t('網絡連線失敗，請重試')); }
     finally { setBusy(false); }
   }
   const submit = (e: React.FormEvent) => runImportAction(() => submitRequest(e));
@@ -266,7 +271,7 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
     if (encoding && !isPastedText) form.append('encoding', encoding);
     if (workId) form.append('workId', workId);
     const { status, body } = await api('/api/admin/imports', { method: 'POST', body: form });
-    if (status !== 200) { setError(body.error ?? '提交失敗'); return; }
+    if (status !== 200) { setError(body.error ?? t('提交失敗')); return; }
     setJobUsesPastedText(isPastedText);
     if (isPastedText) setPastedText('');
     setImportId(body.importId);
@@ -281,7 +286,7 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
       const { status, body } = await api(`/api/admin/imports/${importId}/reanalyze`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(enc ? { encoding: enc } : {}),
       });
-      if (status !== 200) { setError(body.error ?? '重新解析失敗'); return; }
+      if (status !== 200) { setError(body.error ?? t('重新解析失敗')); return; }
       setJob((j) => j && { ...j, status: 'queued' });
     } finally {
       // The server may have accepted a POST whose response was lost. Reconcile either way.
@@ -295,11 +300,11 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
     setError('');
     const { status, body } = await api(`/api/admin/imports/${importId}/commit`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title: title || '未命名作品', workType, author, description,
+      body: JSON.stringify({ title: title || t('未命名作品'), workType, author, description,
         serialStatus: workType === 'serial' ? serialStatus || null : null,
         categoryIds: taxonomy.categoryIds, tagIds: taxonomy.tagIds }),
     });
-    if (status !== 200) { setError(`${body.error ?? 'commit 失敗'}${body.detail ? `：${body.detail}` : ''}`); return; }
+    if (status !== 200) { setError(`${body.error ?? t('commit 失敗')}${body.detail ? `：${body.detail}` : ''}`); return; }
     const refreshed = await api(`/api/admin/imports/${importId}`);
     if (refreshed.status === 200) setJob(refreshed.body);
     onContinue(body.workId);
@@ -313,14 +318,14 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
       method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
     });
     if (plan.status !== 200 || !plan.body.canRevert) {
-      setError(`無法回復：${plan.body?.reason ?? plan.body?.error ?? '未知原因'}`);
+      setError(t('無法回復：{reason}', { reason: plan.body?.reason ?? plan.body?.error ?? t('未知原因') }));
       return;
     }
     const { status, body } = await api(`/api/admin/imports/${importId}/revert`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ baseEditVersion: plan.body.plan.editVersionFrom }),
     });
-    if (status !== 200) { setError(body.error ?? '回復失敗'); return; }
+    if (status !== 200) { setError(body.error ?? t('回復失敗')); return; }
     setApplyResult({ summary: null, reverted: body });
     const refreshed = await api(`/api/admin/imports/${importId}`);
     if (refreshed.status === 200) setJob(refreshed.body);
@@ -334,11 +339,10 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
   return (
     <>
       <section className="admin-panel">
-        <div className="head-line"><h2>匯入作品</h2><button className="linkish" onClick={onBatch}>批量匯入多本</button></div>
-        <p className="hint">流程：匯入 → 快速確認 → 發布</p>
+        <div className="head-line"><h2>{t('匯入作品')}</h2><button className="linkish" onClick={onBatch}>{t('批量匯入多本')}</button></div>
+        <p className="hint">{t('流程：匯入 → 快速確認 → 發布')}</p>
         <p className="muted">
-          上傳 TXT／EPUB 檔案或貼上 TXT 文字建立新作品，也可指定既有作品做增量／覆蓋。提交只會產生草稿——
-          公開內容在「發布」頁才會變動。
+          {t('上傳 TXT／EPUB 檔案或貼上 TXT 文字建立新作品，也可指定既有作品做增量／覆蓋。提交只會產生草稿——公開內容在「發布」頁才會變動。')}
         </p>
 
 
@@ -346,7 +350,7 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
         <form className="form-grid import-form" onSubmit={submit}>
           <div className="import-source">
           <div className="field">
-            <label htmlFor="imp-file">來源檔案</label>
+            <label htmlFor="imp-file">{t('來源檔案')}</label>
             <input ref={fileInputRef} className="input" id="imp-file" type="file" accept=".txt,.epub" disabled={busy}
               aria-describedby="imp-file-hint"
               onChange={(e) => {
@@ -354,13 +358,13 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
                 setFile(nextFile);
                 if (nextFile) setPastedText('');
               }} />
-            <span className="hint" id="imp-file-hint">TXT 上限 30 MiB，EPUB 上限 50 MiB。</span>
+            <span className="hint" id="imp-file-hint">{t('TXT 上限 30 MiB，EPUB 上限 50 MiB。')}</span>
           </div>
           <div className="field">
-            <label htmlFor="imp-text">或貼上 TXT 內容</label>
+            <label htmlFor="imp-text">{t('或貼上 TXT 內容')}</label>
             <textarea className="input" id="imp-text" rows={8} value={pastedText} disabled={busy}
               aria-describedby="imp-text-hint"
-              placeholder="在此貼上文字內容…"
+              placeholder={t('在此貼上文字內容…')}
               onChange={(e) => {
                 const text = e.target.value;
                 setPastedText(text);
@@ -370,71 +374,71 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
                   setEncoding('');
                 }
               }} />
-            <span className="hint" id="imp-text-hint">TXT 上限 30 MiB；貼上內容以 UTF-8 匯入，請與來源檔案擇一。</span>
+            <span className="hint" id="imp-text-hint">{t('TXT 上限 30 MiB；貼上內容以 UTF-8 匯入，請與來源檔案擇一。')}</span>
           </div>
           </div>
           <div className="import-metadata">
           <div className="field">
-            <label htmlFor="imp-title">作品名稱</label>
-            <input className="input" id="imp-title" value={title} placeholder="例如：長夜將盡"
+            <label htmlFor="imp-title">{t('作品名稱')}</label>
+            <input className="input" id="imp-title" value={title} placeholder={t('例如：長夜將盡')}
               aria-describedby="imp-title-hint" onChange={(e) => setTitle(e.target.value)} />
-            <span className="hint" id="imp-title-hint">解析後會自動填入來源中的作品資料；可修改。以下資料只用於建立新作品。</span>
+            <span className="hint" id="imp-title-hint">{t('解析後會自動填入來源中的作品資料；可修改。以下資料只用於建立新作品。')}</span>
           </div>
           <div className="field">
-            <label htmlFor="imp-author">作者</label>
+            <label htmlFor="imp-author">{t('作者')}</label>
             <input className="input" id="imp-author" value={author} onChange={(e) => setAuthor(e.target.value)} />
           </div>
           <div className="field field-wide">
-            <label htmlFor="imp-description">簡介</label>
+            <label htmlFor="imp-description">{t('簡介')}</label>
             <textarea className="input" id="imp-description" rows={4} value={description}
               onChange={(e) => setDescription(e.target.value)} />
           </div>
           <div className="field">
-            <label htmlFor="imp-type">作品類型</label>
+            <label htmlFor="imp-type">{t('作品類型')}</label>
             <select className="input" id="imp-type" value={workType} onChange={(e) => setWorkType(e.target.value)}>
-              <option value="serial">長篇連載</option>
-              <option value="short_story">短篇小說</option>
+              <option value="serial">{t('長篇連載')}</option>
+              <option value="short_story">{t('短篇小說')}</option>
             </select>
           </div>
           <div className="field">
-            <label htmlFor="imp-status">連載狀態</label>
+            <label htmlFor="imp-status">{t('連載狀態')}</label>
             <select className="input" id="imp-status" value={serialStatus} disabled={workType !== 'serial'}
               aria-describedby="imp-status-hint" onChange={(e) => setSerialStatus(e.target.value)}>
-              <option value="">待確認</option>
-              <option value="ongoing">未完結</option>
-              <option value="completed">完結</option>
+              <option value="">{t('待確認')}</option>
+              <option value="ongoing">{t('未完結')}</option>
+              <option value="completed">{t('完結')}</option>
             </select>
-            <span className="hint" id="imp-status-hint">來源沒有註明時請自行選擇；短篇小說不設定連載狀態。</span>
+            <span className="hint" id="imp-status-hint">{t('來源沒有註明時請自行選擇；短篇小說不設定連載狀態。')}</span>
           </div>
           <div className="field field-wide">
-            <span className="field-label" id="imp-taxonomy-label">分類與標籤</span>
-            <span className="hint">發布需要至少一個分類。在這裡選好，草稿建立時就一併寫入，不用發布前再補。</span>
+            <span className="field-label" id="imp-taxonomy-label">{t('分類與標籤')}</span>
+            <span className="hint">{t('發布需要至少一個分類。在這裡選好，草稿建立時就一併寫入，不用發布前再補。')}</span>
             <TaxonomyPicker idPrefix="imp" value={taxonomy} onChange={setTaxonomy}
               keywords={keywords} disabled={busy} />
             {!taxonomy.categoryIds.length && (
-              <p className="form-warn">尚未選分類。仍可建立草稿，但發布前必須補上至少一個。</p>
+              <p className="form-warn">{t('尚未選分類。仍可建立草稿，但發布前必須補上至少一個。')}</p>
             )}
           </div>
           </div>
           <div className="import-actions">
-          <details><summary>進階匯入設定（更新既有作品／指定編碼）</summary>
+          <details><summary>{t('進階匯入設定（更新既有作品／指定編碼）')}</summary>
           <div className="field">
-            <label htmlFor="imp-work">目標作品 ID</label>
+            <label htmlFor="imp-work">{t('目標作品 ID')}</label>
             <input className="input input-mono" id="imp-work" value={workId} placeholder="work UUID"
               aria-describedby="imp-work-hint" onChange={(e) => setWorkId(e.target.value)} />
-            <span className="hint" id="imp-work-hint">留空＝建立新作品。填入才會進入增量／覆蓋流程。</span>
+            <span className="hint" id="imp-work-hint">{t('留空＝建立新作品。填入才會進入增量／覆蓋流程。')}</span>
           </div>
           <div className="field">
-            <label htmlFor="imp-enc">文字編碼</label>
+            <label htmlFor="imp-enc">{t('文字編碼')}</label>
             <select className="input" id="imp-enc" value={encoding} disabled={jobUsesPastedText || pastedText.trim().length > 0}
               onChange={(e) => setEncoding(e.target.value)}>
-              {ENCODINGS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+              {ENCODINGS.map((o) => <option key={o.v} value={o.v}>{t(o.label)}</option>)}
             </select>
-            <span className="hint">{jobUsesPastedText ? '貼上內容以 UTF-8 儲存。' : '偵測結果不對時再指定，然後重新解析。'}</span>
+            <span className="hint">{jobUsesPastedText ? t('貼上內容以 UTF-8 儲存。') : t('偵測結果不對時再指定，然後重新解析。')}</span>
           </div>
           </details>
           <button className="btn primary" type="submit" disabled={busy || (!file && !pastedText.trim())} aria-busy={busy || undefined}>
-            {busy ? '處理中…' : '提交並解析'}
+            {busy ? t('處理中…') : t('提交並解析')}
           </button>
           </div>
         </form>
@@ -444,7 +448,7 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
 
       {job && (
         <section className="admin-panel">
-          <h2>匯入狀態</h2>
+          <h2>{t('匯入狀態')}</h2>
           <p><Status status={job.status} /></p>
 
           {job.sourceFile && (
@@ -456,9 +460,9 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
 
           {detected && (
             <dl className="meta-grid">
-              <dt>編碼</dt>
-              <dd>{detected}{enc?.confidence ? `（信心 ${enc.confidence}）` : ''}</dd>
-              {enc?.reason && (<><dt>依據</dt><dd>{enc.reason}</dd></>)}
+              <dt>{t('編碼')}</dt>
+              <dd>{detected}{enc?.confidence ? t('（信心 {confidence}）', { confidence: enc.confidence }) : ''}</dd>
+              {enc?.reason && (<><dt>{t('依據')}</dt><dd>{enc.reason}</dd></>)}
             </dl>
           )}
 
@@ -474,42 +478,45 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
                 {job.errorCode}{job.errorDetail ? ` — ${job.errorDetail}` : ''}
               </p>
               <button className="btn" onClick={() => reanalyze(encoding)} disabled={busy}>
-                {encoding ? `以 ${encoding} 重新解析` : '重新解析'}
+                {encoding ? t('以 {encoding} 重新解析', { encoding }) : t('重新解析')}
               </button>
             </>
           )}
 
           {(job.status === 'ready' || job.status === 'review_required' || job.status === 'applied') && job.workId && (
             <>
-              <h3>與現有章節比對</h3>
+              <h3>{t('與現有章節比對')}</h3>
               <ImportReview key={importId} importId={importId!} applied={job.status === 'applied'}
                 onBaseline={(editVersion) => setDiff({ editVersion })}
                 onApplied={(result) => { setApplyResult(result); void api(`/api/admin/imports/${importId}`).then((response) => { if (response.status === 200) setJob(response.body); }); }} />
 
               {applyResult?.summary && (
                 <p className="form-ok">
-                  已套用（{applyResult.summary.updated > 0 || applyResult.modifiedMode ? '覆蓋' : '增量'}）：
-                  新增 {applyResult.summary.added}、更新 {applyResult.summary.updated}、
-                  相同 {applyResult.summary.unchanged}、保留站方修訂 {applyResult.summary.modifiedKept}、
-                  略過 {applyResult.summary.skipped}、保留缺失 {applyResult.summary.missingKept}；
+                  {t('已套用（{mode}）：新增 {added}、更新 {updated}、相同 {unchanged}、保留站方修訂 {kept}、略過 {skipped}、保留缺失 {missingKept}；', {
+                    mode: applyResult.summary.updated > 0 || applyResult.modifiedMode ? t('覆蓋') : t('增量'),
+                    added: applyResult.summary.added, updated: applyResult.summary.updated,
+                    unchanged: applyResult.summary.unchanged, kept: applyResult.summary.modifiedKept,
+                    skipped: applyResult.summary.skipped, missingKept: applyResult.summary.missingKept,
+                  })}
                   edit_version → {applyResult.newEditVersion}。
                 </p>
               )}
               {applyResult?.reverted && (
                 <p className="form-ok">
-                  已回復：移除 {applyResult.reverted.removedChapters} 章、
-                  還原 {applyResult.reverted.restoredRevisions} 個修訂；
+                  {t('已回復：移除 {removed} 章、還原 {restored} 個修訂；', {
+                    removed: applyResult.reverted.removedChapters, restored: applyResult.reverted.restoredRevisions,
+                  })}
                   edit_version → {applyResult.reverted.editVersion}。
                 </p>
               )}
               {job.status === 'applied' && (
                 <p>
                   <button className="btn" disabled={busy} onClick={() => {
-                    if (confirm('回復會移除這次套用新增的章節並還原被覆蓋的修訂。之後若已有其他修改，回復會被擋下。確定要回復嗎？')) {
+                    if (confirm(t('回復會移除這次套用新增的章節並還原被覆蓋的修訂。之後若已有其他修改，回復會被擋下。確定要回復嗎？'))) {
                       void doRevert();
                     }
                   }}>
-                    回復此次套用
+                    {t('回復此次套用')}
                   </button>
                 </p>
               )}
@@ -519,24 +526,28 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
           {(job.status === 'ready' || job.status === 'review_required') && (
             <>
               <h3>
-                偵測章節 {count(job.stagedChapters)} 章
-                {job.stagedNeedsReview > 0 && <span className="form-warn">　{job.stagedNeedsReview} 章有解析提示</span>}
+                {t('偵測章節 {n} 章', { n: count(job.stagedChapters) })}
+                {job.stagedNeedsReview > 0 && <span className="form-warn">　{t('{n} 章有解析提示', { n: job.stagedNeedsReview })}</span>}
               </h3>
-              <p className="hint">確認章數及作品資料即可繼續；有疑問時才展開章節清單抽查。</p>
+              <p className="hint">{t('確認章數及作品資料即可繼續；有疑問時才展開章節清單抽查。')}</p>
               {quality && <div className={quality.issueCount ? 'form-warn' : 'form-ok'}>
-                <p>章節異常檢查：空章 {quality.counts.empty}、重複章 {quality.counts.duplicates}、章號跳號 {quality.counts.gaps}。</p>
-                {quality.issues.length > 0 && <details><summary>查看 {quality.issueCount} 項異常位置</summary>
+                <p>{t('章節異常檢查：空章 {empty}、重複章 {duplicates}、章號跳號 {gaps}。', {
+                  empty: quality.counts.empty, duplicates: quality.counts.duplicates, gaps: quality.counts.gaps,
+                })}</p>
+                {quality.issues.length > 0 && <details><summary>{t('查看 {n} 項異常位置', { n: quality.issueCount })}</summary>
                   <ul>{quality.issues.map((issue, index) => <li key={`${issue.type}-${index}`}>
-                    {issue.message}：{issue.positions.map((position: number, i: number) => `第 ${position + 1} 項${issue.labels[i] ? `（${issue.labels[i]}）` : ''}`).join('、')}
+                    {issue.message}：{issue.positions.map((position: number, i: number) => (issue.labels[i]
+                      ? t('第 {n} 項（{label}）', { n: position + 1, label: issue.labels[i] })
+                      : t('第 {n} 項', { n: position + 1 }))).join('、')}
                   </li>)}</ul>
                 </details>}
               </div>}
-              <details><summary>查看章節清單與解析提示（可選）</summary>
+              <details><summary>{t('查看章節清單與解析提示（可選）')}</summary>
                 <ChapterList key={importId} importId={importId!} />
               </details>
               {!job.workId && (
                 <button className="btn primary btn-block" onClick={commit} disabled={busy}>
-                  {busy ? '儲存中…' : '繼續發布'}
+                  {busy ? t('儲存中…') : t('繼續發布')}
                 </button>
               )}
             </>
@@ -544,12 +555,12 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
 
           {draftWorkId && (
             <div role="status">
-              <h3>{job.status === 'applied' ? '修改已儲存' : '草稿已建立'}</h3>
-              <p>內容已儲存，可直接前往快速確認及發布。</p>
+              <h3>{job.status === 'applied' ? t('修改已儲存') : t('草稿已建立')}</h3>
+              <p>{t('內容已儲存，可直接前往快速確認及發布。')}</p>
               <div className="row-actions">
-                <button className="btn primary" onClick={() => onContinue(draftWorkId)}>繼續發布</button>
+                <button className="btn primary" onClick={() => onContinue(draftWorkId)}>{t('繼續發布')}</button>
               </div>
-              <p className="hint">稍後也可在「草稿與發布」按作品名稱找到它。</p>
+              <p className="hint">{t('稍後也可在「草稿與發布」按作品名稱找到它。')}</p>
             </div>
           )}
 
@@ -569,12 +580,12 @@ function ChapterList({ importId }: { importId: string }) {
     setData(null); setLoadError('');
     request<ImportChapterPage>(`/api/admin/imports/${importId}/chapters?page=${page}&limit=50`, { signal: controller.signal })
       .then((body) => { if (!controller.signal.aborted) setData(body); })
-      .catch(() => { if (!controller.signal.aborted) setLoadError('章節載入失敗，請重新開啟預覽或換頁重試'); });
+      .catch(() => { if (!controller.signal.aborted) setLoadError(t('章節載入失敗，請重新開啟預覽或換頁重試')); });
     return () => controller.abort();
   }, [importId, page]);
 
   if (loadError) return <p className="form-error" role="alert">{loadError}</p>;
-  if (!data) return <SkeletonLines count={5} label="載入章節" />;
+  if (!data) return <SkeletonLines count={5} label={t('載入章節')} />;
 
   const pages = Math.max(1, Math.ceil(data.total / data.limit));
   return (
@@ -584,7 +595,7 @@ function ChapterList({ importId }: { importId: string }) {
           <li className="row" key={c.position}>
             <div className="row-main">
               <span className="row-title row-title-sm">
-                {c.labelRaw || '（無標籤）'}{c.title ? `　${c.title}` : ''}
+                {c.labelRaw || t('（無標籤）')}{c.title ? `　${c.title}` : ''}
               </span>
               <div className="row-sub">
                 <span className="snippet">{c.snippet}…</span>
@@ -593,16 +604,16 @@ function ChapterList({ importId }: { importId: string }) {
             </div>
             <div className="row-rail">
               {c.needsReview
-                ? <span className="state state-review">需覆核</span>
-                : <span className="state state-ok">可提交</span>}
+                ? <span className="state state-review">{t('需覆核')}</span>
+                : <span className="state state-ok">{t('可提交')}</span>}
             </div>
           </li>
         ))}
       </ol>
       <div className="row-actions pager">
-        <button className="btn" disabled={page <= 1} onClick={() => setPage(page - 1)}>上一頁</button>
-        <span className="hint tnum">第 {data.page} / {pages} 頁</span>
-        <button className="btn" disabled={page >= pages} onClick={() => setPage(page + 1)}>下一頁</button>
+        <button className="btn" disabled={page <= 1} onClick={() => setPage(page - 1)}>{t('上一頁')}</button>
+        <span className="hint tnum">{t('第 {page} / {pages} 頁', { page: data.page, pages })}</span>
+        <button className="btn" disabled={page >= pages} onClick={() => setPage(page + 1)}>{t('下一頁')}</button>
       </div>
     </div>
   );

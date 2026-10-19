@@ -9,6 +9,7 @@ import { and, asc, desc, eq, inArray, isNotNull, or, sql, type SQL } from 'drizz
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { categories, releaseItems, tags, workCategories, workReleases, works, workTags, userLibrary } from '../db/schema.ts';
 import { decodeCursor, encodeCursor, filterFingerprint } from '../catalog/cursor.ts';
+import { parseRef } from '../lib/slug.ts';
 
 export interface CatalogDeps {
   db: NodePgDatabase;
@@ -21,6 +22,21 @@ const SORTS = {
 type SortKey = keyof typeof SORTS;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * `<slug>-<publicId>` segment, bare public id, or uuid → the work's uuid.
+ * The slug text is decorative and never consulted, so a title edit cannot
+ * break a published link; a uuid is still accepted because every link shared
+ * before this scheme existed is one.
+ */
+async function resolveWorkId(db: NodePgDatabase, ref: string): Promise<string | null> {
+  const parsed = parseRef(ref);
+  if (!parsed) return null;
+  if ('workId' in parsed) return parsed.workId;
+  const [row] = await db.select({ id: works.id }).from(works)
+    .where(eq(works.publicId, parsed.publicId)).limit(1);
+  return row?.id ?? null;
+}
 
 function parseUuidList(raw: string | undefined): string[] | null {
   if (!raw) return [];
@@ -213,6 +229,7 @@ export function worksRoutes(deps: CatalogDeps): Hono<{ Variables: { userId: stri
     // running a second query
     const rows = await db.select({
       id: works.id,
+      publicId: works.publicId,
       sortValue: SORT_VALUE_SQL[filter.sort],
       title: works.title,
       author: works.author,
@@ -280,8 +297,8 @@ export function worksRoutes(deps: CatalogDeps): Hono<{ Variables: { userId: stri
   });
 
   app.get('/api/works/:id/related', async (c) => {
-    const id = c.req.param('id');
-    if (!UUID_RE.test(id)) return c.json({ error: 'work_not_found' }, 404);
+    const id = await resolveWorkId(db, c.req.param('id'));
+    if (!id) return c.json({ error: 'work_not_found' }, 404);
     const [source] = await db.select({ id: works.id }).from(works)
       .where(sql`${works.id} = ${id} and ${works.visibility} in ('public','unlisted') and ${works.activeReleaseId} is not null`).limit(1);
     if (!source) return c.json({ error: 'work_not_found' }, 404);
@@ -301,7 +318,7 @@ export function worksRoutes(deps: CatalogDeps): Hono<{ Variables: { userId: stri
         where seed.work_id = ${id}::uuid and candidate.work_id <> ${id}::uuid
         group by candidate.work_id
       )
-      select w.id, w.title, w.author, w.work_type, w.serial_status, r.chapter_count,
+      select w.id, w.public_id, w.title, w.author, w.work_type, w.serial_status, r.chapter_count,
              coalesce(cm.shared_categories, 0) as shared_categories, coalesce(tm.shared_tags, 0) as shared_tags
       from app.works w
       join app.work_releases r on r.id = w.active_release_id and r.work_id = w.id
@@ -310,17 +327,18 @@ export function worksRoutes(deps: CatalogDeps): Hono<{ Variables: { userId: stri
       where w.visibility = 'public' and (cm.work_id is not null or tm.work_id is not null)
       order by coalesce(tm.shared_tags, 0) desc, coalesce(cm.shared_categories, 0) desc, w.title asc, w.id asc
       limit 6`);
-    return c.json({ works: result.rows.map((row) => ({ id: row.id, title: row.title, author: row.author,
+    return c.json({ works: result.rows.map((row) => ({ id: row.id, publicId: row.public_id, title: row.title, author: row.author,
       workType: row.work_type, serialStatus: row.serial_status, chapterCount: row.chapter_count,
       sharedCategories: Number(row.shared_categories), sharedTags: Number(row.shared_tags) })) });
   });
 
   // public work detail: release-scoped metadata + lightweight TOC head
   app.get('/api/works/:id', async (c) => {
-    const id = c.req.param('id');
-    if (!UUID_RE.test(id)) return c.json({ error: 'work_not_found' }, 404);
+    const id = await resolveWorkId(db, c.req.param('id'));
+    if (!id) return c.json({ error: 'work_not_found' }, 404);
     const rows = await db.select({
       id: works.id,
+      publicId: works.publicId,
       title: works.title,
       author: works.author,
       description: works.description,

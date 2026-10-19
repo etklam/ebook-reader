@@ -4,7 +4,7 @@
 // the same outcome without creating anything. No storage writes happen here:
 // bodies were already staged as immutable objects by the worker. M4
 // (overwrite) is deliberately not implemented.
-import { and, isNull, asc, eq, sql } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { chapters, chapterRevisions, importItems, importJobs, works } from '../db/schema.ts';
 import {
@@ -91,7 +91,7 @@ async function commitInTransaction(
     if (workId) {
       const existing = await tx.select({ id: works.id }).from(works).where(eq(works.id, workId)).limit(1);
       if (existing.length === 0) return { ok: false, status: 404, error: 'work_not_found' };
-      const { n } = (await tx.select({ n: sql<number>`count(*)::int` }).from(chapters).where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId))))[0];
+      const { n } = (await tx.select({ n: sql<number>`count(*)::int` }).from(chapters).where(eq(chapters.workId, workId)))[0];
       if (n > 0) {
         // first import only — incremental apply against a non-empty work is M3
         return { ok: false, status: 409, error: 'work_not_empty', detail: 'use the incremental apply endpoint' };
@@ -172,7 +172,7 @@ async function commitInTransaction(
     await tx.execute(sql`
       update app.chapters c set head_revision_id = r.id
       from app.chapter_revisions r
-      where r.chapter_id = c.id and c.work_id = ${workId} and c.head_revision_id is null and c.merged_into_chapter_id is null`);
+      where r.chapter_id = c.id and c.work_id = ${workId} and c.head_revision_id is null and c.merged_into_chapter_id is null and c.deleted_at is null`);
 
     await tx.update(importJobs).set({
       status: 'committed',

@@ -1,4 +1,5 @@
 import type { ImportJob, ImportQuality } from '../api/import-types.ts';
+import { t } from '../i18n/translate.ts';
 
 export interface ImportSnapshot { job: ImportJob | null; quality: ImportQuality | null; error: string | null }
 export interface ImportTransport {
@@ -48,7 +49,7 @@ export function createImportMonitor(
         retry = pending.has(job.status);
       } catch (error) {
         if (!current()) return;
-        state.snapshot = { ...state.snapshot, error: error instanceof Error ? error.message : '狀態讀取失敗' };
+        state.snapshot = { ...state.snapshot, error: error instanceof Error ? error.message : t('狀態讀取失敗') };
         onUpdate(id, state.snapshot);
         // Network failures, throttling and server errors can recover. Bad credentials/IDs cannot.
         const status = (error as { status?: number } | null)?.status;

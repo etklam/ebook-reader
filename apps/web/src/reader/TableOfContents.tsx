@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiRequestError, getToc } from '../api/client.ts';
 import type { TocEntry } from '../api/types.ts';
 import { SkeletonLines } from '../components/Skeleton.tsx';
+import { t } from '../i18n/translate.ts';
 
 const WINDOW = 100;
 type Request = { offset: number; direction: 'replace' | 'before' | 'after'; version?: string; limit?: number };
@@ -10,7 +11,9 @@ type Request = { offset: number; direction: 'replace' | 'before' | 'after'; vers
 export function TableOfContents({ workId, currentChapterId, onJump }: {
   workId: string;
   currentChapterId?: string | null;
-  onJump(chapterId: string): void;
+  /** the entry is passed alongside the id so callers can build a canonical
+   *  `/read/<work>/<label>-<publicId>` path without re-fetching the TOC */
+  onJump(chapterId: string, entry: TocEntry): void;
 }) {
   const [entries, setEntries] = useState<TocEntry[]>([]);
   const [query, setQuery] = useState('');
@@ -77,9 +80,9 @@ export function TableOfContents({ workId, currentChapterId, onJump }: {
     : null;
 
   return (
-    <nav aria-label="章節目錄" aria-busy={loading}>
+    <nav aria-label={t('章節目錄')} aria-busy={loading}>
       <div className="field">
-        <label htmlFor="toc-search">搜尋章名或章號</label>
+        <label htmlFor="toc-search">{t('搜尋章名或章號')}</label>
         <input id="toc-search" className="input" type="search" value={query} maxLength={200}
           onChange={(event) => {
             requestId.current++;
@@ -88,45 +91,45 @@ export function TableOfContents({ workId, currentChapterId, onJump }: {
           }} />
       </div>
       <div className="row-actions">
-        <label className="field">章節順序
+        <label className="field">{t('章節順序')}
           <select className="input" value={order} onChange={(event) => {
             requestId.current++;
             setOrder(event.target.value as 'asc' | 'desc');
           }}>
-            <option value="asc">正序</option><option value="desc">倒序</option>
+            <option value="asc">{t('正序')}</option><option value="desc">{t('倒序')}</option>
           </select>
         </label>
-        {currentChapterId && <button className="btn" onClick={() => locate('current')}>回到目前章節</button>}
-        <button className="btn" onClick={() => locate('latest')}>前往最新章目錄位置</button>
+        {currentChapterId && <button className="btn" onClick={() => locate('current')}>{t('回到目前章節')}</button>}
+        <button className="btn" onClick={() => locate('latest')}>{t('前往最新章目錄位置')}</button>
       </div>
-      {anchorMissing && <p role="status" className="hint">目前章節已不在這個版本，先顯示可閱讀的目錄。</p>}
-      {error === 'version' && <p className="form-error" role="alert">作品已發布新版本，請重新載入目錄。</p>}
-      {error === 'request' && <p className="form-error" role="alert">這一段目錄沒載到，既有清單仍保留。</p>}
+      {anchorMissing && <p role="status" className="hint">{t('目前章節已不在這個版本，先顯示可閱讀的目錄。')}</p>}
+      {error === 'version' && <p className="form-error" role="alert">{t('作品已發布新版本，請重新載入目錄。')}</p>}
+      {error === 'request' && <p className="form-error" role="alert">{t('這一段目錄沒載到，既有清單仍保留。')}</p>}
       {error && <button className="btn" onClick={() => error === 'version'
-        ? locate(location.target) : load(retry.current)}>重新載入{error === 'version' ? '目錄' : '這一段'}</button>}
-      {loading && entries.length === 0 && <SkeletonLines count={9} label="載入目錄" />}
-      {!loading && !error && page?.total === 0 && <p role="status">{query.trim() ? '找不到符合的章名或章號，清除搜尋可回到目前章節附近。' : '目前沒有可閱讀的章節。'}</p>}
-      {query && <button className="btn" onClick={() => locate('current')}>清除搜尋</button>}
+        ? locate(location.target) : load(retry.current)}>{error === 'version' ? t('重新載入目錄') : t('重新載入這一段')}</button>}
+      {loading && entries.length === 0 && <SkeletonLines count={9} label={t('載入目錄')} />}
+      {!loading && !error && page?.total === 0 && <p role="status">{query.trim() ? t('找不到符合的章名或章號，清除搜尋可回到目前章節附近。') : t('目前沒有可閱讀的章節。')}</p>}
+      {query && <button className="btn" onClick={() => locate('current')}>{t('清除搜尋')}</button>}
       {page && page.start > 0 && <button className="btn toc-more" disabled={loading || error === 'version'}
         onClick={() => load({ offset: Math.max(0, page.start - WINDOW), limit: Math.min(WINDOW, page.start), direction: 'before', version: page.version })}>
-        載入前段目錄
+        {t('載入前段目錄')}
       </button>}
       <ol className="toc-list">
         {entries.map((chapter) => {
           const current = chapter.id === currentChapterId;
           return <li key={chapter.id}>
             <button className="toc-item" ref={(latestId ? chapter.id === latestId : current) ? currentRef : undefined}
-              onClick={() => onJump(chapter.id)} aria-current={current ? 'true' : undefined}>
-              <span className="toc-label">{chapter.labelRaw || '（無標籤）'}</span>
+              onClick={() => onJump(chapter.id, chapter)} aria-current={current ? 'true' : undefined}>
+              <span className="toc-label">{chapter.labelRaw || t('（無標籤）')}</span>
               {chapter.title && <span className="toc-title">{chapter.title}</span>}
-              {current && <span className="toc-here">閱讀中</span>}
+              {current && <span className="toc-here">{t('閱讀中')}</span>}
             </button>
           </li>;
         })}
       </ol>
       {page?.next !== null && page && <button className="btn toc-more" disabled={loading || error === 'version'}
         onClick={() => load({ offset: page.next!, direction: 'after', version: page.version })}>
-        {loading ? '載入中…' : `載入後段目錄（已載入 ${entries.length} / ${page.total}）`}
+        {loading ? t('載入中…') : t('載入後段目錄（已載入 {loaded} / {total}）', { loaded: entries.length, total: page.total })}
       </button>}
     </nav>
   );

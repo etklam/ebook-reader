@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client.ts';
+import { t } from '../i18n/translate.ts';
+import { dateTime } from '../lib/format.ts';
 
 type Report = {
   id: string; workId: string; chapterId: string; revisionId: string;
@@ -23,7 +25,7 @@ export function ContentReportsPanel({ onEdit }: {
     setLoading(true); setError(''); setReports([]);
     void api<{ reports: Report[] }>(`/api/admin/content-reports?status=${status}&offset=${offset}`, { signal: controller.signal })
       .then((data) => { if (!controller.signal.aborted) setReports(data.reports); })
-      .catch(() => { if (!controller.signal.aborted) setError('無法載入錯字回報。'); })
+      .catch(() => { if (!controller.signal.aborted) setError(t('無法載入錯字回報。')); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [status, offset, refresh]);
@@ -34,32 +36,35 @@ export function ContentReportsPanel({ onEdit }: {
         headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'resolved' }) });
       if (reports.length === 1 && offset > 0) setOffset(offset - 50);
       else setRefresh((n) => n + 1);
-    } catch { setError('未能標記已處理，請再試。'); }
+    } catch { setError(t('未能標記已處理，請再試。')); }
     finally { setBusyId(''); }
   };
   return <section className="content-reports-panel">
-    <h2>章節錯字回報</h2>
-    <div className="field"><label htmlFor="report-status">處理狀態</label>
+    <h2>{t('章節錯字回報')}</h2>
+    <div className="field"><label htmlFor="report-status">{t('處理狀態')}</label>
       <select className="input" id="report-status" value={status} disabled={!!busyId} onChange={(e) => {
         setStatus(e.target.value as 'open' | 'resolved'); setOffset(0);
-      }}><option value="open">待處理</option><option value="resolved">已處理</option></select>
+      }}><option value="open">{t('待處理')}</option><option value="resolved">{t('已處理')}</option></select>
     </div>
-    {error && <p role="alert">{error} <button className="btn" onClick={() => setRefresh((n) => n + 1)}>重試</button></p>}
-    {loading ? <p role="status">載入中…</p> : !error && reports.length === 0 ? <p>暫無{status === 'open' ? '待處理' : '已處理'}回報。</p> : null}
+    {error && <p role="alert">{error} <button className="btn" onClick={() => setRefresh((n) => n + 1)}>{t('重試')}</button></p>}
+    {loading ? <p role="status">{t('載入中…')}</p>
+      : !error && reports.length === 0
+        ? <p>{status === 'open' ? t('暫無待處理回報。') : t('暫無已處理回報。')}</p>
+        : null}
     {reports.map((report) => <article className="content-report" key={report.id}>
-      <h3>{report.workTitle} · {report.chapterTitle || '章節'}</h3>
-      <p className="hint">第 {report.paragraphIndex + 1} 段 · {new Date(report.createdAt).toLocaleString('zh-TW')}</p>
+      <h3>{report.workTitle} · {report.chapterTitle || t('章節')}</h3>
+      <p className="hint">{t('第 {n} 段', { n: report.paragraphIndex + 1 })} · {dateTime(report.createdAt)}</p>
       <blockquote>{report.excerpt}</blockquote><p>{report.message}</p>
-      <p className="hint">此摘錄保留回報時的版本。編輯前請核對目前章節內容。</p>
+      <p className="hint">{t('此摘錄保留回報時的版本。編輯前請核對目前章節內容。')}</p>
       <div className="msg-actions">
-        <button className="btn" onClick={() => onEdit(report.workId, report.chapterId, report.paragraphIndex)}>前往章節編輯</button>
+        <button className="btn" onClick={() => onEdit(report.workId, report.chapterId, report.paragraphIndex)}>{t('前往章節編輯')}</button>
         {status === 'open' && <button className="btn primary" disabled={!!busyId}
-          onClick={() => void resolve(report.id)}>{busyId === report.id ? '處理中…' : '標記已處理'}</button>}
+          onClick={() => void resolve(report.id)}>{busyId === report.id ? t('處理中…') : t('標記已處理')}</button>}
       </div>
     </article>)}
     <div className="msg-actions">
-      <button className="btn" disabled={loading || !!busyId || offset === 0} onClick={() => setOffset(offset - 50)}>上一頁</button>
-      <button className="btn" disabled={loading || !!busyId || reports.length < 50} onClick={() => setOffset(offset + 50)}>下一頁</button>
+      <button className="btn" disabled={loading || !!busyId || offset === 0} onClick={() => setOffset(offset - 50)}>{t('上一頁')}</button>
+      <button className="btn" disabled={loading || !!busyId || reports.length < 50} onClick={() => setOffset(offset + 50)}>{t('下一頁')}</button>
     </div>
   </section>;
 }

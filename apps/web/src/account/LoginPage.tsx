@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { ApiRequestError, login } from '../api/client.ts';
 import { navigate } from '../App.tsx';
 import { refreshMe } from './useMe.ts';
+import { t } from '../i18n/translate.ts';
 
 export function LoginPage() {
   const [email, setEmail] = useState('');
@@ -21,8 +22,8 @@ export function LoginPage() {
       navigate('/me/library');
     } catch (err) {
       setError(err instanceof ApiRequestError && err.code === 'invalid_credentials'
-        ? '帳號或密碼不正確'
-        : '登入失敗，請稍後再試');
+        ? t('帳號或密碼不正確')
+        : t('登入失敗，請稍後再試'));
     } finally {
       setBusy(false);
     }
@@ -30,17 +31,17 @@ export function LoginPage() {
 
   return (
     <div className="auth-page" data-testid="login">
-      <h1>登入</h1>
-      <p className="auth-lede">登入後可以收藏、追更，並讓閱讀進度跨裝置接續。</p>
+      <h1>{t('登入')}</h1>
+      <p className="auth-lede">{t('登入後可以收藏、追更，並讓閱讀進度跨裝置接續。')}</p>
       <form className="auth-form" onSubmit={submit}>
         <div className="field">
-          <label htmlFor="login-email">電子郵件</label>
+          <label htmlFor="login-email">{t('電子郵件')}</label>
           <input className="input" id="login-email" type="email" value={email} required autoComplete="email"
             aria-invalid={error ? true : undefined}
             onChange={(e) => setEmail(e.target.value)} />
         </div>
         <div className="field">
-          <label htmlFor="login-password">密碼</label>
+          <label htmlFor="login-password">{t('密碼')}</label>
           <div className="input-reveal">
             <input className="input" id="login-password" type={shown ? 'text' : 'password'}
               value={password} required
@@ -49,17 +50,17 @@ export function LoginPage() {
               aria-describedby={error ? 'login-error' : undefined}
               onChange={(e) => setPassword(e.target.value)} />
             <button type="button" className="btn quiet reveal-btn" aria-pressed={shown}
-              onClick={() => setShown((v) => !v)}>{shown ? '隱藏' : '顯示'}</button>
+              onClick={() => setShown((v) => !v)}>{shown ? t('隱藏') : t('顯示')}</button>
           </div>
         </div>
         {error && <p className="form-error" id="login-error" role="alert">{error}</p>}
         <button className="btn primary" type="submit" disabled={busy} aria-busy={busy || undefined}>
-          {busy ? '登入中…' : '登入'}
+          {busy ? t('登入中…') : t('登入')}
         </button>
       </form>
       <p className="auth-foot">
-        還沒有帳號？<button className="linkish" onClick={() => navigate('/register')}>建立帳戶</button>
-        <br />忘記密碼目前無法自助重設，請聯絡管理員。
+        {t('還沒有帳號？')}<button className="linkish" onClick={() => navigate('/register')}>{t('建立帳戶')}</button>
+        <br />{t('忘記密碼目前無法自助重設，請聯絡管理員。')}
       </p>
     </div>
   );

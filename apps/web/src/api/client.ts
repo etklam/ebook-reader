@@ -70,18 +70,22 @@ export const getCatalogCount = (query: CatalogQuery = {}) => {
   const qs = catalogQueryString(filters);
   return api<{ count: number }>(`/api/works/count${qs ? `?${qs}` : ''}`, { cache: 'no-store' });
 };
-export const getWorkDetail = (id: string) => api<WorkDetail>(`/api/works/${id}`);
+export const getWorkDetail = (id: string) => api<WorkDetail>(`/api/works/${encodeURIComponent(id)}`);
 
 // --- public reader ---------------------------------------------------------------
-export const getWork = (id: string) => api<ReaderWork>(`/api/reader/works/${id}`);
+export const getWork = (id: string) => api<ReaderWork>(`/api/reader/works/${encodeURIComponent(id)}`);
 export const getToc = (id: string, limit: number, offset: number, options: {
   aroundChapterId?: string; latest?: boolean; q?: string; order?: 'asc' | 'desc'; version?: string;
 } = {}) => {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   for (const [key, value] of Object.entries(options)) if (value !== undefined) params.set(key, String(value));
-  return api<TocResponse>(`/api/reader/works/${id}/chapters?${params}`);
+  return api<TocResponse>(`/api/reader/works/${encodeURIComponent(id)}/chapters?${params}`);
 };
-export const getChapter = (id: string) => api<ReaderChapter>(`/api/reader/chapters/${id}`);
+// `work` is only needed when `id` is a chapter public id, which is unique per
+// work rather than globally (server/src/db/schema.ts). Internal navigation
+// passes uuids and needs nothing; the first load from a slug URL passes both.
+export const getChapter = (id: string, work?: string) =>
+  api<ReaderChapter>(`/api/reader/chapters/${encodeURIComponent(id)}${work ? `?work=${encodeURIComponent(work)}` : ''}`);
 
 // --- member state ------------------------------------------------------------------
 export const getLibrary = (cursor?: string, filters: import('./types.ts').LibraryFilters = {}) => {

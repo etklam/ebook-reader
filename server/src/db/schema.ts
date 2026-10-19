@@ -59,6 +59,16 @@ export const passwordResets = app.table('password_resets', {
 // --- works & taxonomy (§17, §03A-F; aliases/merge deferred per v1.3) ---------
 export const works = app.table('works', {
   id: uuid('id').primaryKey().defaultRandom(),
+  // Short, stable, URL-facing key (SEO §03B). Generated from the row's own id
+  // rather than assigned by application code: a column every insert path must
+  // remember to fill is a column some insert path eventually forgets, and the
+  // three chapter/work insert sites (import commit, incremental apply, admin
+  // chapter create) plus every test fixture would each need it. Derived from an
+  // immutable identity, so a published URL can never drift to another work.
+  // 8 hex has a small but real birthday chance of colliding; the unique index
+  // turns that into a failed insert, and the retry draws a fresh uuid — never
+  // into two works answering to one URL.
+  publicId: text('public_id').notNull().generatedAlwaysAs(sql`left(replace(id::text, '-', ''), 8)`),
   title: text('title').notNull(),
   author: text('author').notNull().default(''),
   workType: text('work_type', { enum: ['short_story', 'serial'] }).notNull(),
@@ -78,6 +88,9 @@ export const works = app.table('works', {
   // short_story carries no serial state; serial may leave it NULL while unknown
   check('works_type_status_ck', sql`(${t.workType} = 'serial') or (${t.workType} = 'short_story' and ${t.serialStatus} is null)`),
   check('works_visibility_ck', sql`${t.visibility} in ('draft','public','unlisted','removed')`),
+  // the URL key must resolve to exactly one work, and by index — a public
+  // reader path is one of the hottest lookups in the system
+  unique('works_public_id_uq').on(t.publicId),
 ]);
 
 // Anonymous, daily deduplicated work-detail clicks. No IP or account IDs.
@@ -147,6 +160,13 @@ export const workTags = app.table('work_tags', {
 // with chapter_revisions).
 export const chapters = app.table('chapters', {
   id: uuid('id').primaryKey().defaultRandom(),
+  // URL-facing key, as works.public_id. Unique per work, not globally: a
+  // chapter path is always nested under its work, so per-work scope needs far
+  // less entropy for the same guarantee. Deliberately NOT editorial_position —
+  // that shifts when a chapter is inserted mid-sequence (see the deferrable
+  // unique constraint below), which would silently re-point every published
+  // chapter URL after it at a different chapter.
+  publicId: text('public_id').notNull().generatedAlwaysAs(sql`left(replace(id::text, '-', ''), 8)`),
   workId: uuid('work_id').notNull().references(() => works.id),
   volumeId: uuid('volume_id').references(() => volumes.id),
   labelRaw: text('label_raw').notNull(),
@@ -157,6 +177,7 @@ export const chapters = app.table('chapters', {
   headRevisionId: uuid('head_revision_id'),
   // Absorbed chapter identity and revision history remain immutable.
   mergedIntoChapterId: uuid('merged_into_chapter_id'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: createdAt(),
 }, (t) => [
   // chapters_work_position_uq is DEFERRABLE INITIALLY DEFERRED in the
@@ -164,6 +185,7 @@ export const chapters = app.table('chapters', {
   unique('chapters_work_position_uq').on(t.workId, t.editorialPosition),
   index('chapters_work_position_idx').on(t.workId, t.editorialPosition),
   unique('chapters_id_work_uq').on(t.id, t.workId),
+  unique('chapters_work_public_id_uq').on(t.workId, t.publicId),
   index('chapters_merged_into_idx').on(t.mergedIntoChapterId),
   foreignKey({ name: 'chapters_merged_into_fk', columns: [t.mergedIntoChapterId, t.workId], foreignColumns: [t.id, t.workId] }),
   check('chapters_merged_nonself_ck', sql`${t.mergedIntoChapterId} is null or ${t.mergedIntoChapterId} <> ${t.id}`),

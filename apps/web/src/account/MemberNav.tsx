@@ -6,7 +6,11 @@ import { navigate } from '../App.tsx';
 import { refreshMe } from './useMe.ts';
 import { logout } from '../api/client.ts';
 import { clearUpdates } from './useUpdates.ts';
+import { t } from '../i18n/translate.ts';
 
+// The labels stay in the source language here and are translated at the render
+// site: a module-level constant is evaluated once, so translating it here would
+// pin the nav to whichever language the app started in.
 const PAGES = [
   { key: 'library', path: '/me/library', label: '我的書庫' },
   { key: 'bookmarks', path: '/me/bookmarks', label: '我的書籤' },
@@ -20,12 +24,12 @@ export function MemberNav({ current, onError }: {
   onError?(message: string): void;
 }) {
   return (
-    <nav className="subnav" aria-label="會員頁面">
+    <nav className="subnav" aria-label={t('會員頁面')}>
       {PAGES.map((p) => (p.key === current
         // the current page is stated, not offered: a link back to here teaches
         // nothing, and without it nothing on the page says which one it is
-        ? <span key={p.key} className="subnav-here" aria-current="page">{p.label}</span>
-        : <button key={p.key} className="linkish" onClick={() => navigate(p.path)}>{p.label}</button>
+        ? <span key={p.key} className="subnav-here" aria-current="page">{t(p.label)}</span>
+        : <button key={p.key} className="linkish" onClick={() => navigate(p.path)}>{t(p.label)}</button>
       ))}
       {/* no 到書庫找書 here: 書庫 is a permanent tab in the bottom nav, and a
           fifth item wraps the row at 360px */}
@@ -34,9 +38,9 @@ export function MemberNav({ current, onError }: {
         onClick={() => void logout()
           .then(refreshMe)
           .then(() => { clearUpdates(); navigate('/'); })
-          .catch(() => onError?.('登出沒有成功，請再試一次'))}
+          .catch(() => onError?.(t('登出沒有成功，請再試一次')))}
       >
-        登出
+        {t('登出')}
       </button>
     </nav>
   );

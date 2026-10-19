@@ -23,6 +23,8 @@ import { BottomSheet } from './BottomSheet.tsx';
 import { TableOfContents } from './TableOfContents.tsx';
 import { ReaderSettingsPanel } from './ReaderSettings.tsx';
 import { navigate } from '../App.tsx';
+import { readPath, samePath, workPath } from '../lib/slug.ts';
+import { applyHead, describe, title } from '../lib/head.ts';
 import {
   createProgressSync, pushPreferences,
   resolveMemberEntry, scheduleReadMarking, type MemberEntry,
@@ -37,12 +39,15 @@ import { FullTextSearch } from './FullTextSearch.tsx';
 import { SpeechControls, useSpeechReader } from './SpeechControls.tsx';
 import { useReadingTimeTracker } from '../account/reading-time.ts';
 import { BookmarkNoteEditor } from '../account/BookmarkNoteEditor.tsx';
+import { t } from '../i18n/translate.ts';
 
 type LoadState =
   | { phase: 'loading' }
   | { phase: 'ready' }
   | { phase: 'error'; code: string; retryable: boolean };
 
+// Source-language tables, translated at the render site below: a constant is
+// evaluated at import and would not follow a language switch.
 const ERROR_TEXT: Record<string, string> = {
   work_not_found: '找不到這部作品',
   chapter_not_found: '找不到這一章',
@@ -69,22 +74,39 @@ const ERROR_HINT: Record<string, string> = {
   network: '看起來是連線中斷。重試一次通常就好；進度已經存在這台裝置上。',
 };
 
+/** Opening prose for the chapter's meta description. Canonical bodies are
+ *  paragraphs joined by \n\n, so the first couple of them are the natural
+ *  summary — far better than repeating the site blurb on every chapter. */
+function firstLines(body: string): string {
+  return body.split('\n\n').slice(0, 2).join('　');
+}
+
 const COLUMN_GAP = 48;
 /** px of horizontal travel before a touch gesture counts as a page turn */
 const SWIPE_MIN = 44;
 
-export function ReaderPage({ workId, initialChapterId }: { workId: string; initialChapterId: string | null }) {
+/**
+ * `workRef`/`initialChapterRef` are the URL's own segments — `<slug>-<publicId>`
+ * or a legacy uuid. They address content; they are NOT identity. Everything
+ * that persists — the localStorage position key, account progress sync,
+ * bookmarks — stays keyed by the work's uuid (`workId` below), because those
+ * keys were written against uuids and the position contract outlives any URL
+ * scheme (ADR-07, §14).
+ */
+export function ReaderPage({ workRef, initialChapterRef }: { workRef: string; initialChapterRef: string | null }) {
   const [work, setWork] = useState<ReaderWork | null>(null);
   const releaseRef = useRef<string | null>(null);
-  const chapterLoader = useMemo(() => createChapterLoader(getChapter, Date.now, async () => {
+  // `work` is passed on every chapter fetch so a chapter public id — unique per
+  // work, not globally — can be resolved. A uuid id ignores it.
+  const chapterLoader = useMemo(() => createChapterLoader((id) => getChapter(id, workRef), Date.now, async () => {
     // Validate visibility and current publication before consuming a body
     // fetched earlier. Metadata is small; a changed release fetches fresh text.
-    const latest = await getWork(workId);
+    const latest = await getWork(workRef);
     const valid = latest.releaseId === releaseRef.current;
     releaseRef.current = latest.releaseId;
     setWork(latest);
     return valid;
-  }), [workId]);
+  }), [workRef]);
   const [chapter, setChapter] = useState<ReaderChapter | null>(null);
   const [state, setState] = useState<LoadState>({ phase: 'loading' });
   const [settings, setSettings] = useState<ReaderSettings>(() => loadSettings());
@@ -108,6 +130,10 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   const selectedParagraph = useRef<{ chapterId: string; index: number } | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const captureRef = useRef<() => ReadingPosition | null>(() => null);
+
+  // The uuid behind the URL's ref: null until the work metadata lands. Every
+  // persisted key hangs off this, never off the ref.
+  const workId = work?.id ?? null;
 
   const seqRef = useRef(0);           // stale-fetch guard (§13)
   const stripRef = useRef<HTMLDivElement | null>(null);
@@ -210,20 +236,28 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   }, [captureAnchor, updateSettings, settings.mode, chapter]);
 
   // --- data loading ----------------------------------------------------------------
-  const loadChapter = useCallback(async (chapterId: string, restore: ReadingPosition | null) => {
+  // `ref` addresses the chapter: a uuid for every in-app navigation, or the
+  // URL's `<slug>-<publicId>` segment on a first load.
+  const loadChapter = useCallback(async (ref: string, restore: ReadingPosition | null) => {
     const seq = ++seqRef.current;
     setState({ phase: 'loading' });
     setConverted(null);
     setPage(0);
     setPageCount(1);
     try {
-      const ch = await chapterLoader.load(chapterId);
+      const ch = await chapterLoader.load(ref);
       if (seq !== seqRef.current) return; // stale response — ignore (§13)
       setChapter(ch);
       setState({ phase: 'ready' });
-      if (restore && restore.chapterId === ch.chapterId) {
-        const exact = restore.revisionId === ch.revisionId;
-        queueAnchor(exact ? restore : remapPosition(restore, ch.revisionId, splitParagraphs(ch.body).length));
+      // A restore belongs to this chapter when it names the same uuid — or the
+      // ref we just resolved, because a bookmark deep link is addressed by the
+      // URL segment and its uuid is not known until the body lands. Normalize
+      // to the uuid: every later comparison, and the saved position itself, is
+      // keyed by chapter_id (§14).
+      if (restore && (restore.chapterId === ch.chapterId || restore.chapterId === ref)) {
+        const mine = { ...restore, chapterId: ch.chapterId };
+        const exact = mine.revisionId === ch.revisionId;
+        queueAnchor(exact ? mine : remapPosition(mine, ch.revisionId, splitParagraphs(ch.body).length));
         setApproxRestore(!exact);
       } else {
         queueAnchor({ chapterId: ch.chapterId, revisionId: ch.revisionId, paragraphIndex: 0 });
@@ -241,11 +275,11 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     let cancelled = false;
     (async () => {
       try {
-        const w = await getWork(workId);
+        const w = await getWork(workRef);
         if (cancelled) return;
         setWork(w);
         releaseRef.current = w.releaseId;
-        const entry = await resolveMemberEntry(workId);
+        const entry = await resolveMemberEntry(w.id);
         if (cancelled) return;
         setMember(entry);
         if (entry.settings) {
@@ -253,15 +287,17 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
           saveSettings(merged);
           setSettings(merged);
         }
-        const saved = loadPosition(workId);
+        const saved = loadPosition(w.id);
         const pos = entry.position ?? saved;
-        const target = initialChapterId ?? pos?.chapterId ?? w.firstChapterId;
+        const target = initialChapterRef ?? pos?.chapterId ?? w.firstChapterId;
         if (!target) { setState({ phase: 'error', code: 'chapter_not_found', retryable: false }); return; }
         // a `#p=…&rev=…` deep link (a bookmark) names the paragraph explicitly
         // and outranks the resumed position; it is consumed once, so scrolling
         // away and reloading keeps the new place rather than snapping back
-        const deep = initialChapterId ? parsePositionHash(location.hash) : null;
-        if (deep) history.replaceState(null, '', `/read/${workId}/${initialChapterId}`);
+        const deep = initialChapterRef ? parsePositionHash(location.hash) : null;
+        // the anchor is consumed here; the canonicalizing effect below then
+        // rewrites the path once the chapter's own label is known
+        if (deep) history.replaceState(null, '', location.pathname);
         // restore whenever the saved position is for THIS chapter — reload and
         // back-navigation land on the same paragraph regardless of entry path;
         // loadChapter ignores restores for other chapters
@@ -273,7 +309,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
       }
     })();
     return () => { cancelled = true; };
-  }, [workId, reloadToken]);
+  }, [workRef, reloadToken]);
 
   // a chapter counts as read after 10s of reading (never via prefetch, §33)
   useEffect(() => {
@@ -281,12 +317,27 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     return scheduleReadMarking(chapter, true);
   }, [chapter, member?.isMember]);
 
-  // keep the URL in sync with the loaded chapter (§13)
+  // Keep the URL in sync with the loaded chapter (§13), and make it the
+  // canonical slug path: a page turn, a stale slug after a title edit and a
+  // legacy uuid link all converge on one address for one chapter — which is
+  // what `<link rel="canonical">` then declares.
   useEffect(() => {
-    if (chapter && chapter.chapterId !== initialChapterId) {
-      history.replaceState(null, '', `/read/${workId}/${chapter.chapterId}`);
-    }
-  }, [chapter, initialChapterId, workId]);
+    if (!work || !chapter) return;
+    const canonical = readPath(work, { id: chapter.chapterId, publicId: chapter.publicId,
+      labelRaw: chapter.labelRaw, title: chapter.title });
+    if (!samePath(location.pathname, canonical)) history.replaceState(null, '', encodeURI(canonical));
+    const label = [chapter.labelRaw, chapter.title].filter(Boolean).join(' ');
+    applyHead({
+      title: title(`${label} - ${work.title}`),
+      description: describe(`${work.title}${work.author ? `（${work.author}）` : ''}${label}`,
+        firstLines(chapter.body)),
+      canonicalPath: canonical,
+      ogType: 'article',
+      // a draft is Admin-only and unlisted is readable-but-never-listed;
+      // neither belongs in an index
+      noindex: work.visibility !== 'public',
+    });
+  }, [work, chapter]);
 
   // --- conversion (view-time only, paragraph count invariant, §07) -----------------
   const original = useMemo(() => (chapter ? splitParagraphs(chapter.body) : []), [chapter]);
@@ -345,7 +396,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
       if (timer !== null) return;
       timer = setTimeout(() => {
         timer = null;
-        savePositionDebounced(workId, captureAnchor());
+        if (workId) savePositionDebounced(workId, captureAnchor());
         syncSaver();
         maybePrefetchNext();
       }, 80);
@@ -358,7 +409,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         prefetchedFor.current = null;
         savePositionDebounced.cancel();
         const p = captureAnchor();
-        if (p) savePosition(workId, p);
+        if (p && workId) savePosition(workId, p);
         syncRef.current?.flush();
       }
     };
@@ -400,7 +451,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     const flush = () => {
       savePositionDebounced.cancel();
       const pos = captureRef.current();
-      if (pos) savePosition(workId, pos);
+      if (pos && workId) savePosition(workId, pos);
       syncSaver.cancel();
       syncRef.current?.flush();
     };
@@ -413,18 +464,18 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
   }, [workId, savePositionDebounced, syncSaver]);
 
   useEffect(() => {
-    if (!member?.isMember) { syncRef.current = null; return; }
+    if (!member?.isMember || !workId) { syncRef.current = null; return; }
     const sync = createProgressSync(
       workId,
       () => captureRef.current(),
       (server) => {
         // a newer device won (§30): adopt the account position deliberately
-        setSyncNotice('已同步至帳號最新閱讀位置');
+        setSyncNotice(t('已同步至帳號最新閱讀位置'));
         queueAnchor(server);
         setApproxRestore(true);
         if (chapter && server.chapterId !== chapter.chapterId) void loadChapter(server.chapterId, server);
       },
-      () => setSyncNotice('進度同步暫時失敗，稍後自動重試'),
+      () => setSyncNotice(t('進度同步暫時失敗，稍後自動重試')),
     );
     syncRef.current = sync;
     return () => { syncRef.current = null; };
@@ -511,7 +562,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     const firstFrame = requestAnimationFrame(() => {
       secondFrame = requestAnimationFrame(() => {
         if (pendingAnchor.current || restoreInFlight.current) return;
-        savePositionDebounced(workId, captureRef.current());
+        if (workId) savePositionDebounced(workId, captureRef.current());
         syncSaver();
       });
     });
@@ -527,9 +578,9 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     setChromeVisible(false);
     setSheet(null);
     const p = captureAnchor();
-    if (p) savePosition(workId, p);
+    if (p && workId) savePosition(workId, p);
     syncRef.current?.flush();
-    const saved = loadPosition(workId);
+    const saved = workId ? loadPosition(workId) : null;
     void loadChapter(chapterId, saved?.chapterId === chapterId ? saved : null);
   }, [loadChapter, workId]);
 
@@ -668,8 +719,8 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
     return (
       <div className={`reader theme-${theme}`}>
         <div className="reader-msg" data-testid="reader-error">
-          <h2>{ERROR_TEXT[state.code] ?? '發生錯誤'}</h2>
-          <p>{ERROR_HINT[state.code] ?? '請稍後再試，或回書庫換一本。'}</p>
+          <h2>{t(ERROR_TEXT[state.code] ?? '發生錯誤')}</h2>
+          <p>{t(ERROR_HINT[state.code] ?? '請稍後再試，或回書庫換一本。')}</p>
           <code className="reader-err-code">{state.code}</code>
           <div className="msg-actions">
             {state.retryable && (
@@ -679,17 +730,19 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
                   // re-resolve from the top: work → member entry → chapter.
                   // Retrying only the chapter would strand a reader whose
                   // failure happened before any chapter was known.
-                  if (chapter) void loadChapter(chapter.chapterId, loadPosition(workId));
+                  if (chapter) void loadChapter(chapter.chapterId, workId ? loadPosition(workId) : null);
                   else setReloadToken((n) => n + 1);
                 }}
               >
-                重試
+                {t('重試')}
               </button>
             )}
             {/* only offered when the work itself resolved: sending a reader to
                 the page of a work that was not found is a second dead end */}
-            {work && <button className="btn" onClick={() => navigate(`/works/${workId}`)}>回作品頁</button>}
-            <button className="btn quiet" onClick={() => navigate('/')}>回書庫</button>
+            {state.code === 'chapter_not_found' && work?.firstChapterId && <button className="btn primary"
+              onClick={() => void loadChapter(work.firstChapterId!, null)}>{t('閱讀目前版本第一章')}</button>}
+            {work && <button className="btn" onClick={() => navigate(workPath(work))}>{t('回作品頁')}</button>}
+            <button className="btn quiet" onClick={() => navigate('/')}>{t('回書庫')}</button>
           </div>
         </div>
       </div>
@@ -747,7 +800,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
       {(approxRestore || syncNotice) && (
         <div className="reader-notes">
           {approxRestore && (
-            <p className="reader-note" role="status">章節內容已更新，已回到最接近的段落。</p>
+            <p className="reader-note" role="status">{t('章節內容已更新，已回到最接近的段落。')}</p>
           )}
           {syncNotice && <p className="reader-note" role="status">{syncNotice}</p>}
         </div>
@@ -778,7 +831,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         <div className="reader-turns">
           <button
             className="reader-turn reader-turn-prev"
-            aria-label="上一頁"
+            aria-label={t('上一頁')}
             disabled={page <= 0 && !chapter.previousChapterId}
             onClick={() => stepPage(-1)}
           >
@@ -786,7 +839,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
           </button>
           <button
             className="reader-turn reader-turn-next"
-            aria-label="下一頁"
+            aria-label={t('下一頁')}
             disabled={page >= pageCount - 1 && !chapter.nextChapterId}
             onClick={() => stepPage(1)}
           >
@@ -803,7 +856,7 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         visible={chromeVisible}
         hasPrev={chapter.previousChapterId !== null}
         hasNext={chapter.nextChapterId !== null}
-        progress={`${chapter.labelRaw || '—'}　·　共 ${count(work.chapterCount)} 章`}
+        progress={`${chapter.labelRaw || '—'}　·　${t('共 {n} 章', { n: count(work.chapterCount) })}`}
         paginated={paginated}
         page={page}
         pageCount={pageCount}
@@ -814,38 +867,38 @@ export function ReaderPage({ workId, initialChapterId }: { workId: string; initi
         onNextPage={() => stepPage(1)}
         onToc={() => setSheet('toc')}
         onSettings={() => setSheet('settings')}
-        onBack={() => navigate(`/works/${workId}`)}
+        onBack={() => navigate(workPath(work))}
         onConversion={(conversion) => changeLayout({ conversion })}
         onBookmark={() => {
-          if (!member?.isMember) { setSyncNotice('登入後可加入書籤'); return; }
+          if (!member?.isMember) { setSyncNotice(t('登入後可加入書籤')); return; }
           if (bookmarkSaving) return;
           const p = captureAnchor();
           if (!p) return;
           setBookmarkSaving(true);
-          void createBookmark({ workId, chapterId: p.chapterId, revisionId: p.revisionId, paragraphIndex: p.paragraphIndex })
-            .then(({ id }) => { setBookmarkId(id); setSheet('bookmark'); setSyncNotice('已加入書籤'); })
-            .catch(() => setSyncNotice('書籤加入失敗'))
+          void createBookmark({ workId: work.id, chapterId: p.chapterId, revisionId: p.revisionId, paragraphIndex: p.paragraphIndex })
+            .then(({ id }) => { setBookmarkId(id); setSheet('bookmark'); setSyncNotice(t('已加入書籤')); })
+            .catch(() => setSyncNotice(t('書籤加入失敗')))
             .finally(() => setBookmarkSaving(false));
         }}
       />
 
-      <BottomSheet open={sheet === 'toc'} title={`目錄（${count(work.chapterCount)} 章）`} onClose={() => setSheet(null)}>
-        <FullTextSearch workId={workId} />
+      <BottomSheet open={sheet === 'toc'} title={t('目錄（{n} 章）', { n: count(work.chapterCount) })} onClose={() => setSheet(null)}>
+        <FullTextSearch workId={work.id} />
         <TableOfContents
-          workId={workId}
+          workId={work.id}
           currentChapterId={chapter.chapterId}
           onJump={(id) => goChapter(id)}
         />
       </BottomSheet>
-      <BottomSheet open={sheet === 'report'} title="回報章節錯字" onClose={() => setSheet(null)}>
+      <BottomSheet open={sheet === 'report'} title={t('回報章節錯字')} onClose={() => setSheet(null)}>
         <ReportTypo key={`${chapter.chapterId}:${reportParagraphIndex}`} chapter={chapter} paragraphIndex={reportParagraphIndex} isMember={Boolean(member?.isMember)} />
       </BottomSheet>
-      <BottomSheet open={sheet === 'bookmark'} title="書籤備註" onClose={() => setSheet(null)}>
-        {bookmarkId && <BookmarkNoteEditor key={bookmarkId} bookmarkId={bookmarkId} cancelLabel="略過"
-          onCancel={() => setSheet(null)} onSaved={() => { setSheet(null); setSyncNotice('已儲存書籤備註'); }} />}
+      <BottomSheet open={sheet === 'bookmark'} title={t('書籤備註')} onClose={() => setSheet(null)}>
+        {bookmarkId && <BookmarkNoteEditor key={bookmarkId} bookmarkId={bookmarkId} cancelLabel={t('略過')}
+          onCancel={() => setSheet(null)} onSaved={() => { setSheet(null); setSyncNotice(t('已儲存書籤備註')); }} />}
       </BottomSheet>
-      <BottomSheet open={sheet === 'settings'} title="閱讀設定" onClose={() => setSheet(null)}>
-        <button className="btn" onClick={openReport}>回報錯字</button>
+      <BottomSheet open={sheet === 'settings'} title={t('閱讀設定')} onClose={() => setSheet(null)}>
+        <button className="btn" onClick={openReport}>{t('回報錯字')}</button>
         <SpeechControls controller={speech} />
         <ReaderSettingsPanel settings={settings} onChange={updateSettings} onLayoutChange={changeLayout} />
       </BottomSheet>

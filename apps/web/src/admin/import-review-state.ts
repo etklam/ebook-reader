@@ -1,3 +1,5 @@
+import { t } from '../i18n/translate.ts';
+
 export interface ReviewRow {
   kind: 'source' | 'missing'; itemId?: string; chapterId?: string; labelRaw: string;
   matchedLabel?: string; afterLabel?: string; beforeLabel?: string;
@@ -12,9 +14,10 @@ export function applyIdentity(previous: { payload: string; key: string } | null,
   return previous?.payload === payload ? previous : { payload, key: newKey() };
 }
 export function reviewText(text: string) {
-  return text.replace(/\[\[img:([0-9a-f]{64})(?:\|[\s\S]*?)?\]\]/gi, (_, hash: string) => `〔圖片 ${hash.slice(0, 12)}〕`);
+  return text.replace(/\[\[img:([0-9a-f]{64})(?:\|[\s\S]*?)?\]\]/gi, (_, hash: string) => t('〔圖片 {hash}〕', { hash: hash.slice(0, 12) }));
 }
 
+// source strings; translated on the way out so the table stays one list
 const reasons: Record<string, string> = {
   label_key_unique: '原章號可唯一對應',
   duplicate_label_key: '來源或站方有重複章號，需人工確認',
@@ -33,5 +36,5 @@ const reasons: Record<string, string> = {
   no_anchors: '找不到可確認插入位置的章節錨點',
 };
 export function reviewReason(code: string): string {
-  return reasons[code] ?? '需人工核對章節身分與來源順序';
+  return t(reasons[code] ?? '需人工核對章節身分與來源順序');
 }

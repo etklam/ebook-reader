@@ -46,6 +46,8 @@ spec:
               value: https://book.7182818.xyz
             - name: HSTS
               value: "true"
+            - name: SITE_ORIGIN
+              value: https://book.7182818.xyz
             - name: REGISTRATION_MODE
               value: open
           ports:

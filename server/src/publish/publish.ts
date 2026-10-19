@@ -21,6 +21,7 @@ export interface ReleaseDiff {
   newChapterIds: string[];
   updatedChapterIds: string[];
   reorderedChapterIds: string[];
+  removedChapterIds: string[];
 }
 
 export type PublishPreview =
@@ -48,8 +49,8 @@ interface ReleaseSnapshot {
   positions: Map<string, number>;   // chapterId → editorial position
 }
 
-function classify(current: SnapItem[], previous: ReleaseSnapshot | null): ReleaseDiff {
-  const diff: ReleaseDiff = { newChapterIds: [], updatedChapterIds: [], reorderedChapterIds: [] };
+export function classify(current: SnapItem[], previous: ReleaseSnapshot | null): ReleaseDiff {
+  const diff: ReleaseDiff = { newChapterIds: [], updatedChapterIds: [], reorderedChapterIds: [], removedChapterIds: [] };
   if (!previous) return { ...diff, newChapterIds: current.map((c) => c.chapterId) };
   for (const item of current) {
     const prevRev = previous.revisions.get(item.chapterId);
@@ -61,6 +62,8 @@ function classify(current: SnapItem[], previous: ReleaseSnapshot | null): Releas
       diff.reorderedChapterIds.push(item.chapterId);
     }
   }
+  const currentIds = new Set(current.map((item) => item.chapterId));
+  diff.removedChapterIds = [...previous.revisions.keys()].filter((id) => !currentIds.has(id));
   return diff;
 }
 
@@ -97,7 +100,7 @@ export async function validateForPublish(
     contentKey: chapterRevisions.contentKey,
   }).from(chapters)
     .leftJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
-    .where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId)))
+    .where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt)))
     .orderBy(asc(chapters.editorialPosition));
   if (chapterRows.length === 0) problems.push('no_chapters');
   const missingRevision = chapterRows.filter((c) => !c.headRevisionId).length;
@@ -116,7 +119,7 @@ export async function validateForPublish(
     from app.chapters c
     join app.chapter_revision_resources rr on rr.revision_id = c.head_revision_id
     join app.resources r on r.id = rr.resource_id
-    where c.work_id = ${workId} and c.merged_into_chapter_id is null`);
+    where c.work_id = ${workId} and c.merged_into_chapter_id is null and c.deleted_at is null`);
   const resourceKeys = resourceRows.rows.map((row) => (row as { storage_key: string }).storage_key);
   const missingResources = (await Promise.all(
     resourceKeys.map(async (k) => (await storage.exists(k) ? null : k)))).filter(Boolean);
@@ -138,7 +141,7 @@ async function editorialSnapshot(db: NodePgDatabase, workId: string): Promise<Sn
     chapterId: chapters.id,
     revisionId: chapters.headRevisionId,
     position: chapters.editorialPosition,
-  }).from(chapters).where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId))).orderBy(asc(chapters.editorialPosition));
+  }).from(chapters).where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt))).orderBy(asc(chapters.editorialPosition));
   // head is guaranteed non-null by validation before this runs
   return rows.map((r) => ({ chapterId: r.chapterId, revisionId: r.revisionId!, position: r.position }));
 }
@@ -154,7 +157,7 @@ export async function publishPreview(db: NodePgDatabase, storage: Storage, workI
   const current = await editorialSnapshot(db, workId);
   const diff = prevRelease
     ? classify(current, await loadSnapshot(db, prevRelease.id))
-    : { newChapterIds: current.map((c) => c.chapterId), updatedChapterIds: [], reorderedChapterIds: [] };
+    : { newChapterIds: current.map((c) => c.chapterId), updatedChapterIds: [], reorderedChapterIds: [], removedChapterIds: [] };
   return {
     ok: true, workId,
     valid: validation.valid,
@@ -244,7 +247,7 @@ export async function publishWork(
     // 7-8) publication event + atomic active-release switch
     const diff = work.activeReleaseId
       ? classify(current, await loadSnapshot(tx as unknown as NodePgDatabase, work.activeReleaseId))
-      : { newChapterIds: current.map((c) => c.chapterId), updatedChapterIds: [], reorderedChapterIds: [] };
+      : { newChapterIds: current.map((c) => c.chapterId), updatedChapterIds: [], reorderedChapterIds: [], removedChapterIds: [] };
     await tx.insert(publicationEvents).values({
       workId,
       releaseId: release.id,
@@ -267,14 +270,13 @@ export async function publishWork(
 async function replayDiff(
   tx: Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0], releaseId: string,
 ): Promise<ReleaseDiff> {
-  const rows = await tx.select({
-    newChapterIds: publicationEvents.newChapterIds,
-    updatedChapterIds: publicationEvents.updatedChapterIds,
-  }).from(publicationEvents).where(eq(publicationEvents.releaseId, releaseId)).limit(1);
-  const event = rows[0];
-  return {
-    newChapterIds: (event?.newChapterIds as string[]) ?? [],
-    updatedChapterIds: (event?.updatedChapterIds as string[]) ?? [],
-    reorderedChapterIds: [],
-  };
+  const [release] = await tx.select().from(workReleases).where(eq(workReleases.id, releaseId)).limit(1);
+  const [previous] = await tx.select({ id: workReleases.id }).from(workReleases)
+    .where(and(eq(workReleases.workId, release.workId), sql`${workReleases.version} < ${release.version}`))
+    .orderBy(sql`${workReleases.version} desc`).limit(1);
+  const db = tx as unknown as NodePgDatabase;
+  const current = await loadSnapshot(db, releaseId);
+  return classify([...current.revisions].map(([chapterId, revisionId]) => ({
+    chapterId, revisionId, position: current.positions.get(chapterId)!,
+  })), previous ? await loadSnapshot(db, previous.id) : null);
 }

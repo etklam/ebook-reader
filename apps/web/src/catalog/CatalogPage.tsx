@@ -17,6 +17,8 @@ import { SkeletonRows } from '../components/Skeleton.tsx';
 import { EmptyState } from '../components/EmptyState.tsx';
 import { count } from '../lib/format.ts';
 import { useMe } from '../account/useMe.ts';
+import { workPath } from '../lib/slug.ts';
+import { t } from '../i18n/translate.ts';
 
 export interface CatalogFilterState {
   q: string;
@@ -65,6 +67,8 @@ export function filterToSearch(f: CatalogFilterState): string {
 
 const PAGE = 20;
 
+// Chip/tab labels keep the source string here and are translated where they
+// are rendered: a module constant is evaluated once at import.
 const TYPE_TABS = [
   { v: '', label: '全部' },
   { v: 'serial', label: '長篇連載' },
@@ -194,13 +198,14 @@ export function CatalogPage() {
     load(filter, null, false);
   }, [filter, me?.id, sessionLoading, load]);
 
-  const openDetail = (id: string) => navigate(`/works/${id}${location.search}`);
+  // the filter query string rides along so 返回 lands on the same catalogue view
+  const openDetail = (work: CatalogWork) => navigate(workPath(work) + location.search);
 
   const nameOf = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of categories) m.set(c.id, c.displayName);
     for (const t of tags) m.set(t.id, t.displayName);
-    return (id: string) => m.get(id) ?? '（已停用條件）';
+    return (id: string) => m.get(id) ?? t('（已停用條件）');
   }, [categories, tags]);
 
   const activeFilterCount =
@@ -220,13 +225,13 @@ export function CatalogPage() {
     })),
     ...filter.excludeTagIds.map((id) => ({
       key: `exclude:${id}`,
-      label: `排除 #${nameOf(id)}`,
+      label: t('排除 #{name}', { name: nameOf(id) }),
       remove: () => applyFilter({ ...filter, excludeTagIds: filter.excludeTagIds.filter((x) => x !== id) }),
     })),
-    ...(filter.hideFinished ? [{ key: 'hideFinished', label: '隱藏已讀', remove: () => applyFilter({ ...filter, hideFinished: false }) }] : []),
+    ...(filter.hideFinished ? [{ key: 'hideFinished', label: t('隱藏已讀'), remove: () => applyFilter({ ...filter, hideFinished: false }) }] : []),
     ...filter.serialStatus.map((v) => ({
       key: `s:${v}`,
-      label: SERIAL_STATUS.find((s) => s.v === v)?.label ?? v,
+      label: (() => { const hit = SERIAL_STATUS.find((s) => s.v === v); return hit ? t(hit.label) : v; })(),
       remove: () => applyFilter({ ...filter, serialStatus: filter.serialStatus.filter((x) => x !== v) }),
     })),
   ];
@@ -236,27 +241,27 @@ export function CatalogPage() {
 
   // the head states the size of the shelf under these conditions; how much of
   // it is on screen belongs to the 載入更多 button, where it is actionable
-  const headNote = firstLoad ? '載入中'
-    : visibleTotal === null ? `已載入 ${count(works.length)} 部`
-    : `共 ${count(visibleTotal)} 部`;
+  const headNote = firstLoad ? t('載入中')
+    : visibleTotal === null ? t('已載入 {n} 部', { n: count(works.length) })
+    : t('共 {n} 部', { n: count(visibleTotal) });
 
   return (
     <div className="catalog" data-testid="catalog">
       <header className="page-head">
         <div className="head-line">
-          <h1>書庫</h1>
-          <span className="head-note tnum">{headNote}　<button className="linkish" onClick={() => navigate('/rankings')}>排行榜</button></span>
+          <h1>{t('書庫')}</h1>
+          <span className="head-note tnum">{headNote}　<button className="linkish" onClick={() => navigate('/rankings')}>{t('排行榜')}</button></span>
         </div>
-        <div className="seg" role="tablist" aria-label="作品類型">
-          {TYPE_TABS.map((t) => (
+        <div className="seg" role="tablist" aria-label={t('作品類型')}>
+          {TYPE_TABS.map((tab) => (
             <button
-              key={t.v}
+              key={tab.v}
               role="tab"
-              aria-selected={filter.type === t.v}
+              aria-selected={filter.type === tab.v}
               className="seg-item"
-              onClick={() => applyFilter({ ...filter, type: t.v as CatalogFilterState['type'] })}
+              onClick={() => applyFilter({ ...filter, type: tab.v as CatalogFilterState['type'] })}
             >
-              {t.label}
+              {t(tab.label)}
             </button>
           ))}
         </div>
@@ -265,21 +270,21 @@ export function CatalogPage() {
             <input
               className="input"
               type="search"
-              placeholder="搜尋書名、作者、分類、標籤"
-              aria-label="搜尋"
+              placeholder={t('搜尋書名、作者、分類、標籤')}
+              aria-label={t('搜尋')}
               value={searchText}
               onChange={(e) => { setSearchText(e.target.value); debouncedApply(e.target.value); }}
             />
-            <button className="btn" aria-label="篩選" onClick={() => setSheetOpen(true)}>
+            <button className="btn" aria-label={t('篩選')} onClick={() => setSheetOpen(true)}>
               <Icon name="filter" />
-              篩選{activeFilterCount > 0 ? `（${activeFilterCount}）` : ''}
+              {activeFilterCount > 0 ? t('篩選（{n}）', { n: activeFilterCount }) : t('篩選')}
             </button>
           </div>
           {filter.q && (
             <p className="head-note">
-              關鍵字「{filter.q}」支援繁簡對應。{' '}
+              {t('關鍵字「{q}」支援繁簡對應。', { q: filter.q })}{' '}
               <button className="linkish" onClick={() => { setSearchText(''); applyFilter({ ...filter, q: '' }); }}>
-                清除關鍵字
+                {t('清除關鍵字')}
               </button>
             </p>
           )}
@@ -289,44 +294,46 @@ export function CatalogPage() {
       {appliedChips.length > 0 && (
         <div className="applied">
           <span>
-            篩選條件{filter.tagIds.length > 1 ? `（標籤：${filter.tagMode === 'all' ? '全部符合' : '任一符合'}）` : ''}
+            {filter.tagIds.length > 1
+              ? t('篩選條件（標籤：{mode}）', { mode: filter.tagMode === 'all' ? t('全部符合') : t('任一符合') })
+              : t('篩選條件')}
           </span>
           {appliedChips.map((c) => (
-            <button key={c.key} className="applied-chip" onClick={c.remove} aria-label={`移除條件：${c.label}`}>
+            <button key={c.key} className="applied-chip" onClick={c.remove} aria-label={t('移除條件：{label}', { label: c.label })}>
               {c.label}<span className="x" aria-hidden="true">×</span>
             </button>
           ))}
         </div>
       )}
 
-      {firstLoad && <SkeletonRows count={6} label="載入書庫" />}
+      {firstLoad && <SkeletonRows count={6} label={t('載入書庫')} />}
 
       {!firstLoad && loginRequired && (
-        <EmptyState title="登入後才能隱藏已讀" body="此條件只使用本人書架手動標記為「已讀」的作品。登入後可繼續，或移除此條件。"
-          action={<button className="btn" onClick={() => navigate('/login')}>登入</button>} />
+        <EmptyState title={t('登入後才能隱藏已讀')} body={t('此條件只使用本人書架手動標記為「已讀」的作品。登入後可繼續，或移除此條件。')}
+          action={<button className="btn" onClick={() => navigate('/login')}>{t('登入')}</button>} />
       )}
 
       {!loading && !loginRequired && failed && works.length === 0 && (
         <EmptyState
-          title="書庫暫時載不出來"
-          body="可能是連線中斷。重試一次通常就好；若持續失敗，稍後再回來看看。"
-          action={<button className="btn" onClick={() => load(filter, null, false)}>重試</button>}
+          title={t('書庫暫時載不出來')}
+          body={t('可能是連線中斷。重試一次通常就好；若持續失敗，稍後再回來看看。')}
+          action={<button className="btn" onClick={() => load(filter, null, false)}>{t('重試')}</button>}
         />
       )}
 
       {!firstLoad && !loginRequired && !failed && works.length === 0 && (
         <EmptyState
           testId="catalog-empty"
-          title="沒有符合條件的作品"
+          title={t('沒有符合條件的作品')}
           body={
             appliedChips.length > 0 || filter.q
-              ? '條件下沒有已發布的作品。試著移除一兩個條件，或換個關鍵字——搜尋同時比對繁體與簡體。'
-              : '這個書庫由管理員維護，目前還沒有公開的作品。有新作發布時就會出現在這裡。'
+              ? t('條件下沒有已發布的作品。試著移除一兩個條件，或換個關鍵字——搜尋同時比對繁體與簡體。')
+              : t('這個書庫由管理員維護，目前還沒有公開的作品。有新作發布時就會出現在這裡。')
           }
           action={appliedChips.length > 0 || filter.q
             ? (
               <button className="btn" onClick={() => { setSearchText(''); applyFilter({ ...filter, q: '', categoryIds: [], tagIds: [], excludeTagIds: [], hideFinished: false, serialStatus: [] }); }}>
-                清除全部條件
+                {t('清除全部條件')}
               </button>
             )
             : undefined}
@@ -334,18 +341,20 @@ export function CatalogPage() {
       )}
 
       <div className="rows">
-        {works.map((w) => <WorkCard key={w.id} work={w} onOpen={() => openDetail(w.id)} />)}
+        {works.map((w) => <WorkCard key={w.id} work={w} onOpen={() => openDetail(w)} />)}
       </div>
 
-      {loading && works.length > 0 && <SkeletonRows count={2} label="載入更多" />}
+      {loading && works.length > 0 && <SkeletonRows count={2} label={t('載入更多')} />}
 
       {!done && !loading && works.length > 0 && (
         <button className="btn btn-block tnum" onClick={() => load(filter, nextCursor, true)}>
-          載入更多{visibleTotal === null ? '' : `（${count(works.length)} / ${count(visibleTotal)}）`}
+          {visibleTotal === null
+            ? t('載入更多')
+            : t('載入更多（{loaded} / {total}）', { loaded: count(works.length), total: count(visibleTotal) })}
         </button>
       )}
 
-      <BottomSheet open={sheetOpen} title="篩選" onClose={() => setSheetOpen(false)}>
+      <BottomSheet open={sheetOpen} title={t('篩選')} onClose={() => setSheetOpen(false)}>
         <FilterSheet
           applied={filter}
           signedIn={!!me}
@@ -382,17 +391,17 @@ function FilterSheet({ applied, signedIn, sessionLoading, categories, tags, onAp
   return (
     <div data-testid="filter-sheet">
       <div className="setting-row">
-        <span className="setting-label">排序</span>
+        <span className="setting-label">{t('排序')}</span>
         <div className="setting-control">
           {([['updated', '最近更新'], ['title', '書名']] as const).map(([v, label]) => (
             <button key={v} className={chip(draft.sort === v)} aria-pressed={draft.sort === v}
-              onClick={() => setDraft({ ...draft, sort: v })}>{mark(draft.sort === v)}{label}</button>
+              onClick={() => setDraft({ ...draft, sort: v })}>{mark(draft.sort === v)}{t(label)}</button>
           ))}
         </div>
       </div>
 
       <div className="setting-row">
-        <span className="setting-label">分類</span>
+        <span className="setting-label">{t('分類')}</span>
         <div className="setting-control">
           {categories.map((c) => (
             <button key={c.id} className={chip(draft.categoryIds.includes(c.id))}
@@ -401,86 +410,92 @@ function FilterSheet({ applied, signedIn, sessionLoading, categories, tags, onAp
               {mark(draft.categoryIds.includes(c.id))}{c.displayName}
             </button>
           ))}
-          {categories.length === 0 && <span className="muted">尚無分類</span>}
+          {categories.length === 0 && <span className="muted">{t('尚無分類')}</span>}
         </div>
       </div>
 
       <div className="setting-row">
-        <span className="setting-label">標籤</span>
+        <span className="setting-label">{t('標籤')}</span>
         <div className="setting-control">
-          {tags.map((t) => {
-            const included = draft.tagIds.includes(t.id);
-            const excluded = draft.excludeTagIds.includes(t.id);
+          {tags.map((tag) => {
+            const included = draft.tagIds.includes(tag.id);
+            const excluded = draft.excludeTagIds.includes(tag.id);
             return (
-              <button key={t.id} className={chip(included || excluded)}
-                aria-label={`${t.displayName}：${included ? '包含，改為排除' : excluded ? '排除，改為不篩選' : '不篩選，改為包含'}`}
+              <button key={tag.id} className={chip(included || excluded)}
+                aria-label={t('{name}：{state}', {
+                  name: tag.displayName,
+                  state: included ? t('包含，改為排除') : excluded ? t('排除，改為不篩選') : t('不篩選，改為包含'),
+                })}
                 aria-pressed={included || excluded}
                 onClick={() => {
                   setDraft({ ...draft,
-                    tagIds: !included && !excluded ? [...draft.tagIds, t.id] : draft.tagIds.filter((id) => id !== t.id),
-                    excludeTagIds: included ? [...draft.excludeTagIds, t.id] : draft.excludeTagIds.filter((id) => id !== t.id),
+                    tagIds: !included && !excluded ? [...draft.tagIds, tag.id] : draft.tagIds.filter((id) => id !== tag.id),
+                    excludeTagIds: included ? [...draft.excludeTagIds, tag.id] : draft.excludeTagIds.filter((id) => id !== tag.id),
                   });
-                  setTagFeedback(`${t.displayName}：${included ? '已由包含改為排除' : excluded ? '已移除排除條件' : '已設為包含'}`);
+                  setTagFeedback(t('{name}：{state}', {
+                    name: tag.displayName,
+                    state: included ? t('已由包含改為排除') : excluded ? t('已移除排除條件') : t('已設為包含'),
+                  }));
                 }}>
-                {included ? '✓ ' : excluded ? '排除 ' : ''}{t.displayName}{included ? '（包含）' : ''}
+                {included ? '✓ ' : excluded ? `${t('排除')} ` : ''}{tag.displayName}{included ? t('（包含）') : ''}
               </button>
             );
           })}
-          {tags.length === 0 && <span className="muted">尚無標籤</span>}
+          {tags.length === 0 && <span className="muted">{t('尚無標籤')}</span>}
         </div>
       </div>
 
-      <p className="hint sheet-hint">標籤依序切換：不篩選 → 包含 → 排除。命中任一排除標籤即隱藏。</p>
+      <p className="hint sheet-hint">{t('標籤依序切換：不篩選 → 包含 → 排除。命中任一排除標籤即隱藏。')}</p>
       <p className="hint sheet-hint" role="status">{tagFeedback}</p>
 
       {draft.tagIds.length > 1 && (
         <div className="setting-row">
-          <span className="setting-label">標籤模式</span>
+          <span className="setting-label">{t('標籤模式')}</span>
           <div className="setting-control">
             {([['all', '全部符合'], ['any', '任一符合']] as const).map(([v, label]) => (
               <button key={v} className={chip(draft.tagMode === v)} aria-pressed={draft.tagMode === v}
-                onClick={() => setDraft({ ...draft, tagMode: v })}>{mark(draft.tagMode === v)}{label}</button>
+                onClick={() => setDraft({ ...draft, tagMode: v })}>{mark(draft.tagMode === v)}{t(label)}</button>
             ))}
           </div>
         </div>
       )}
 
       <div className="setting-row">
-        <span className="setting-label">連載狀態</span>
+        <span className="setting-label">{t('連載狀態')}</span>
         <div className="setting-control">
           {SERIAL_STATUS.map((s) => (
             <button key={s.v} className={chip(draft.serialStatus.includes(s.v))}
               aria-pressed={draft.serialStatus.includes(s.v)}
               onClick={() => setDraft({ ...draft, serialStatus: toggle(draft.serialStatus, s.v) })}>
-              {mark(draft.serialStatus.includes(s.v))}{s.label}
+              {mark(draft.serialStatus.includes(s.v))}{t(s.label)}
             </button>
           ))}
         </div>
       </div>
 
       <div className="setting-row">
-        <span className="setting-label">閱讀狀態</span>
+        <span className="setting-label">{t('閱讀狀態')}</span>
         <div className="setting-control">
           <label className="chip">
             <input type="checkbox" checked={draft.hideFinished} disabled={!signedIn || sessionLoading}
               onChange={(e) => setDraft({ ...draft, hideFinished: e.target.checked })} />
-            隱藏已讀
+            {t('隱藏已讀')}
           </label>
-          {!signedIn && !sessionLoading && <button className="linkish" onClick={() => navigate('/login')}>登入後使用</button>}
+          {!signedIn && !sessionLoading && <button className="linkish" onClick={() => navigate('/login')}>{t('登入後使用')}</button>}
         </div>
       </div>
-      <p className="hint sheet-hint">只隱藏本人書架手動標記為「已讀」的作品；閱讀進度不會自動視為已讀。</p>
+      <p className="hint sheet-hint">{t('只隱藏本人書架手動標記為「已讀」的作品；閱讀進度不會自動視為已讀。')}</p>
 
       <p className="hint sheet-hint">
-        重設只清除面板內的分類、包含與排除標籤、連載狀態與隱藏已讀，不會動到目前的類型與關鍵字。
+        {t('重設只清除面板內的分類、包含與排除標籤、連載狀態與隱藏已讀，不會動到目前的類型與關鍵字。')}
       </p>
 
       <div className="sheet-actions">
         <button className="btn"
           onClick={() => setDraft({ ...draft, categoryIds: [], tagIds: [], excludeTagIds: [], hideFinished: false, tagMode: 'all', serialStatus: [] })}>
-          清除篩選
+          {t('清除篩選')}
         </button>
-        <button className="btn primary" onClick={() => onApply(draft)}>套用</button>
+        <button className="btn primary" onClick={() => onApply(draft)}>{t('套用')}</button>
       </div>
     </div>
   );

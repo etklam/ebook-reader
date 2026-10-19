@@ -5,6 +5,7 @@ import type { ImportJob, ImportQuality } from '../api/import-types.ts';
 import { count } from '../lib/format.ts';
 import { DEFAULT_TIDY_OPTIONS, tidyTxt, type TidyOptions, type TidyResult } from './tidy-txt.ts';
 import { TaxonomyPicker, type TaxonomySelection } from './TaxonomyPicker.tsx';
+import { t } from '../i18n/translate.ts';
 
 type Quality = ImportQuality;
 type RulePreset = { name: string; encoding: string; chapterPattern: string; tidy: TidyOptions };
@@ -24,6 +25,7 @@ type Row = {
 const NO_TAXONOMY: TaxonomySelection = { categoryIds: [], tagIds: [] };
 
 const STORE_KEY = 'ebook-import-rule-presets-v1';
+// source strings; translated at the render sites below
 const encodings = [
   ['', '自動偵測'], ['utf-8', 'UTF-8'], ['utf-16le', 'UTF-16 LE'], ['utf-16be', 'UTF-16 BE'], ['big5', 'Big5'], ['gb18030', 'GB18030'],
 ];
@@ -49,11 +51,13 @@ function selectedFiles(files: FileList | File[]): File[] {
 }
 
 function State({ status }: { status: string }) {
-  return <span className={`state ${tone[status] ?? ''}`}>{labels[status] ?? status}</span>;
+  return <span className={`state ${tone[status] ?? ''}`}>{labels[status] ? t(labels[status]) : status}</span>;
 }
 
 function issueLocations(issue: Quality['issues'][number]): string {
-  return issue.positions.map((position, index) => `第 ${position + 1} 項${issue.labels[index] ? `（${issue.labels[index]}）` : ''}`).join('、');
+  return issue.positions.map((position, index) => (issue.labels[index]
+    ? t('第 {n} 項（{label}）', { n: position + 1, label: issue.labels[index] })
+    : t('第 {n} 項', { n: position + 1 }))).join('、');
 }
 
 export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpenWork(workId: string): void }) {
@@ -82,7 +86,7 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
         encodingResult: job?.encodingResult ?? item.encodingResult,
         quality: quality ?? item.quality,
         error: job?.status === 'failed'
-          ? `${job.errorCode ?? '解析失敗'}${job.errorDetail ? `：${job.errorDetail}` : ''}`
+          ? `${job.errorCode ?? t('解析失敗')}${job.errorDetail ? `：${job.errorDetail}` : ''}`
           : error ?? undefined,
         title: item.title === item.originalFile.name.replace(/\.(txt|epub)$/i, '') ? metadata?.title || item.title : item.title,
         author: item.author || metadata?.author || '',
@@ -95,14 +99,14 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
 
   const appendFiles = (files: FileList | File[]) => {
     const accepted = selectedFiles(files);
-    if (!accepted.length) { setMessage('請選擇 TXT 或 EPUB 檔案。'); return; }
+    if (!accepted.length) { setMessage(t('請選擇 TXT 或 EPUB 檔案。')); return; }
     const next = accepted.map((file, index): Row => ({
       key: Date.now() + index, file, originalFile: file, selected: true, status: 'waiting',
       title: file.name.replace(/\.(txt|epub)$/i, ''), author: '', description: '',
       workType: 'serial', serialStatus: '',
     }));
     setRows((current) => [...current, ...next]);
-    setPreviews({}); setMessage(accepted.length < files.length ? '每次最多加入 10 個 TXT／EPUB 檔案。' : '');
+    setPreviews({}); setMessage(accepted.length < files.length ? t('每次最多加入 10 個 TXT／EPUB 檔案。') : '');
   };
   const update = (key: number, patch: Partial<Row>) => setRows((current) => current.map((row) => row.key === key ? { ...row, ...patch } : row));
   // A row follows the batch default until it is given its own selection.
@@ -113,7 +117,7 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
     if (!name) return;
     const next = [...presets.filter((item) => item.name !== name), { name, encoding, chapterPattern, tidy }].slice(-10);
     setPresets(next); localStorage.setItem(STORE_KEY, JSON.stringify(next));
-    setPresetIndex(name); setPresetName(''); setMessage(`已儲存「${name}」匯入規則。`);
+    setPresetIndex(name); setPresetName(''); setMessage(t('已儲存「{name}」匯入規則。', { name }));
   };
   const loadPreset = (name: string) => {
     setPresetIndex(name);
@@ -124,19 +128,19 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
   };
 
   const previewTidy = async (row: Row) => {
-    setPreviews((current) => ({ ...current, [row.key]: '讀取檔案中…' }));
+    setPreviews((current) => ({ ...current, [row.key]: t('讀取檔案中…') }));
     try {
       const original = new TextDecoder(encoding || 'utf-8', { fatal: true }).decode(await row.file.arrayBuffer());
       const result = tidyTxt(original, tidy);
       setPreviews((current) => ({ ...current, [row.key]: { ...result, original } }));
     } catch {
-      setPreviews((current) => ({ ...current, [row.key]: '無法使用目前選定的編碼讀取。請更改編碼後重試預覽。' }));
+      setPreviews((current) => ({ ...current, [row.key]: t('無法使用目前選定的編碼讀取。請更改編碼後重試預覽。') }));
     }
   };
   const applyTidy = (row: Row, preview: Preview) => {
     const file = new File([preview.text], row.file.name, { type: 'text/plain', lastModified: Date.now() });
     update(row.key, { file, cleaned: true });
-    setMessage(`已套用「${row.file.name}」的整理結果；原檔仍保留在本機選取狀態。`);
+    setMessage(t('已套用「{name}」的整理結果；原檔仍保留在本機選取狀態。', { name: row.file.name }));
   };
 
   const uploadWaiting = async () => {
@@ -155,7 +159,7 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
         update(row.key, { importId: result.importId, status: 'queued' });
         monitor.watch(result.importId);
       } catch (error) {
-        update(row.key, { status: 'failed', error: error instanceof Error ? error.message : '上傳失敗' });
+        update(row.key, { status: 'failed', error: error instanceof Error ? error.message : t('上傳失敗') });
       }
     }
     setBusy(false);
@@ -172,7 +176,7 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
       });
       update(row.key, { status: 'queued', error: undefined, quality: undefined, publishProblems: undefined });
     } catch (error) {
-      update(row.key, { status: 'failed', error: error instanceof Error ? error.message : '重新解析失敗' });
+      update(row.key, { status: 'failed', error: error instanceof Error ? error.message : t('重新解析失敗') });
     } finally { monitor.watch(row.importId); setBusy(false); }
   };
 
@@ -193,7 +197,7 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
           // never briefly present and unclassified
           const result = await api<{ workId: string }>(`/api/admin/imports/${row.importId}/commit`, {
             method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ title: row.title.trim() || '未命名作品', workType: row.workType,
+            body: JSON.stringify({ title: row.title.trim() || t('未命名作品'), workType: row.workType,
               author: row.author, description: row.description,
               serialStatus: row.workType === 'serial' ? row.serialStatus || null : null,
               categoryIds, tagIds }),
@@ -202,7 +206,7 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
           update(row.key, { workId, status: 'committed', error: undefined });
         }
         await api(`/api/admin/works/${workId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ title: row.title.trim() || '未命名作品', author: row.author, description: row.description,
+          body: JSON.stringify({ title: row.title.trim() || t('未命名作品'), author: row.author, description: row.description,
             workType: row.workType,
             serialStatus: row.workType === 'serial' ? row.serialStatus || null : null }) });
         // Re-running an already-committed row: the assignment is a replace-set,
@@ -214,7 +218,7 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
         prepared.push({ row, workId });
       } catch (error) {
         update(row.key, { status: row.workId ? 'committed' : row.status,
-          error: error instanceof Error ? error.message : '建立草稿失敗' });
+          error: error instanceof Error ? error.message : t('建立草稿失敗') });
       }
     }
 
@@ -223,12 +227,12 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
         const preview = await getPublishPreview(entry.workId);
         if (!preview.valid) {
           update(entry.row.key, { status: 'committed', publishProblems: preview.problems,
-            error: `發布檢查未通過：${preview.problems.join('、')}` });
+            error: t('發布檢查未通過：{problems}', { problems: preview.problems.join('、') }) });
           return null;
         }
         return entry;
       } catch (error) {
-        update(entry.row.key, { status: 'committed', error: error instanceof Error ? error.message : '發布檢查失敗' });
+        update(entry.row.key, { status: 'committed', error: error instanceof Error ? error.message : t('發布檢查失敗') });
         return null;
       }
     }));
@@ -237,7 +241,7 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
         const result = await publishWork(workId, `ui-batch-${row.importId}-${Date.now()}`);
         update(row.key, { status: 'published', workId, publishedVersion: result.version, error: undefined, publishProblems: [] });
       } catch (error) {
-        update(row.key, { status: 'committed', workId, error: error instanceof Error ? error.message : '發布失敗；草稿已保留' });
+        update(row.key, { status: 'committed', workId, error: error instanceof Error ? error.message : t('發布失敗；草稿已保留') });
       }
     }));
     setBusy(false);
@@ -251,79 +255,80 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
   const drag = (event: DragEvent) => { event.preventDefault(); setDragging(true); };
   return (
     <section className="admin-panel batch-import" data-testid="batch-import">
-      <div className="head-line"><h2>批量匯入</h2><button className="linkish" onClick={onBack}>返回單本匯入</button></div>
-      <p className="muted">一次加入多本 TXT／EPUB。確認各本的資料與異常摘要後，可建立草稿並批量發布；不必逐章預覽。</p>
+      <div className="head-line"><h2>{t('批量匯入')}</h2><button className="linkish" onClick={onBack}>{t('返回單本匯入')}</button></div>
+      <p className="muted">{t('一次加入多本 TXT／EPUB。確認各本的資料與異常摘要後，可建立草稿並批量發布；不必逐章預覽。')}</p>
 
       <details className="admin-sub">
-        <summary>匯入規則預設</summary>
+        <summary>{t('匯入規則預設')}</summary>
         <div className="field">
-          <label htmlFor="batch-rule">已儲存的規則</label>
+          <label htmlFor="batch-rule">{t('已儲存的規則')}</label>
           <select className="input" id="batch-rule" value={presetIndex} onChange={(event) => loadPreset(event.target.value)}>
-            <option value="">內建辨識規則</option>
+            <option value="">{t('內建辨識規則')}</option>
             {presets.map((preset) => <option key={preset.name} value={preset.name}>{preset.name}</option>)}
           </select>
           {presetIndex && <button className="btn" onClick={() => {
             const remaining = presets.filter((preset) => preset.name !== presetIndex);
             setPresets(remaining); localStorage.setItem(STORE_KEY, JSON.stringify(remaining)); loadPreset('');
-          }}>刪除此預設</button>}
+          }}>{t('刪除此預設')}</button>}
         </div>
         <div className="field">
-          <label htmlFor="batch-encoding">文字編碼</label>
+          <label htmlFor="batch-encoding">{t('文字編碼')}</label>
           <select className="input" id="batch-encoding" value={encoding} onChange={(event) => setEncoding(event.target.value)}>
-            {encodings.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            {encodings.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
           </select>
         </div>
         <div className="field">
-          <label htmlFor="batch-heading-pattern">自訂章節標題規則（正規表示式）</label>
+          <label htmlFor="batch-heading-pattern">{t('自訂章節標題規則（正規表示式）')}</label>
           <input className="input input-mono" id="batch-heading-pattern" value={chapterPattern}
-            placeholder="留空使用內建繁簡章回辨識" maxLength={200} onChange={(event) => setChapterPattern(event.target.value)} />
-          <span className="hint">只用於 TXT；規則需匹配獨立章名行，請在本機先保存常用來源格式。</span>
+            placeholder={t('留空使用內建繁簡章回辨識')} maxLength={200} onChange={(event) => setChapterPattern(event.target.value)} />
+          <span className="hint">{t('只用於 TXT；規則需匹配獨立章名行，請在本機先保存常用來源格式。')}</span>
         </div>
         <fieldset className="batch-rule-options">
-          <legend>TXT 整理選項</legend>
+          <legend>{t('TXT 整理選項')}</legend>
           {([
             ['trimLines', '清除每行前後空白'], ['collapseBlankLines', '合併連續空白行'],
             ['removePromotions', '移除明確網站廣告行'], ['joinWrappedLines', '合併疑似錯誤斷行'],
           ] as const).map(([key, label]) => <label className="check-line" key={key}>
             <input type="checkbox" checked={tidy[key]} onChange={(event) => {
               setTidy((current) => ({ ...current, [key]: event.target.checked })); setPreviews({});
-            }} />{label}
+            }} />{t(label)}
           </label>)}
         </fieldset>
         <div className="form-row">
-          <input className="input" value={presetName} maxLength={40} placeholder="預設名稱，例如：來源 A" aria-label="新預設名稱"
+          <input className="input" value={presetName} maxLength={40} placeholder={t('預設名稱，例如：來源 A')} aria-label={t('新預設名稱')}
             onChange={(event) => setPresetName(event.target.value)} />
-          <button className="btn" onClick={savePreset} disabled={!presetName.trim()}>儲存目前規則</button>
+          <button className="btn" onClick={savePreset} disabled={!presetName.trim()}>{t('儲存目前規則')}</button>
         </div>
-        <p className="hint">規則只保存在這個瀏覽器；章節辨識預設接受獨立標題行，不會改寫上傳原文。</p>
+        <p className="hint">{t('規則只保存在這個瀏覽器；章節辨識預設接受獨立標題行，不會改寫上傳原文。')}</p>
       </details>
 
       <div className={`batch-drop${dragging ? ' is-dragging' : ''}`} onDragOver={drag} onDragLeave={() => setDragging(false)}
         onDrop={(event) => { event.preventDefault(); setDragging(false); appendFiles(event.dataTransfer.files); }}>
         <input ref={fileInput} className="input" type="file" accept=".txt,.epub" multiple
-          aria-label="選擇多個 TXT 或 EPUB 檔案" onChange={(event) => {
+          aria-label={t('選擇多個 TXT 或 EPUB 檔案')} onChange={(event) => {
             if (event.target.files) appendFiles(event.target.files); event.target.value = '';
           }} />
-        <span className="hint">可拖放檔案至此；每次最多加入 10 個。TXT 上限 30 MiB，EPUB 上限 50 MiB。</span>
+        <span className="hint">{t('可拖放檔案至此；每次最多加入 10 個。TXT 上限 30 MiB，EPUB 上限 50 MiB。')}</span>
       </div>
 
       {!!rows.length && <>
         <div className="row-actions">
           <button className="btn primary" disabled={busy || !uploadCount} onClick={() => void uploadWaiting()}>
-            {busy ? '處理中…' : `上傳並解析 ${uploadCount} 本`}
+            {busy ? t('處理中…') : t('上傳並解析 {n} 本', { n: uploadCount })}
           </button>
           <button className="btn primary" disabled={busy || !readyCount || !!unclassified.length} onClick={() => void commitAndPublish()}>
-            建立草稿並批量發布 {readyCount} 本
+            {t('建立草稿並批量發布 {n} 本', { n: readyCount })}
           </button>
         </div>
         <div className="field">
-          <span className="field-label">批量指派分類與標籤（發布必需至少一個分類）</span>
-          <span className="hint">這裡選的套用到所有未自訂的書；個別書可在下方「分類與標籤」覆寫。</span>
+          <span className="field-label">{t('批量指派分類與標籤（發布必需至少一個分類）')}</span>
+          <span className="hint">{t('這裡選的套用到所有未自訂的書；個別書可在下方「分類與標籤」覆寫。')}</span>
           <TaxonomyPicker idPrefix="batch" value={batchTaxonomy} onChange={setBatchTaxonomy} disabled={busy} />
         </div>
         {!!unclassified.length && <p className="form-warn" role="status">
-          還有 {unclassified.length} 本未指定分類：{unclassified.map((row) => row.file.name).join('、')}。
-          指定批量分類，或逐本在「分類與標籤」選擇。
+          {t('還有 {n} 本未指定分類：{names}。指定批量分類，或逐本在「分類與標籤」選擇。', {
+            n: unclassified.length, names: unclassified.map((row) => row.file.name).join('、'),
+          })}
         </p>}
         <ol className="batch-list">
           {rows.map((row) => {
@@ -336,51 +341,54 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
                   <span className="batch-filename">{row.file.name}</span></label>
                 <State status={row.status} />
               </div>
-              {row.chapterCount !== undefined && <p className="hint">辨識 {count(row.chapterCount)} 章　·　{row.encodingResult?.metadata?.title ? `識別作品名：${row.encodingResult.metadata.title}` : ''}</p>}
-              {row.cleaned && <p className="form-ok">已套用文字整理預覽</p>}
+              {row.chapterCount !== undefined && <p className="hint">{t('辨識 {n} 章', { n: count(row.chapterCount) })}　·　{row.encodingResult?.metadata?.title ? t('識別作品名：{title}', { title: row.encodingResult.metadata.title }) : ''}</p>}
+              {row.cleaned && <p className="form-ok">{t('已套用文字整理預覽')}</p>}
               {row.quality && <div className={row.quality.issueCount ? 'form-warn' : 'form-ok'}>
-                <p>章節檢查：{row.quality.total} 項；空章 {row.quality.counts.empty}、重複章 {row.quality.counts.duplicates}、跳號 {row.quality.counts.gaps}。</p>
+                <p>{t('章節檢查：{total} 項；空章 {empty}、重複章 {duplicates}、跳號 {gaps}。', {
+                  total: row.quality.total, empty: row.quality.counts.empty,
+                  duplicates: row.quality.counts.duplicates, gaps: row.quality.counts.gaps,
+                })}</p>
                 {row.quality.issues.length > 0 && <ul>{row.quality.issues.slice(0, 20).map((issue, index) =>
                   <li key={`${issue.type}-${index}`}>{issue.message}：{issueLocations(issue)}</li>)}</ul>}
               </div>}
               {row.encodingResult?.warnings?.map((warning, index) => <p className="form-warn" key={index}>{warning}</p>)}
               {row.error && <p className="form-error" role="alert">{row.error}</p>}
               {row.importId && row.status === 'failed' && <button className="btn" disabled={busy}
-                onClick={() => void retryParse(row)}>依目前規則重新解析</button>}
+                onClick={() => void retryParse(row)}>{t('依目前規則重新解析')}</button>}
               {row.publishProblems?.length ? <ul className="form-warn">{row.publishProblems.map((problem) => <li key={problem}>{problem}</li>)}</ul> : null}
-              {row.workId && <p className="hint">作品 ID：<span className="mono">{row.workId}</span>
-                {row.publishedVersion ? `　已發布 v${row.publishedVersion}` : ''}
-                <button className="linkish" onClick={() => onOpenWork(row.workId!)}>開啟草稿管理</button></p>}
+              {row.workId && <p className="hint">{t('作品 ID：')}<span className="mono">{row.workId}</span>
+                {row.publishedVersion ? `　${t('已發布 v{version}', { version: row.publishedVersion })}` : ''}
+                <button className="linkish" onClick={() => onOpenWork(row.workId!)}>{t('開啟草稿管理')}</button></p>}
               {row.importId && ['ready', 'review_required', 'committed', 'published'].includes(row.status) && <details>
-                <summary>作品資料 {row.status === 'published' ? '（已發布）' : '（可修改）'}</summary>
+                <summary>{t('作品資料')} {row.status === 'published' ? t('（已發布）') : t('（可修改）')}</summary>
                 <div className="batch-metadata">
-                  <div className="field"><label htmlFor={`batch-title-${row.key}`}>作品名稱</label>
+                  <div className="field"><label htmlFor={`batch-title-${row.key}`}>{t('作品名稱')}</label>
                     <input className="input" id={`batch-title-${row.key}`} value={row.title} disabled={row.status === 'published'}
                       onChange={(event) => update(row.key, { title: event.target.value })} /></div>
-                  <div className="field"><label htmlFor={`batch-author-${row.key}`}>作者</label>
+                  <div className="field"><label htmlFor={`batch-author-${row.key}`}>{t('作者')}</label>
                     <input className="input" id={`batch-author-${row.key}`} value={row.author} disabled={row.status === 'published'}
                       onChange={(event) => update(row.key, { author: event.target.value })} /></div>
-                  <div className="field"><label htmlFor={`batch-type-${row.key}`}>作品類型</label>
+                  <div className="field"><label htmlFor={`batch-type-${row.key}`}>{t('作品類型')}</label>
                     <select className="input" id={`batch-type-${row.key}`} value={row.workType} disabled={row.status === 'published'}
                       onChange={(event) => update(row.key, { workType: event.target.value as Row['workType'] })}>
-                      <option value="serial">長篇連載</option><option value="short_story">短篇小說</option>
+                      <option value="serial">{t('長篇連載')}</option><option value="short_story">{t('短篇小說')}</option>
                     </select></div>
-                  <div className="field"><label htmlFor={`batch-status-${row.key}`}>連載狀態</label>
+                  <div className="field"><label htmlFor={`batch-status-${row.key}`}>{t('連載狀態')}</label>
                     <select className="input" id={`batch-status-${row.key}`} value={row.serialStatus}
                       disabled={row.workType !== 'serial' || row.status === 'published'} onChange={(event) => update(row.key, { serialStatus: event.target.value as Row['serialStatus'] })}>
-                      <option value="">待確認</option><option value="ongoing">未完結</option><option value="completed">完結</option>
+                      <option value="">{t('待確認')}</option><option value="ongoing">{t('未完結')}</option><option value="completed">{t('完結')}</option>
                     </select></div>
-                  <div className="field field-wide"><label htmlFor={`batch-description-${row.key}`}>簡介</label>
+                  <div className="field field-wide"><label htmlFor={`batch-description-${row.key}`}>{t('簡介')}</label>
                     <textarea className="input" id={`batch-description-${row.key}`} rows={3} value={row.description} disabled={row.status === 'published'}
                       onChange={(event) => update(row.key, { description: event.target.value })} /></div>
                   <div className="field field-wide">
-                    <span className="field-label">分類與標籤</span>
+                    <span className="field-label">{t('分類與標籤')}</span>
                     <p className="hint">
                       {row.taxonomy
-                        ? '這本使用自訂指派。'
-                        : '這本跟隨上方的批量指派；改動下列任何一項即成為自訂。'}
+                        ? t('這本使用自訂指派。')
+                        : t('這本跟隨上方的批量指派；改動下列任何一項即成為自訂。')}
                       {row.taxonomy && <button className="linkish" disabled={row.status === 'published'}
-                        onClick={() => update(row.key, { taxonomy: undefined })}>改回跟隨批量指派</button>}
+                        onClick={() => update(row.key, { taxonomy: undefined })}>{t('改回跟隨批量指派')}</button>}
                     </p>
                     <TaxonomyPicker compact idPrefix={`batch-${row.key}`} keywords={row.keywords}
                       value={taxonomyFor(row)} disabled={row.status === 'published'}
@@ -389,16 +397,19 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
                 </div>
               </details>}
               {isTxt && !row.importId && <details>
-                <summary>TXT 文字整理預覽</summary>
-                <p className="hint">整理只影響本次待上傳副本。預設只修整空白；廣告移除及斷行合併需勾選，並由你先檢視再套用。</p>
-                <button className="btn" disabled={row.status === 'uploading'} onClick={() => void previewTidy(row)}>產生前後預覽</button>
+                <summary>{t('TXT 文字整理預覽')}</summary>
+                <p className="hint">{t('整理只影響本次待上傳副本。預設只修整空白；廣告移除及斷行合併需勾選，並由你先檢視再套用。')}</p>
+                <button className="btn" disabled={row.status === 'uploading'} onClick={() => void previewTidy(row)}>{t('產生前後預覽')}</button>
                 {typeof preview === 'string' && <p className="form-error" role="alert">{preview}</p>}
                 {preview && typeof preview !== 'string' && <>
-                  <p className="hint">修整 {preview.trimmedLines} 行空白、合併 {preview.collapsedBlankLines} 個多餘空行、移除 {preview.removedPromotionLines} 行廣告、合併 {preview.joinedLines} 次斷行。</p>
-                  <div className="tidy-preview"><div><h3>原文</h3><pre>{preview.original.slice(0, 2400)}</pre></div>
-                    <div><h3>整理後</h3><pre>{preview.text.slice(0, 2400)}</pre></div></div>
-                  {preview.original.length > 2400 && <p className="hint">預覽各顯示前 2,400 字；套用時會處理全文。</p>}
-                  <button className="btn" onClick={() => applyTidy(row, preview)}>套用整理後文字</button>
+                  <p className="hint">{t('修整 {trimmed} 行空白、合併 {collapsed} 個多餘空行、移除 {ads} 行廣告、合併 {joined} 次斷行。', {
+                    trimmed: preview.trimmedLines, collapsed: preview.collapsedBlankLines,
+                    ads: preview.removedPromotionLines, joined: preview.joinedLines,
+                  })}</p>
+                  <div className="tidy-preview"><div><h3>{t('原文')}</h3><pre>{preview.original.slice(0, 2400)}</pre></div>
+                    <div><h3>{t('整理後')}</h3><pre>{preview.text.slice(0, 2400)}</pre></div></div>
+                  {preview.original.length > 2400 && <p className="hint">{t('預覽各顯示前 2,400 字；套用時會處理全文。')}</p>}
+                  <button className="btn" onClick={() => applyTidy(row, preview)}>{t('套用整理後文字')}</button>
                 </>}
               </details>}
             </li>;
@@ -406,7 +417,7 @@ export function BatchImportPanel({ onBack, onOpenWork }: { onBack(): void; onOpe
         </ol>
       </>}
       {message && <p className="hint" role="status">{message}</p>}
-      {!rows.length && <p className="hint">加入檔案後，會逐本顯示解析進度與章節品質摘要。</p>}
+      {!rows.length && <p className="hint">{t('加入檔案後，會逐本顯示解析進度與章節品質摘要。')}</p>}
     </section>
   );
 }

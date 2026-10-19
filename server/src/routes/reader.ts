@@ -16,6 +16,7 @@ import {
 } from '../db/schema.ts';
 import type { Storage } from '../storage.ts';
 import { variantsForSearch } from '../search/normalize.ts';
+import { parseRef } from '../lib/slug.ts';
 
 export interface ReaderRoutesDeps {
   db: NodePgDatabase;
@@ -34,9 +35,17 @@ type ReaderWork = typeof works.$inferSelect;
 
 // removed → 404 like it never existed; draft → Admin preview only (403);
 // public/unlisted → anyone. Returns the work row or a code to map to a status.
-export async function visibleWork(db: NodePgDatabase, id: string, role: string):
+//
+// `ref` is whatever the URL carried: a `<slug>-<publicId>` segment, a bare
+// public id, or a uuid. Both forms resolve through a unique index; the slug
+// text is never consulted, so editing a title cannot orphan a published link.
+export async function visibleWork(db: NodePgDatabase, ref: string, role: string):
   Promise<{ ok: true; work: ReaderWork } | { ok: false; error: 'work_not_found' | 'forbidden' }> {
-  const [work] = await db.select().from(works).where(eq(works.id, id)).limit(1);
+  const parsed = parseRef(ref);
+  if (!parsed) return { ok: false, error: 'work_not_found' };
+  const [work] = await db.select().from(works)
+    .where('workId' in parsed ? eq(works.id, parsed.workId) : eq(works.publicId, parsed.publicId))
+    .limit(1);
   if (!work || work.visibility === 'removed') return { ok: false, error: 'work_not_found' };
   if (work.visibility === 'draft' && role !== 'admin') return { ok: false, error: 'forbidden' };
   return { ok: true, work };
@@ -57,9 +66,7 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
   const app = new Hono<{ Variables: { userId: string; role: string } }>();
 
   app.get('/api/reader/works/:id', async (c) => {
-    const id = routeId(c);
-    if (!UUID_RE.test(id)) return c.json({ error: 'work_not_found' }, 404);
-    const v = await visibleWork(db, id, c.get('role') ?? '');
+    const v = await visibleWork(db, routeId(c), c.get('role') ?? '');
     if (!v.ok) return c.json({ error: v.error }, v.error === 'forbidden' ? 403 : 404);
     const work = v.work;
     const source = contentSource(work, c.get('role') ?? '');
@@ -67,7 +74,7 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
     if (source === 'none') {
       // public work, no publication yet — nothing is readable (§8)
       return c.json({
-        id: work.id, title: work.title, author: work.author,
+        id: work.id, publicId: work.publicId, title: work.title, author: work.author,
         workType: work.workType, serialStatus: work.serialStatus,
         description: work.description, visibility: work.visibility,
         chapterCount: 0, firstChapterId: null, latestChapterId: null,
@@ -78,19 +85,20 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
     if (source === 'head') {
       // draft preview: editorial counts (M5 semantics, Admin only)
       const [counts] = await db.select({ n: sql<number>`count(*)::int` })
-        .from(chapters).where(and(eq(chapters.workId, id), isNull(chapters.mergedIntoChapterId)));
+        .from(chapters).where(and(eq(chapters.workId, work.id), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt)));
       let firstChapterId: string | null = null;
       let latestChapterId: string | null = null;
       if (counts.n > 0) {
         const ends = await db.select({
           first: sql<string>`(array_agg(${chapters.id} order by ${chapters.editorialPosition} asc))[1]`,
           latest: sql<string>`(array_agg(${chapters.id} order by ${chapters.editorialPosition} desc))[1]`,
-        }).from(chapters).where(and(eq(chapters.workId, id), isNull(chapters.mergedIntoChapterId)));
+        }).from(chapters).where(and(eq(chapters.workId, work.id), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt)));
         firstChapterId = ends[0].first;
         latestChapterId = ends[0].latest;
       }
       return c.json({
         id: work.id,
+        publicId: work.publicId,
         title: work.title,
         author: work.author,
         workType: work.workType,
@@ -119,6 +127,7 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
     }).from(releaseItems).where(eq(releaseItems.releaseId, release.id));
     return c.json({
       id: work.id,
+      publicId: work.publicId,
       title: work.title,
       author: work.author,
       workType: work.workType,
@@ -137,11 +146,10 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
   // ordered TOC, paginated — a 5,000-chapter book never returns all bodies.
   // Public reads get the release's stable order; draft preview gets editorial order.
   app.get('/api/reader/works/:id/chapters', async (c) => {
-    const id = routeId(c);
-    if (!UUID_RE.test(id)) return c.json({ error: 'work_not_found' }, 404);
-    const v = await visibleWork(db, id, c.get('role') ?? '');
+    const v = await visibleWork(db, routeId(c), c.get('role') ?? '');
     if (!v.ok) return c.json({ error: v.error }, v.error === 'forbidden' ? 403 : 404);
     const work = v.work;
+    const id = work.id;
     const limit = Math.min(500, Math.max(1, Math.floor(Number(c.req.query('limit')) || 200)));
     const offset = Math.max(0, Math.floor(Number(c.req.query('offset')) || 0));
     if (!Number.isSafeInteger(limit) || !Number.isSafeInteger(offset)) return c.json({ error: 'invalid_filter' }, 400);
@@ -154,15 +162,20 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
     }
     const source = contentSource(work, c.get('role') ?? '');
     // Only metadata enters this CTE. No canonical bodies or storage I/O.
+    // The release branch joins chapters for public_id only: every other column
+    // must come from the snapshot (ri), which is what the public is reading —
+    // a label edited after publication does not change the published TOC.
     const base = source === 'head' ? sql`
-      select c.id, c.volume_id as "volumeId", c.label_raw as "labelRaw",
+      select c.id, c.public_id as "publicId", c.volume_id as "volumeId", c.label_raw as "labelRaw",
         coalesce(r.title, '') as title, c.editorial_position as "editorialPosition",
         c.head_revision_id as "revisionId"
       from app.chapters c left join app.chapter_revisions r on r.id = c.head_revision_id
-      where c.work_id = ${id} and c.merged_into_chapter_id is null`
-      : sql`select chapter_id as id, volume_id as "volumeId", label_raw as "labelRaw",
-          title, editorial_position as "editorialPosition", revision_id as "revisionId"
-        from app.release_items where release_id = ${source === 'release' ? work.activeReleaseId : null}`;
+      where c.work_id = ${id} and c.merged_into_chapter_id is null and c.deleted_at is null`
+      : sql`select ri.chapter_id as id, c.public_id as "publicId", ri.volume_id as "volumeId",
+          ri.label_raw as "labelRaw", ri.title, ri.editorial_position as "editorialPosition",
+          ri.revision_id as "revisionId"
+        from app.release_items ri join app.chapters c on c.id = ri.chapter_id
+        where ri.release_id = ${source === 'release' ? work.activeReleaseId : null}`;
     const variants = query ? await variantsForSearch(query.toLocaleLowerCase()) : [];
     const matches = variants.length ? sql.join(variants.map((term) => sql`
       (strpos(lower("labelRaw"), ${term}) > 0 or strpos(lower(title), ${term}) > 0)`), sql` or `) : sql`true`;
@@ -182,7 +195,8 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
         else least(${offset}, greatest(0, total - 1)) end as start from stats)
       select total, version, start as offset,
         (${Boolean(around)} and anchor is null) as "anchorMissing",
-        coalesce((select json_agg(json_build_object('id', id, 'volumeId', "volumeId", 'labelRaw', "labelRaw",
+        coalesce((select json_agg(json_build_object('id', id, 'publicId', "publicId",
+          'volumeId', "volumeId", 'labelRaw', "labelRaw",
           'title', title, 'editorialPosition', "editorialPosition", 'revisionId', "revisionId") order by ordinal)
           from ranked where ordinal >= bounds.start and ordinal < bounds.start + ${limit}), '[]'::json) as chapters
       from bounds`);
@@ -202,9 +216,28 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
   // preview (Admin). Head content of a PUBLISHED work belongs to the Admin
   // preview routes, deliberately not here.
   app.get('/api/reader/chapters/:id', async (c) => {
-    const id = routeId(c);
-    if (!UUID_RE.test(id)) return c.json({ error: 'chapter_not_found' }, 404);
-    const rows = await db.select({ chapterId: chapters.id, workId: chapters.workId })
+    // A chapter public id is unique per work, not globally (see schema.ts), so
+    // resolving one needs the work: `?work=<ref>` carries it, and the reader
+    // always has it — the chapter path is nested under the work path. A uuid
+    // needs no such help and keeps working on its own, which is what every
+    // in-app navigation and every bookmark deep link uses.
+    const ref = parseRef(routeId(c));
+    if (!ref) return c.json({ error: 'chapter_not_found' }, 404);
+    let chapterId: string;
+    if ('workId' in ref) {
+      chapterId = ref.workId;      // a uuid segment: the chapter's own id
+    } else {
+      const workRef = c.req.query('work');
+      if (!workRef) return c.json({ error: 'chapter_not_found' }, 404);
+      const owner = await visibleWork(db, workRef, c.get('role') ?? '');
+      if (!owner.ok) return c.json({ error: owner.error }, owner.error === 'forbidden' ? 403 : 404);
+      const [found] = await db.select({ id: chapters.id }).from(chapters)
+        .where(and(eq(chapters.workId, owner.work.id), eq(chapters.publicId, ref.publicId))).limit(1);
+      if (!found) return c.json({ error: 'chapter_not_found' }, 404);
+      chapterId = found.id;
+    }
+    const id = chapterId;
+    const rows = await db.select({ chapterId: chapters.id, publicId: chapters.publicId, workId: chapters.workId })
       .from(chapters).where(eq(chapters.id, id)).limit(1);
     const row = rows[0];
     if (!row) return c.json({ error: 'chapter_not_found' }, 404);
@@ -244,16 +277,16 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
         headRevisionId: chapters.headRevisionId,
         labelRaw: chapters.labelRaw,
         editorialPosition: chapters.editorialPosition,
-      }).from(chapters).where(and(eq(chapters.id, id), isNull(chapters.mergedIntoChapterId))).limit(1);
+      }).from(chapters).where(and(eq(chapters.id, id), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt))).limit(1);
       if (!head) return c.json({ error: 'chapter_not_found' }, 404);
       const neighbors = await db.select({
         prev: sql<string | null>`(select c2.id from app.chapters c2
-          where c2.work_id = ${work.id} and c2.merged_into_chapter_id is null and c2.editorial_position < ${head.editorialPosition}
+          where c2.work_id = ${work.id} and c2.merged_into_chapter_id is null and c2.deleted_at is null and c2.editorial_position < ${head.editorialPosition}
           order by c2.editorial_position desc limit 1)`,
         next: sql<string | null>`(select c2.id from app.chapters c2
-          where c2.work_id = ${work.id} and c2.merged_into_chapter_id is null and c2.editorial_position > ${head.editorialPosition}
+          where c2.work_id = ${work.id} and c2.merged_into_chapter_id is null and c2.deleted_at is null and c2.editorial_position > ${head.editorialPosition}
           order by c2.editorial_position asc limit 1)`,
-      }).from(chapters).where(and(eq(chapters.id, id), isNull(chapters.mergedIntoChapterId))).limit(1);
+      }).from(chapters).where(and(eq(chapters.id, id), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt))).limit(1);
       revisionId = head.headRevisionId;
       labelRaw = head.labelRaw;
       previousChapterId = neighbors[0].prev;
@@ -291,6 +324,9 @@ export function readerRoutes(deps: ReaderRoutesDeps): Hono<{ Variables: { userId
 
     return c.json({
       chapterId: row.chapterId,
+      // the URL-facing key, so the reader can put the canonical path in the
+      // address bar and in <link rel="canonical"> as soon as the text lands
+      publicId: row.publicId,
       workId: row.workId,
       revisionId,
       labelRaw,

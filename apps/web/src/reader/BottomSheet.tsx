@@ -6,6 +6,7 @@
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { Icon } from '../components/Icon.tsx';
+import { t } from '../i18n/translate.ts';
 
 const FOCUSABLE = [
   'a[href]', 'button:not([disabled])', 'input:not([disabled])',
@@ -73,7 +74,7 @@ export function BottomSheet({
         <div className="sheet-grip" aria-hidden="true" />
         <header className="sheet-head">
           <h2>{title}</h2>
-          <button className="icon-btn" aria-label="關閉" onClick={onClose}>
+          <button className="icon-btn" aria-label={t('關閉')} onClick={onClose}>
             <Icon name="close" />
           </button>
         </header>

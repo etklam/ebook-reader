@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { speechChunks } from './speech-chunks.ts';
+import { t } from '../i18n/translate.ts';
 
 type SpeechInput = { chapterId: string | null; text: string; contentVersion?: string; hasNextChapter: boolean; onNextChapter(): void; getParagraphIndex?(): number; onParagraph?(index: number | null): void };
 
@@ -75,7 +76,7 @@ export function useSpeechReader(input: SpeechInput) {
       utterance.onerror = (event) => {
         if (token !== version.current || event.error === 'canceled' || event.error === 'interrupted') return;
         setSpeaking(false); setPaused(false); setParagraph(null);
-        setError('系統語音播放中斷，可按「朗讀」重新開始。背景播放由瀏覽器與裝置控制。');
+        setError(t('系統語音播放中斷，可按「朗讀」重新開始。背景播放由瀏覽器與裝置控制。'));
       };
       window.speechSynthesis.speak(utterance);
     };
@@ -132,42 +133,45 @@ export function useSpeechReader(input: SpeechInput) {
 
 export function SpeechControls({ controller }: { controller: ReturnType<typeof useSpeechReader> }) {
   const speech = controller;
-  if (!speech.supported) return <p className="hint">這個瀏覽器不支援系統語音朗讀。</p>;
-  return <section className="speech-controls" aria-label="語音朗讀控制">
-    <h3>語音朗讀</h3>
+  if (!speech.supported) return <p className="hint">{t('這個瀏覽器不支援系統語音朗讀。')}</p>;
+  return <section className="speech-controls" aria-label={t('語音朗讀控制')}>
+    <h3>{t('語音朗讀')}</h3>
     <div className="row-actions">
       {!speech.speaking ? <>
-        <button className="btn" onClick={speech.speak}>朗讀本章</button>
-        <button className="btn" onClick={speech.speakCurrent}>從目前段落朗讀</button>
-        {speech.resumeParagraph !== null && <button className="btn" onClick={speech.speakResume}>從第 {speech.resumeParagraph + 1} 段續播</button>}
+        <button className="btn" onClick={speech.speak}>{t('朗讀本章')}</button>
+        <button className="btn" onClick={speech.speakCurrent}>{t('從目前段落朗讀')}</button>
+        {speech.resumeParagraph !== null && <button className="btn" onClick={speech.speakResume}>{t('從第 {n} 段續播', { n: speech.resumeParagraph + 1 })}</button>}
       </> : <>
-        <button className="btn" onClick={speech.togglePause}>{speech.paused ? '繼續' : '暫停'}</button>
-        <button className="btn" onClick={speech.stop}>停止</button>
+        <button className="btn" onClick={speech.togglePause}>{speech.paused ? t('繼續') : t('暫停')}</button>
+        <button className="btn" onClick={speech.stop}>{t('停止')}</button>
       </>}
     </div>
-    {speech.currentParagraph !== null && <p className="hint" role="status">正在朗讀第 {speech.currentParagraph + 1} 段{speech.paused ? '（已暫停）' : ''}</p>}
-    <div className="field"><label htmlFor="speech-voice">系統語音</label>
+    {speech.currentParagraph !== null && <p className="hint" role="status">
+      {t('正在朗讀第 {n} 段', { n: speech.currentParagraph + 1 })}{speech.paused ? t('（已暫停）') : ''}
+    </p>}
+    <div className="field"><label htmlFor="speech-voice">{t('系統語音')}</label>
       <select className="input" id="speech-voice" value={speech.voiceUri} disabled={speech.speaking}
         onChange={(event) => speech.setVoiceUri(event.target.value)}>
-        <option value="">自動選擇中文語音</option>
+        <option value="">{t('自動選擇中文語音')}</option>
         {speech.voices.map((voice) => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name}（{voice.lang}）</option>)}
       </select>
     </div>
-    <div className="field"><label htmlFor="speech-rate">速度</label>
+    <div className="field"><label htmlFor="speech-rate">{t('速度')}</label>
       <select className="input" id="speech-rate" value={speech.rate} disabled={speech.speaking}
         onChange={(event) => speech.setRate(Number(event.target.value))}>
         {[0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2].map((rate) => <option key={rate} value={rate}>{rate}×</option>)}
       </select>
     </div>
-    <div className="field"><label htmlFor="speech-sleep">睡眠定時</label>
+    <div className="field"><label htmlFor="speech-sleep">{t('睡眠定時')}</label>
       <select className="input" id="speech-sleep" value={speech.sleepMinutes} onChange={(event) => speech.setSleep(Number(event.target.value))}>
-        <option value={0}>關閉</option><option value={15}>15 分鐘</option><option value={30}>30 分鐘</option><option value={60}>60 分鐘</option>
+        <option value={0}>{t('關閉')}</option>
+        {[15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{t('{n} 分鐘', { n: minutes })}</option>)}
       </select>
     </div>
     <label className="check-line"><input type="checkbox" checked={speech.autoNext}
-      onChange={(event) => speech.setAutoNext(event.target.checked)} />讀完自動下一章</label>
-    {speech.sleepRemaining > 0 && <p className="hint">{Math.ceil(speech.sleepRemaining / 60)} 分鐘後停止</p>}
-    <p className="hint">關閉設定仍會繼續朗讀。背景播放依瀏覽器及裝置支援；語音與速度在開始朗讀前設定。</p>
+      onChange={(event) => speech.setAutoNext(event.target.checked)} />{t('讀完自動下一章')}</label>
+    {speech.sleepRemaining > 0 && <p className="hint">{t('{n} 分鐘後停止', { n: Math.ceil(speech.sleepRemaining / 60) })}</p>}
+    <p className="hint">{t('關閉設定仍會繼續朗讀。背景播放依瀏覽器及裝置支援；語音與速度在開始朗讀前設定。')}</p>
     {speech.error && <p className="form-error" role="alert">{speech.error}</p>}
   </section>;
 }

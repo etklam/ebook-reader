@@ -5,9 +5,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api/client.ts';
 import { navigate } from '../App.tsx';
+import { readPath } from '../lib/slug.ts';
 import { EmptyState } from '../components/EmptyState.tsx';
 import { SkeletonRows } from '../components/Skeleton.tsx';
 import { count, dateTime } from '../lib/format.ts';
+import { LOCALE_TAG } from '../i18n/locale.ts';
+import { currentLocale, t } from '../i18n/translate.ts';
 import { MemberNav } from './MemberNav.tsx';
 import { useMe } from './useMe.ts';
 
@@ -22,16 +25,17 @@ interface ReadingStats {
 }
 
 const DAY_MS = 86_400_000;
-const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
+// a function, so the weekday gutter follows a locale switch
+const weekdays = () => ['日', '一', '二', '三', '四', '五', '六'].map((d) => t(d));
 
-const dateLabel = (key: string) => new Date(`${key}T00:00:00Z`).toLocaleDateString('zh-TW', {
+const dateLabel = (key: string) => new Date(`${key}T00:00:00Z`).toLocaleDateString(LOCALE_TAG[currentLocale()], {
   timeZone: 'UTC', month: 'long', day: 'numeric',
 });
 const duration = (seconds: number) => {
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);
-  if (minutes === 0 && seconds > 0) return `${seconds} 秒`;
-  return hours ? `${hours} 小時 ${minutes % 60} 分` : `${minutes} 分鐘`;
+  if (minutes === 0 && seconds > 0) return t('{n} 秒', { n: seconds });
+  return hours ? t('{h} 小時 {m} 分', { h: hours, m: minutes % 60 }) : t('{n} 分鐘', { n: minutes });
 };
 
 /** 0 = nothing recorded, then four steps. Thresholds are weight, not raw reads:
@@ -89,7 +93,7 @@ function ActivityCalendar({ days }: { days: ReadingStats['days'] }) {
     const month = first.date.slice(0, 7);
     const last = months[months.length - 1];
     if (last && last.key === month) last.span += 1;
-    else months.push({ key: month, label: `${Number(first.date.slice(5, 7))} 月`, span: 1 });
+    else months.push({ key: month, label: t('{n} 月', { n: Number(first.date.slice(5, 7)) }), span: 1 });
   }
   // a one-week sliver has no room for its label; fold it into the month before
   for (let i = months.length - 1; i > 0; i -= 1) {
@@ -99,19 +103,19 @@ function ActivityCalendar({ days }: { days: ReadingStats['days'] }) {
   return (
     <section className="reading-stats-calendar" aria-labelledby="cal-head">
       <div className="sec-head">
-        <h2 id="cal-head">最近一年</h2>
-        <span className="head-note tnum">{count(activeDays)} 天有紀錄</span>
+        <h2 id="cal-head">{t('最近一年')}</h2>
+        <span className="head-note tnum">{t('{n} 天有紀錄', { n: count(activeDays) })}</span>
       </div>
       <div className="cal-wrap">
         <div className="cal-gutter" aria-hidden="true">
-          {WEEKDAYS.map((d, i) => <span key={d}>{i % 2 === 1 ? d : ''}</span>)}
+          {weekdays().map((d, i) => <span key={d}>{i % 2 === 1 ? d : ''}</span>)}
         </div>
         <div
           className="cal"
           ref={scroller}
           tabIndex={0}
           role="img"
-          aria-label={`最近一年的閱讀日曆，共 ${activeDays} 天有閱讀紀錄。逐日數字列在下方的「最近讀過」。`}
+          aria-label={t('最近一年的閱讀日曆，共 {n} 天有閱讀紀錄。逐日數字列在下方的「最近讀過」。', { n: activeDays })}
         >
           <div className="cal-months" aria-hidden="true">
             {months.map((m) => <span key={m.key} style={{ gridColumn: `span ${m.span}` }}>{m.label}</span>)}
@@ -122,19 +126,21 @@ function ActivityCalendar({ days }: { days: ReadingStats['days'] }) {
                   key={cell.date}
                   className="cal-cell"
                   data-heat={cell.level}
-                  title={`${dateLabel(cell.date)}：首次讀取 ${cell.reads} 章，閱讀 ${duration(cell.seconds)}`}
+                  title={t('{date}：首次讀取 {reads} 章，閱讀 {time}', {
+                    date: dateLabel(cell.date), reads: cell.reads, time: duration(cell.seconds),
+                  })}
                 />
               : <span key={`pad-${i}`} />))}
           </div>
         </div>
       </div>
       <p className="cal-legend">
-        <span>少</span>
+        <span>{t('少')}</span>
         <span className="cal-swatches" aria-hidden="true">
           {[0, 1, 2, 3, 4].map((n) => <span key={n} className="cal-cell" data-heat={n} />)}
         </span>
-        <span>多</span>
-        <span className="cal-legend-end">一格一天，顏色越深讀得越多</span>
+        <span>{t('多')}</span>
+        <span className="cal-legend-end">{t('一格一天，顏色越深讀得越多')}</span>
       </p>
     </section>
   );
@@ -154,7 +160,7 @@ export function ReadingStatsPage() {
   if (loading) {
     return (
       <div className="page-head">
-        <div className="head-line"><h1>閱讀紀錄</h1></div>
+        <div className="head-line"><h1>{t('閱讀紀錄')}</h1></div>
         <SkeletonRows count={3} />
       </div>
     );
@@ -164,9 +170,9 @@ export function ReadingStatsPage() {
     return (
       <div className="auth-page">
         <EmptyState
-          title="登入後查看閱讀紀錄"
-          body="讀過哪些章、哪幾天在讀、累積讀了多久——都記在帳號裡，換一台裝置也還在。"
-          action={<button className="btn primary" onClick={() => navigate('/login')}>登入</button>}
+          title={t('登入後查看閱讀紀錄')}
+          body={t('讀過哪些章、哪幾天在讀、累積讀了多久——都記在帳號裡，換一台裝置也還在。')}
+          action={<button className="btn primary" onClick={() => navigate('/login')}>{t('登入')}</button>}
         />
       </div>
     );
@@ -175,33 +181,33 @@ export function ReadingStatsPage() {
   return (
     <div className="reading-stats-page" data-testid="reading-stats">
       <header className="page-head">
-        <div className="head-line"><h1>閱讀紀錄</h1></div>
+        <div className="head-line"><h1>{t('閱讀紀錄')}</h1></div>
         <MemberNav current="reading-stats" />
       </header>
 
-      {!stats && !failed && <SkeletonRows count={3} label="載入閱讀紀錄" />}
+      {!stats && !failed && <SkeletonRows count={3} label={t('載入閱讀紀錄')} />}
 
       {failed && (
         <EmptyState
-          title="閱讀紀錄暫時載不出來"
-          body="紀錄存在帳號裡，沒有受影響——只是這次沒取到。重試一次通常就好。"
-          action={<button className="btn" onClick={() => void load()}>重試</button>}
+          title={t('閱讀紀錄暫時載不出來')}
+          body={t('紀錄存在帳號裡，沒有受影響——只是這次沒取到。重試一次通常就好。')}
+          action={<button className="btn" onClick={() => void load()}>{t('重試')}</button>}
         />
       )}
 
       {stats && <>
         {/* .tally is the shared figure-over-label rhythm the admin tallies use */}
-        <div className="tally stats-totals" role="group" aria-label="閱讀統計">
-          <div><b>{count(stats.totals.worksRead)}</b>讀過作品</div>
-          <div><b>{count(stats.totals.chaptersRead)}</b>讀過章節</div>
-          <div><b>{duration(stats.totals.activeSeconds)}</b>累積閱讀時間</div>
+        <div className="tally stats-totals" role="group" aria-label={t('閱讀統計')}>
+          <div><b>{count(stats.totals.worksRead)}</b>{t('讀過作品')}</div>
+          <div><b>{count(stats.totals.chaptersRead)}</b>{t('讀過章節')}</div>
+          <div><b>{duration(stats.totals.activeSeconds)}</b>{t('累積閱讀時間')}</div>
         </div>
 
         <ActivityCalendar days={stats.days} />
 
-        <div className="sec-head"><h2 id="recent-head">最近讀過</h2></div>
+        <div className="sec-head"><h2 id="recent-head">{t('最近讀過')}</h2></div>
         {stats.recent.length === 0 ? (
-          <p className="muted">還沒有閱讀紀錄。開啟一章後會出現在這裡。</p>
+          <p className="muted">{t('還沒有閱讀紀錄。開啟一章後會出現在這裡。')}</p>
         ) : (
           <div className="rows" aria-labelledby="recent-head">
             {stats.recent.map((entry) => (
@@ -209,18 +215,18 @@ export function ReadingStatsPage() {
                 <div className="row-main">
                   <button
                     className="row-title"
-                    onClick={() => navigate(`/read/${entry.workId}/${entry.chapterId}`)}
+                    onClick={() => navigate(readPath({ id: entry.workId }, { id: entry.chapterId }))}
                   >
                     {entry.workTitle}
                   </button>
                   <div className="row-sub">
-                    <span className="row-meta">{entry.chapterLabel || '（無章名）'}</span>
-                    <span className="row-meta">最近閱讀 {dateTime(entry.lastReadAt)}</span>
+                    <span className="row-meta">{entry.chapterLabel || t('（無章名）')}</span>
+                    <span className="row-meta">{t('最近閱讀 {at}', { at: dateTime(entry.lastReadAt) })}</span>
                   </div>
                 </div>
                 <div className="row-rail">
-                  <span className="row-count tnum">{count(entry.chaptersRead)} 章</span>
-                  <span>已讀</span>
+                  <span className="row-count tnum">{t('{n} 章', { n: count(entry.chaptersRead) })}</span>
+                  <span>{t('已讀')}</span>
                 </div>
               </div>
             ))}
@@ -228,8 +234,7 @@ export function ReadingStatsPage() {
         )}
 
         <p className="hint page-pad">
-          章節數算的是曾經開啟過的不同章節；日曆記的是首次開啟的日期。閱讀時間只計頁面在前景、且近期有操作的時段，
-          日期以 UTC 計算。
+          {t('章節數算的是曾經開啟過的不同章節；日曆記的是首次開啟的日期。閱讀時間只計頁面在前景、且近期有操作的時段，日期以 UTC 計算。')}
         </p>
       </>}
     </div>

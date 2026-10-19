@@ -4,6 +4,7 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { ApiRequestError, api, getCategories, getTags } from '../api/client.ts';
 import type { TaxonomyItem, TaxonomyListResponse } from '../api/types.ts';
+import { t } from '../i18n/translate.ts';
 
 export type TaxonomyKind = 'categories' | 'tags';
 
@@ -37,7 +38,7 @@ export function loadTaxonomy(force = false): Promise<void> {
   inflight = Promise.all([getCategories(true), getTags(true)])
     .then(([categories, tags]: TaxonomyListResponse[]) =>
       publish({ categories: categories.items, tags: tags.items, loaded: true, error: '' }))
-    .catch(() => publish({ error: '無法載入分類與標籤。請按「重新載入詞庫」再試。' }))
+    .catch(() => publish({ error: t('無法載入分類與標籤。請按「重新載入詞庫」再試。') }))
     .finally(() => { inflight = null; });
   return inflight;
 }
@@ -49,7 +50,7 @@ export function loadTaxonomy(force = false): Promise<void> {
  */
 export async function createTaxonomyItem(kind: TaxonomyKind, displayName: string): Promise<TaxonomyItem> {
   const name = displayName.trim();
-  if (!name) throw new Error('名稱必填');
+  if (!name) throw new Error(t('名稱必填'));
   try {
     const created = await api<TaxonomyItem>(`/api/admin/taxonomy/${kind}`, {
       method: 'POST', headers: { 'content-type': 'application/json' },

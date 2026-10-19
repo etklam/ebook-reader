@@ -11,6 +11,7 @@
 // from the content.
 import type { CSSProperties, RefObject } from 'react';
 import type { ChapterResource } from '../api/types.ts';
+import { t } from '../i18n/translate.ts';
 
 // must stay in sync with server/src/import/blocks.ts
 const IMG_RE = /^\[\[img:([0-9a-f]{64})(?:\|([\s\S]*))?\]\]$/;
@@ -56,7 +57,7 @@ export function ReaderContent({
           // shift every later paragraph_index and break saved positions.
           return (
             <p key={i} data-paragraph-index={i} className="reader-figure reader-figure-missing">
-              <span className="reader-figure-caption">（圖片無法顯示）</span>
+              <span className="reader-figure-caption">{t('（圖片無法顯示）')}</span>
             </p>
           );
         }

@@ -5,7 +5,12 @@
 // onLayoutChange so the anchor is captured before re-render (§11.3).
 import { FONT_SIZE_MAX, FONT_SIZE_MIN, type ReaderSettings } from './reader-state.ts';
 import type { ConversionMode } from './conversion.ts';
+import { LanguageChips } from '../i18n/I18nRoot.tsx';
+import { t } from '../i18n/translate.ts';
 
+// Chip labels stay in the source language in these tables and are translated
+// where they are rendered: a module-level constant runs once at import, so a
+// translated constant would not follow a language switch.
 const THEMES: Array<{ id: ReaderSettings['theme']; label: string }> = [
   // first, and the default: the reader opens in whatever the OS is already set to
   { id: 'system', label: '跟隨系統' },
@@ -61,69 +66,77 @@ export function ReaderSettingsPanel({
           aria-pressed={selected}
           onClick={() => apply(it.value)}
         >
-          {selected ? '✓ ' : ''}{it.label}
+          {selected ? '✓ ' : ''}{t(it.label)}
         </button>
       );
     });
 
   return (
     <div data-testid="reader-settings">
-      {row('主題', group(
-        THEMES.map((t) => ({ value: t.id, label: t.label })),
+      {/* written out rather than passed through `row`, because LanguageChips
+          brings its own labelled group — `row` would nest a second one */}
+      <div className="setting-row">
+        <span className="setting-label">{t('語言')}</span>
+        <LanguageChips label={t('介面語言')} />
+      </div>
+
+      {row(t('主題'), group(
+        THEMES.map((theme) => ({ value: theme.id, label: theme.label })),
         settings.theme,
         (theme) => onChange({ theme }),
-      ), '主題')}
+      ), t('主題'))}
 
-      {row('字號', (
+      {row(t('字號'), (
         <>
-          <button className="chip" aria-label="縮小字號" disabled={settings.fontSize <= FONT_SIZE_MIN}
+          <button className="chip" aria-label={t('縮小字號')} disabled={settings.fontSize <= FONT_SIZE_MIN}
             onClick={() => onLayoutChange({ fontSize: Math.max(FONT_SIZE_MIN, settings.fontSize - 2) })}>A−</button>
           <span className="setting-value" aria-live="polite">{settings.fontSize}px</span>
-          <button className="chip" aria-label="放大字號" disabled={settings.fontSize >= FONT_SIZE_MAX}
+          <button className="chip" aria-label={t('放大字號')} disabled={settings.fontSize >= FONT_SIZE_MAX}
             onClick={() => onLayoutChange({ fontSize: Math.min(FONT_SIZE_MAX, settings.fontSize + 2) })}>A＋</button>
         </>
       ))}
 
-      {row('行距', group(
+      {row(t('行距'), group(
         LINE_HEIGHTS.map((l) => ({ value: l.v, label: l.label })),
         settings.lineHeight,
         (lineHeight) => onLayoutChange({ lineHeight }),
-      ), '行距')}
+      ), t('行距'))}
 
-      {row('段距', group(
+      {row(t('段距'), group(
         PARA_SPACING.map((p) => ({ value: p.v, label: p.label })),
         settings.paragraphSpacing,
         (paragraphSpacing) => onLayoutChange({ paragraphSpacing }),
-      ), '段落間距')}
+      ), t('段落間距'))}
 
-      {row('繁簡', group(
+      {/* the chapter text, not the interface — the 語言 row above is the UI */}
+      {row(t('內文繁簡'), group(
         CONVERSIONS.map((c) => ({ value: c.id, label: c.label })),
         settings.conversion,
         (conversion) => onLayoutChange({ conversion }),
-      ), '繁簡轉換')}
+      ), t('內文繁簡轉換'))}
 
-      {row('排版', group(
+      {row(t('排版'), group(
         [{ value: 'scroll' as const, label: '捲動' }, { value: 'paginated' as const, label: '分頁' }],
         settings.mode,
         (mode) => onLayoutChange({ mode }),
-      ), '排版方式')}
+      ), t('排版方式'))}
 
       {/* the tap bands are invisible by design, so the one place that explains
           them is here, next to the switch that turns the mode on */}
       {settings.mode === 'paginated' && (
         <p className="hint sheet-hint">
-          分頁模式：輕觸畫面下方往下一頁、上方回上一頁、中間呼出工具列；左右滑動同樣可以翻頁。
+          {t('分頁模式：輕觸畫面下方往下一頁、上方回上一頁、中間呼出工具列；左右滑動同樣可以翻頁。')}
         </p>
       )}
 
       <p className="hint sheet-hint">
-        設定會記在這台裝置上；登入後也會同步到帳號。繁簡只影響顯示，原文內容不變。
+        {t('設定會記在這台裝置上；登入後也會同步到帳號。繁簡只影響顯示，原文內容不變。')}
       </p>
       {/* shown only where there is plausibly a keyboard — on a phone this line
           is noise, and the gesture it would describe is a swipe */}
       <p className="hint kbd-hint">
-        鍵盤：<kbd>←</kbd> <kbd>→</kbd> 翻頁或換章、<kbd>空白鍵</kbd> 捲動一屏、
-        <kbd>Home</kbd> <kbd>End</kbd> 到章首章尾、<kbd>Esc</kbd> 收起工具列。
+        {t('鍵盤：')}<kbd>←</kbd> <kbd>→</kbd> {t('翻頁或換章、')}<kbd>{t('空白鍵')}</kbd> {t('捲動一屏、')}
+        <kbd>Home</kbd> <kbd>End</kbd> {t('到章首章尾、')}<kbd>Esc</kbd> {t('收起工具列。')}
       </p>
     </div>
   );

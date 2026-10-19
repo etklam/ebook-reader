@@ -3,6 +3,7 @@
 // confirmation dialog the shelf would otherwise need: the common case costs
 // one tap, and the accidental case still has a way back.
 import { useEffect, useState } from 'react';
+import { t } from '../i18n/translate.ts';
 
 export function Toast({
   message, actionLabel, onAction, onDismiss, ms = 6000,
@@ -38,7 +39,7 @@ export function Toast({
         {actionLabel && (
           <button className="toast-action" onClick={onAction}>{actionLabel}</button>
         )}
-        <button className="toast-close" aria-label="關閉通知" onClick={onDismiss}>×</button>
+        <button className="toast-close" aria-label={t('關閉通知')} onClick={onDismiss}>×</button>
       </p>
     </div>
   );

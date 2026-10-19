@@ -39,6 +39,11 @@ export interface ApiConfig {
    *  personal data and a reading site does not need a location trail to run.
    *  Turn on for incident response. */
   logClientIp: boolean;
+  /** Public origin, e.g. https://example.com — the absolute base for
+   *  sitemap.xml entries, which the protocol requires to be absolute. Left
+   *  unset the sitemap falls back to the request's own origin, which is right
+   *  for dev but trusts the Host header, so production should set it. */
+  siteOrigin: string | null;
 }
 
 export interface WorkerConfig {
@@ -70,6 +75,26 @@ function requiredUrl(env: Env, key: string): string {
     throw new Error(`config: ${key} must be a postgres:// or postgresql:// URL`);
   }
   return v;
+}
+
+// optional http(s) origin: scheme + host only. A trailing path would silently
+// double up in every sitemap URL, so it is rejected rather than trimmed.
+function httpOrigin(env: Env, key: string): string | null {
+  const raw = env[key]?.trim();
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`config: ${key} must be a valid URL`);
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error(`config: ${key} must be an http:// or https:// URL`);
+  }
+  if (url.pathname !== '/' || url.search || url.hash) {
+    throw new Error(`config: ${key} must be scheme + host only (no path)`);
+  }
+  return url.origin;
 }
 
 function int(env: Env, key: string, def: number, min: number, max: number): number {
@@ -126,6 +151,7 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     },
     hsts: bool(env, 'HSTS', false),
     logClientIp: bool(env, 'LOG_CLIENT_IP', false),
+    siteOrigin: httpOrigin(env, 'SITE_ORIGIN'),
   };
 }
 

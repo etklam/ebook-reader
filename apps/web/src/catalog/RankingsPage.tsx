@@ -4,8 +4,11 @@ import type { RankingPeriod, RankingResponse, RankingType, RankingFilters } from
 import { navigate } from '../App.tsx';
 import { SkeletonRows } from '../components/Skeleton.tsx';
 import { EmptyState } from '../components/EmptyState.tsx';
-import { count, STATUS_LABEL, TYPE_LABEL } from '../lib/format.ts';
+import { count, statusLabel, typeLabel } from '../lib/format.ts';
+import { t } from '../i18n/translate.ts';
+import { workPath } from '../lib/slug.ts';
 
+// labels translated at the render site: a constant is evaluated once at import
 const PERIODS = [{ value: 'week', label: '周榜' }, { value: 'month', label: '月榜' }, { value: 'year', label: '年榜' }, { value: 'all', label: '總榜' }] as const;
 function periodFromUrl(): RankingPeriod {
   const value = new URLSearchParams(location.search).get('period');
@@ -69,7 +72,7 @@ export function RankingsPage() {
     setType(value);
     updateUrl(value, period, filters);
   }
-  const label = type === 'favorites' ? '收藏' : '點擊';
+  const label = type === 'favorites' ? t('收藏') : t('點擊');
   const days = period === 'week' ? 7 : period === 'month' ? 30 : 365;
 
   // App renders every shell page inside <main class="app-main">; a second one
@@ -78,67 +81,72 @@ export function RankingsPage() {
   return <div className="rankings-page" data-testid="rankings">
     <header className="page-head">
       <div className="head-line">
-        <h1>排行榜</h1>
+        <h1>{t('排行榜')}</h1>
         <span className="head-note tnum">
-          {loading ? '載入中' : data ? `${count(data.works.length)} 部` : ''}
+          {loading ? t('載入中') : data ? t('{n} 部', { n: count(data.works.length) }) : ''}
         </span>
       </div>
-      <div className="seg" role="group" aria-label="排行類型">
+      <div className="seg" role="group" aria-label={t('排行類型')}>
         {([{ value: 'clicks', label: '點擊榜' }, { value: 'favorites', label: '收藏榜' }] as const).map((item) =>
           <button className="seg-item" key={item.value} aria-pressed={type === item.value}
-            onClick={() => selectType(item.value)}>{item.label}</button>)}
+            onClick={() => selectType(item.value)}>{t(item.label)}</button>)}
       </div>
-      <div className="seg" role="group" aria-label="排行期間">
+      <div className="seg" role="group" aria-label={t('排行期間')}>
         {PERIODS.map((item) => <button className="seg-item" key={item.value}
           id={`rank-tab-${item.value}`} aria-controls="rank-panel"
-          aria-pressed={period === item.value} onClick={() => selectPeriod(item.value)}>{item.label}</button>)}
+          aria-pressed={period === item.value} onClick={() => selectPeriod(item.value)}>{t(item.label)}</button>)}
       </div>
       <div className="ranking-filters">
-        <label className="field">連載狀態
+        <label className="field">{t('連載狀態')}
           <select className="input" value={filters.serialStatus ?? ''} onChange={(e) => selectFilter({ serialStatus: e.target.value as RankingFilters['serialStatus'] || undefined })}>
-            <option value="">全部狀態</option><option value="ongoing">連載中</option><option value="completed">已完結</option><option value="paused">暫停</option>
+            <option value="">{t('全部狀態')}</option>
+            <option value="ongoing">{t('連載中')}</option>
+            <option value="completed">{t('已完結')}</option>
+            <option value="paused">{t('暫停')}</option>
           </select>
         </label>
-        <label className="field">分類
+        <label className="field">{t('分類')}
           <select className="input" value={filters.categoryId ?? ''} onChange={(e) => selectFilter({ categoryId: e.target.value || undefined })}>
-            <option value="">全部分類</option>
+            <option value="">{t('全部分類')}</option>
             {categories.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}
           </select>
         </label>
       </div>
-      {taxonomyFailed && <p className="form-error" role="alert">分類載入失敗。<button className="linkish" onClick={loadCategories}>重試分類</button></p>}
+      {taxonomyFailed && <p className="form-error" role="alert">{t('分類載入失敗。')}<button className="linkish" onClick={loadCategories}>{t('重試分類')}</button></p>}
       <p className="head-note">
-        {period === 'all' ? '累計總榜' : `最近 ${days} 日（含今日，台北時間）`} · 最多 50 部 · {type === 'favorites' ? '期間內加入且仍保留的收藏' : '同一裝置同一作品每日計一次'}
+        {period === 'all' ? t('累計總榜') : t('最近 {n} 日（含今日，台北時間）', { n: days })}
+        {' · '}{t('最多 50 部')}{' · '}
+        {type === 'favorites' ? t('期間內加入且仍保留的收藏') : t('同一裝置同一作品每日計一次')}
       </p>
     </header>
 
     <div id="rank-panel" aria-busy={loading}>
-      {loading && <SkeletonRows count={5} label="載入排行榜" />}
+      {loading && <SkeletonRows count={5} label={t('載入排行榜')} />}
 
       {failed && (
         <EmptyState
-          title="排行榜暫時載不出來"
-          body="無法取得排行資料，請稍後重試。"
-          action={<button className="btn" onClick={() => setRetry((value) => value + 1)}>重試</button>}
+          title={t('排行榜暫時載不出來')}
+          body={t('無法取得排行資料，請稍後重試。')}
+          action={<button className="btn" onClick={() => setRetry((value) => value + 1)}>{t('重試')}</button>}
         />
       )}
 
       {!loading && !failed && data?.works.length === 0 && (
         <EmptyState
-          title={`這段期間尚未有${label}紀錄`}
-          body={type === 'favorites' ? '讀者收藏公開作品後，這裡就會有名次。' : '點擊統計從功能啟用後開始累積。讀者開啟公開作品頁後，這裡就會有名次。'}
-          action={<button className="btn" onClick={() => navigate('/')}>到書庫看看</button>}
+          title={t('這段期間尚未有{label}紀錄', { label })}
+          body={type === 'favorites' ? t('讀者收藏公開作品後，這裡就會有名次。') : t('點擊統計從功能啟用後開始累積。讀者開啟公開作品頁後，這裡就會有名次。')}
+          action={<button className="btn" onClick={() => navigate('/')}>{t('到書庫看看')}</button>}
         />
       )}
 
       {!loading && !failed && data && data.works.length > 0 && (
         <ol className="ranking-list">
           {data.works.map((work, index) => <li key={work.id}>
-            <button className="row ranking-row" onClick={() => navigate(`/works/${work.id}`)}>
-              <span className="ranking-position" aria-label={`第 ${index + 1} 名`}>{index + 1}</span>
+            <button className="row ranking-row" onClick={() => navigate(workPath(work))}>
+              <span className="ranking-position" aria-label={t('第 {n} 名', { n: index + 1 })}>{index + 1}</span>
               <span className="row-main"><span className="row-title">{work.title}</span>
-                <span className="row-sub"><span className="row-author">{work.author || '佚名'}</span>
-                  <span>{work.serialStatus ? STATUS_LABEL[work.serialStatus] : TYPE_LABEL[work.workType]} · {count(work.chapterCount)} 章</span>
+                <span className="row-sub"><span className="row-author">{work.author || t('佚名')}</span>
+                  <span>{work.serialStatus ? statusLabel(work.serialStatus) : typeLabel(work.workType)} · {t('{n} 章', { n: count(work.chapterCount) })}</span>
                 </span></span>
               <span className="row-rail"><span className="row-count">{count(type === 'favorites' ? work.favorites : work.clicks)}</span><span>{label}</span></span>
             </button>

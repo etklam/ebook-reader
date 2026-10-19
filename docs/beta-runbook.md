@@ -60,6 +60,7 @@ API/worker → private volume（正文、圖片、原始上傳檔）
 | `HSTS` | | 正式站（純 HTTPS）設 `true` |
 | `REGISTRATION_MODE` | | `closed`（預設）／`invite`／`open`。**Beta 用 `invite`**，見 §6 |
 | `LOG_CLIENT_IP` | | 預設 `false`（IP 屬個資）。事件調查時才開 |
+| `SITE_ORIGIN` | ✅* | 公開站台來源（如 `https://book.example.com`），只接受 scheme＋host。`sitemap.xml` 的絕對網址由它組成；未設時改用請求自身的 `Host`，正式站**應設定**以免 Host header 被偽造後寫進 sitemap |
 | `MAX_JSON_BYTES` | | 預設 256 KiB |
 | `AUTH_RATE_LIMIT_*` | | 見 `server/.env.example` |
 

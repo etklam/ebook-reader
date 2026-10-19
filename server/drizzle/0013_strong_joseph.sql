@@ -1,0 +1,1 @@
+ALTER TABLE "app"."chapters" ADD COLUMN "deleted_at" timestamp with time zone;

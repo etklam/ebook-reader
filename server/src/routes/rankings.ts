@@ -51,17 +51,17 @@ export function rankingRoutes({ db, trustProxy }: { db: NodePgDatabase; trustPro
     const day = type === 'favorites' ? sql`(v.created_at at time zone 'Asia/Taipei')::date` : sql`v.day`;
     const range = days === null ? sql`true` : sql`${day} >= (now() at time zone 'Asia/Taipei')::date - ${days - 1}::integer`;
     const result = await db.execute(sql`
-      select w.id, w.title, w.author, w.work_type, w.serial_status, r.chapter_count,
+      select w.id, w.public_id, w.title, w.author, w.work_type, w.serial_status, r.chapter_count,
              count(*)::text as score
       from ${source} v
       join app.works w on w.id = v.work_id
       join app.work_releases r on r.id = w.active_release_id and r.work_id = w.id
       where ${range}
         and w.visibility = 'public' and ${statusFilter} and ${categoryFilter}
-      group by w.id, w.title, w.author, w.work_type, w.serial_status, r.chapter_count
+      group by w.id, w.public_id, w.title, w.author, w.work_type, w.serial_status, r.chapter_count
       order by count(*) desc, w.title asc, w.id asc limit 50`);
     return c.json({ type, period, days, timezone: 'Asia/Taipei', works: result.rows.map((row) => ({
-      id: row.id, title: row.title, author: row.author, workType: row.work_type,
+      id: row.id, publicId: row.public_id, title: row.title, author: row.author, workType: row.work_type,
       serialStatus: row.serial_status, chapterCount: row.chapter_count, clicks: type === 'clicks' ? Number(row.score) : 0,
       favorites: type === 'favorites' ? Number(row.score) : 0,
     })) });

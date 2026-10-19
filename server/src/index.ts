@@ -20,6 +20,7 @@ import { requireAdmin } from './http/guards.ts';
 import { adminImportRoutes } from './routes/admin-imports.ts';
 import { adminWorkRoutes } from './routes/admin-works.ts';
 import { readerRoutes } from './routes/reader.ts';
+import { sitemapRoutes } from './routes/sitemap.ts';
 import { worksRoutes } from './routes/works.ts';
 import { rankingRoutes } from './routes/rankings.ts';
 import { opsRoutes } from './routes/ops.ts';
@@ -164,6 +165,10 @@ app.route('/', readerRoutes({ db, storage: localStorage(config.storageRoot) }));
 app.route('/', rankingRoutes({ db, trustProxy: config.trustProxy }));
 app.route('/', worksRoutes({ db }));
 app.route('/', opsRoutes({ db }));
+// robots.txt + sitemap.xml: public, unauthenticated, and deliberately NOT under
+// /api/ — a crawler expects them at the site root, so nginx proxies those exact
+// paths here (ops/nginx/ebook.conf).
+app.route('/', sitemapRoutes({ db, siteOrigin: config.siteOrigin }));
 
 // bind only when run as the entrypoint — test files import `app` without
 // grabbing a port (and colliding with a running dev server)

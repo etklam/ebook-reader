@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import type { TaxonomyItem } from '../api/types.ts';
 import { matchesQuery, suggestTaxonomy } from './taxonomy-suggest.ts';
 import { useTaxonomy, type TaxonomyKind } from './useTaxonomy.ts';
+import { t } from '../i18n/translate.ts';
 
 export const MAX_CATEGORIES = 5;
 export const MAX_TAGS = 20;
@@ -12,7 +13,8 @@ export const MAX_TAGS = 20;
 export interface TaxonomySelection { categoryIds: string[]; tagIds: string[] }
 
 const LIMITS: Record<TaxonomyKind, number> = { categories: MAX_CATEGORIES, tags: MAX_TAGS };
-const UNIT: Record<TaxonomyKind, string> = { categories: '分類', tags: '標籤' };
+// a function, not a constant: it has to follow a locale switch
+const unit = (kind: TaxonomyKind): string => t(kind === 'categories' ? '分類' : '標籤');
 // stable identity: a fresh [] default would re-run the suggestion memo every render
 const NO_KEYWORDS: readonly string[] = [];
 
@@ -58,9 +60,9 @@ export function TaxonomyPicker({
     }
     // Deactivated items may stay on a work that already has them, but adding
     // one now would just fail the publish check later.
-    if (!item.isActive) { setError(`「${item.displayName}」已停用，不能新指派。`); return; }
+    if (!item.isActive) { setError(t('「{name}」已停用，不能新指派。', { name: item.displayName })); return; }
     if (current.length >= LIMITS[kind]) {
-      setError(`${UNIT[kind]}最多 ${LIMITS[kind]} 個；請先取消一個。`);
+      setError(t('{unit}最多 {limit} 個；請先取消一個。', { unit: unit(kind), limit: LIMITS[kind] }));
       return;
     }
     setError('');
@@ -69,7 +71,7 @@ export function TaxonomyPicker({
 
   async function createAndSelect(kind: TaxonomyKind, name: string): Promise<void> {
     if (disabled || !name.trim()) return;
-    if (atLimit(kind)) { setError(`${UNIT[kind]}最多 ${LIMITS[kind]} 個；請先取消一個。`); return; }
+    if (atLimit(kind)) { setError(t('{unit}最多 {limit} 個；請先取消一個。', { unit: unit(kind), limit: LIMITS[kind] })); return; }
     setPending(`${kind}:${name}`); setError('');
     try {
       const created = await taxonomy.create(kind, name);
@@ -77,7 +79,7 @@ export function TaxonomyPicker({
       if (!value[field].includes(created.id)) onChange({ ...value, [field]: [...value[field], created.id] });
       setQuery('');
     } catch {
-      setError(`無法建立${UNIT[kind]}「${name}」。請改到「分類標籤」建立後再回來。`);
+      setError(t('無法建立{unit}「{name}」。請改到「分類標籤」建立後再回來。', { unit: unit(kind), name }));
     } finally { setPending(''); }
   }
 
@@ -92,7 +94,7 @@ export function TaxonomyPicker({
       <div className="taxonomy-group">
         <div className="taxonomy-group-head">
           <span id={`${idPrefix}-${kind}-label`}>
-            {UNIT[kind]}
+            {unit(kind)}
             <span className="hint tnum">　{selectedIn(kind).length} / {LIMITS[kind]}</span>
           </span>
         </div>
@@ -104,17 +106,19 @@ export function TaxonomyPicker({
                 className={`chip${on ? ' selected' : ''}${item.isActive ? '' : ' chip-retired'}`}
                 title={item.description || undefined}
                 onClick={() => toggle(kind, item)}>
-                {on ? '✓ ' : ''}{item.displayName}{item.isActive ? '' : '（已停用）'}
+                {on ? '✓ ' : ''}{item.displayName}{item.isActive ? '' : t('（已停用）')}
               </button>
             );
           })}
           {visible.length === 0 && (
-            <span className="muted">{query ? `沒有符合「${query}」的${UNIT[kind]}` : `尚無${UNIT[kind]}`}</span>
+            <span className="muted">{query
+              ? t('沒有符合「{query}」的{unit}', { query, unit: unit(kind) })
+              : t('尚無{unit}', { unit: unit(kind) })}</span>
           )}
           {query.trim() && !exactExists && !disabled && (
             <button type="button" className="chip chip-create" disabled={!!pending}
               onClick={() => void createAndSelect(kind, query.trim())}>
-              ＋ 新增{UNIT[kind]}「{query.trim()}」
+              ＋ {t('新增{unit}「{name}」', { unit: unit(kind), name: query.trim() })}
             </button>
           )}
         </div>
@@ -127,32 +131,32 @@ export function TaxonomyPicker({
       {taxonomy.error && (
         <p className="form-error" role="alert">
           {taxonomy.error}
-          <button type="button" className="linkish" onClick={() => void taxonomy.reload()}>重新載入詞庫</button>
+          <button type="button" className="linkish" onClick={() => void taxonomy.reload()}>{t('重新載入詞庫')}</button>
         </p>
       )}
 
       {suggestions.length > 0 && (
         <div className="taxonomy-suggestions">
           <p className="hint">
-            來源檔案註明的分類／標籤（{suggestions.length} 項）。點一下採用；未採用的不會寫入。
+            {t('來源檔案註明的分類／標籤（{n} 項）。點一下採用；未採用的不會寫入。', { n: suggestions.length })}
           </p>
           <div className="taxonomy-chips">
             {unusedSuggestions.map((suggestion) => (
               <button type="button" key={`m-${suggestion.match!.id}`} className="chip chip-suggested" disabled={disabled}
                 onClick={() => toggle(suggestion.kind, suggestion.match!)}>
                 ＋ {suggestion.match!.displayName}
-                <span className="hint">　{UNIT[suggestion.kind]}</span>
+                <span className="hint">　{unit(suggestion.kind)}</span>
               </button>
             ))}
             {unmatched.map((suggestion) => (
               <button type="button" key={`n-${suggestion.keyword}`} className="chip chip-create"
                 disabled={disabled || !!pending}
                 onClick={() => void createAndSelect('tags', suggestion.keyword)}>
-                {pending === `tags:${suggestion.keyword}` ? '建立中…' : `＋ 建立標籤「${suggestion.keyword}」`}
+                {pending === `tags:${suggestion.keyword}` ? t('建立中…') : `＋ ${t('建立標籤「{name}」', { name: suggestion.keyword })}`}
               </button>
             ))}
             {unusedSuggestions.length === 0 && unmatched.length === 0 && (
-              <span className="muted">來源建議的項目都已採用。</span>
+              <span className="muted">{t('來源建議的項目都已採用。')}</span>
             )}
           </div>
         </div>
@@ -160,23 +164,25 @@ export function TaxonomyPicker({
 
       {compact && (
         <button type="button" className="linkish" onClick={() => setOpen((v) => !v)}>
-          {open ? '收起分類與標籤' : `選擇分類與標籤（已選 ${value.categoryIds.length} 分類、${value.tagIds.length} 標籤）`}
+          {open
+            ? t('收起分類與標籤')
+            : t('選擇分類與標籤（已選 {categories} 分類、{tags} 標籤）', { categories: value.categoryIds.length, tags: value.tagIds.length })}
         </button>
       )}
 
       {open && (
         <>
           <div className="field">
-            <label htmlFor={`${idPrefix}-taxonomy-search`}>搜尋分類或標籤</label>
+            <label htmlFor={`${idPrefix}-taxonomy-search`}>{t('搜尋分類或標籤')}</label>
             <input className="input" id={`${idPrefix}-taxonomy-search`} type="search" value={query}
-              disabled={disabled} placeholder="輸入關鍵字；沒有的可直接新增"
+              disabled={disabled} placeholder={t('輸入關鍵字；沒有的可直接新增')}
               // this picker is embedded in the import and draft forms; Enter
               // here means "filter", never "submit the whole import"
               onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
               onChange={(e) => { setQuery(e.target.value); setError(''); }} />
           </div>
           {!taxonomy.loaded && !taxonomy.error
-            ? <p className="hint" role="status">載入分類與標籤…</p>
+            ? <p className="hint" role="status">{t('載入分類與標籤…')}</p>
             : <>{chipList('categories')}{chipList('tags')}</>}
         </>
       )}

@@ -139,6 +139,33 @@ export function adminChapterRoutes(deps: AdminChapterDeps): Hono {
   const app = new Hono();
   const base = '/api/admin/chapter-editor/works/:workId/chapters';
 
+  app.delete(`${base}/:chapterId`, async (c) => {
+    const { workId, chapterId } = c.req.param();
+    if (!validId(workId) || !validId(chapterId)) return c.json({ error: 'chapter_not_found' }, 404);
+    const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+    if (!validId(String(body?.expectedRevisionId ?? ''))) return c.json({ error: 'invalid_chapter_edit' }, 400);
+    const result = await db.transaction(async (tx) => {
+      const [work] = await tx.select({ id: works.id }).from(works).where(and(
+        eq(works.id, workId), sql`${works.visibility} <> 'removed'`,
+      )).for('update').limit(1);
+      if (!work) return { status: 404 as const, error: 'work_not_found' };
+      const [chapter] = await tx.select().from(chapters).where(and(
+        eq(chapters.id, chapterId), eq(chapters.workId, workId),
+        isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt),
+      )).for('update').limit(1);
+      if (!chapter) return { status: 404 as const, error: 'chapter_not_found' };
+      if (chapter.headRevisionId !== body!.expectedRevisionId) return { status: 409 as const, error: 'stale_chapter_revision' };
+      const [{ n }] = await tx.select({ n: sql<number>`count(*)::int` }).from(chapters).where(and(
+        eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt),
+      ));
+      if (n <= 1) return { status: 409 as const, error: 'last_chapter_cannot_delete' };
+      await tx.update(chapters).set({ deletedAt: new Date() }).where(eq(chapters.id, chapterId));
+      await tx.update(works).set({ updatedAt: new Date(), editVersion: sql`${works.editVersion} + 1` }).where(eq(works.id, workId));
+      return { status: 200 as const, ok: true, chapterId };
+    });
+    return c.json(result, result.status);
+  });
+
   app.get('/api/admin/chapter-editor/works/:workId/chapters', async (c) => {
     const workId = c.req.param('workId');
     if (!validId(workId)) return c.json({ error: 'work_not_found' }, 404);
@@ -153,7 +180,7 @@ export function adminChapterRoutes(deps: AdminChapterDeps): Hono {
       createdAt: chapterRevisions.createdAt,
     }).from(chapters)
       .leftJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
-      .where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId)))
+      .where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt)))
       .orderBy(asc(chapters.editorialPosition));
     return c.json({ chapters: rows });
   });
@@ -162,7 +189,7 @@ export function adminChapterRoutes(deps: AdminChapterDeps): Hono {
     const { workId, chapterId } = c.req.param();
     if (!validId(workId) || !validId(chapterId)) return c.json({ error: 'chapter_not_found' }, 404);
     const [chapter] = await db.select().from(chapters).where(and(
-      eq(chapters.id, chapterId), eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId),
+      eq(chapters.id, chapterId), eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt),
     )).limit(1);
     if (!chapter) return c.json({ error: 'chapter_not_found' }, 404);
     if (!chapter.headRevisionId) return c.json({ error: 'chapter_missing_revision' }, 409);
@@ -212,7 +239,7 @@ export function adminChapterRoutes(deps: AdminChapterDeps): Hono {
         const [work] = await tx.select({ id: works.id }).from(works).where(eq(works.id, workId)).for('update').limit(1);
         if (!work) return { status: 404 as const, error: 'work_not_found' };
         const [chapter] = await tx.select().from(chapters).where(and(
-          eq(chapters.id, chapterId), eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId),
+          eq(chapters.id, chapterId), eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt),
         )).for('update').limit(1);
         if (!chapter) return { status: 404 as const, error: 'chapter_not_found' };
         if (!chapter.headRevisionId) return { status: 409 as const, error: 'chapter_missing_revision' };
@@ -258,7 +285,7 @@ export function adminChapterRoutes(deps: AdminChapterDeps): Hono {
         const [work] = await tx.select({ id: works.id }).from(works).where(eq(works.id, workId)).for('update').limit(1);
         if (!work) return { status: 404 as const, error: 'work_not_found' };
         const [chapter] = await tx.select().from(chapters).where(and(
-          eq(chapters.id, chapterId), eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId),
+          eq(chapters.id, chapterId), eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt),
         )).for('update').limit(1);
         if (!chapter) return { status: 404 as const, error: 'chapter_not_found' };
         if (!chapter.headRevisionId) return { status: 409 as const, error: 'chapter_missing_revision' };
@@ -326,7 +353,7 @@ export function adminChapterRoutes(deps: AdminChapterDeps): Hono {
         if (release) return { status: 409 as const, error: 'published_chapters_cannot_merge' };
         const chapterIds = [chapterId, nextChapterId].sort();
         const locked = await tx.select().from(chapters).where(and(
-          eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId), sql`${chapters.id} = any(${sql.param(chapterIds)}::uuid[])`,
+          eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt), sql`${chapters.id} = any(${sql.param(chapterIds)}::uuid[])`,
         )).orderBy(asc(chapters.id)).for('update');
         const first = locked.find((row) => row.id === chapterId);
         const next = locked.find((row) => row.id === nextChapterId);
@@ -336,7 +363,7 @@ export function adminChapterRoutes(deps: AdminChapterDeps): Hono {
           return { status: 409 as const, error: 'stale_chapter_revision' };
         }
         const [adjacent] = await tx.select({ id: chapters.id }).from(chapters).where(and(
-          eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId),
+          eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt),
           gt(chapters.editorialPosition, first.editorialPosition),
         )).orderBy(asc(chapters.editorialPosition)).limit(1);
         if (adjacent?.id !== nextChapterId || next.volumeId !== first.volumeId) {

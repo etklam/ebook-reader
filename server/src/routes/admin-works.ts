@@ -35,9 +35,25 @@ export function adminWorkRoutes(deps: AdminWorksDeps): Hono<{ Variables: { userI
     const literal = query.replace(/[\\%_]/g, '\\$&');
     const rows = await db.select({ id: works.id, title: works.title, author: works.author,
       visibility: works.visibility, activeReleaseId: works.activeReleaseId })
-      .from(works).where(query ? or(ilike(works.title, `%${literal}%`), ilike(works.author, `%${literal}%`)) : undefined)
+      .from(works).where(and(sql`${works.visibility} <> 'removed'`,
+        query ? or(ilike(works.title, `%${literal}%`), ilike(works.author, `%${literal}%`)) : undefined))
       .orderBy(desc(works.createdAt), desc(works.id)).limit(50);
     return c.json({ works: rows });
+  });
+
+  // Keep revisions and reader references intact; existing public routes hide removed works.
+  // The UPDATE locks the same work row as publishing, so a concurrent publish cannot revive it.
+  app.delete('/api/admin/works/:workId', async (c) => {
+    const workId = routeId(c);
+    if (!UUID_RE.test(workId)) return c.json({ error: 'work_not_found' }, 404);
+    const [work] = await db.update(works).set({ visibility: 'removed', updatedAt: new Date(),
+      editVersion: sql`${works.editVersion} + 1`,
+    }).where(and(eq(works.id, workId), sql`${works.visibility} <> 'removed'`)).returning({ id: works.id });
+    if (!work) {
+      const [removed] = await db.select({ id: works.id }).from(works).where(eq(works.id, workId)).limit(1);
+      if (!removed) return c.json({ error: 'work_not_found' }, 404);
+    }
+    return c.json({ ok: true, workId });
   });
 
   app.patch('/api/admin/works/:workId', async (c) => {
@@ -100,7 +116,7 @@ export function adminWorkRoutes(deps: AdminWorksDeps): Hono<{ Variables: { userI
       revisionId: chapters.headRevisionId,
     }).from(chapters)
       .leftJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
-      .where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId)))
+      .where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt)))
       .orderBy(asc(chapters.editorialPosition));
     const [release] = await db.select({ id: workReleases.id })
       .from(workReleases).where(eq(workReleases.workId, workId))
@@ -121,7 +137,7 @@ export function adminWorkRoutes(deps: AdminWorksDeps): Hono<{ Variables: { userI
       createdAt: chapterRevisions.createdAt,
     }).from(chapters)
       .innerJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
-      .where(sql`${chapters.id} = ${chapterId} and ${chapters.workId} = ${workId} and ${chapters.mergedIntoChapterId} is null`)
+      .where(sql`${chapters.id} = ${chapterId} and ${chapters.workId} = ${workId} and ${chapters.mergedIntoChapterId} is null and ${chapters.deletedAt} is null`)
       .limit(1);
     const row = rows[0];
     if (!row) return c.json({ error: 'chapter_not_found' }, 404);

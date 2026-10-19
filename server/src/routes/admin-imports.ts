@@ -264,7 +264,7 @@ export function adminImportRoutes(deps: ImportRoutesDeps): Hono<{ Variables: { u
     if (!job?.workId) return c.json({ error: 'not_found' }, 404);
     const q = (c.req.query('q') ?? '').trim().slice(0, 100);
     const rows = await db.select({ id: chapters.id, labelRaw: chapters.labelRaw, position: chapters.editorialPosition }).from(chapters)
-      .where(and(eq(chapters.workId, job.workId), isNull(chapters.mergedIntoChapterId), q ? ilike(chapters.labelRaw, `%${q}%`) : undefined))
+      .where(and(eq(chapters.workId, job.workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt), q ? ilike(chapters.labelRaw, `%${q}%`) : undefined))
       .orderBy(asc(chapters.editorialPosition)).limit(41);
     return c.json({ chapters: rows.slice(0, 40), hasMore: rows.length > 40 });
   });
@@ -286,7 +286,7 @@ export function adminImportRoutes(deps: ImportRoutesDeps): Hono<{ Variables: { u
       if (itemId && !item) return c.json({ error: 'not_found' }, 404);
       const [site] = chapterId ? await tx.select({ id: chapters.id, labelRaw: chapters.labelRaw, title: chapterRevisions.title, contentKey: chapterRevisions.contentKey, revisionId: chapterRevisions.id }).from(chapters)
         .leftJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
-        .where(and(eq(chapters.id, chapterId), eq(chapters.workId, job.workId!), isNull(chapters.mergedIntoChapterId))).limit(1) : [];
+        .where(and(eq(chapters.id, chapterId), eq(chapters.workId, job.workId!), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt))).limit(1) : [];
       if (chapterId && !site) return c.json({ error: 'not_found' }, 404);
       const offset = Math.min(100_000_000, Math.max(0, Math.floor(Number(c.req.query('offset')) || 0)));
       const chunk = async (key: string | null | undefined) => {

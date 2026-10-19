@@ -68,7 +68,7 @@ export function searchExportRoutes(deps: SearchExportRoutesDeps): Hono<{ Variabl
         contentKey: chapterRevisions.contentKey,
       }).from(chapters)
         .innerJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
-        .where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId))).orderBy(asc(chapters.editorialPosition))
+        .where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt))).orderBy(asc(chapters.editorialPosition))
       : work.activeReleaseId
         ? await db.select({
           chapterId: releaseItems.chapterId, revisionId: releaseItems.revisionId,
@@ -174,7 +174,7 @@ export function searchExportRoutes(deps: SearchExportRoutesDeps): Hono<{ Variabl
         contentKey: chapterRevisions.contentKey,
       }).from(chapters)
         .leftJoin(chapterRevisions, eq(chapterRevisions.id, chapters.headRevisionId))
-        .where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId))).orderBy(asc(chapters.editorialPosition));
+        .where(and(eq(chapters.workId, workId), isNull(chapters.mergedIntoChapterId), isNull(chapters.deletedAt))).orderBy(asc(chapters.editorialPosition));
     } else {
       const [release] = await db.select({ id: workReleases.id, version: workReleases.version, publishedAt: workReleases.publishedAt })
         .from(workReleases).where(sql`${workReleases.id} = ${selection} and ${workReleases.workId} = ${workId}`).limit(1);
