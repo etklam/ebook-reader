@@ -8,6 +8,8 @@
 
 2026-10-15 完成 10 張 AFK 改善票：長目錄定位／搜尋、書籤備註、書庫排除標籤／隱藏已讀、朗讀段落續播、逐章匯入核對，以及預載／捲動／搜尋優化。[Tickets 與驗證紀錄](docs/tickets/reader-improvements/README.md)；[效能比較與限制](docs/perf/reader-improvements-2026-10-15.md)。離線暫存與同步策略兩張 HITL 票仍待決策；真機 L3 未執行。
 
+開發環境、驗證及提交流程見 [Development guide](docs/development-guide.md)。**CI/CD 只在 Forgejo 執行**；GitHub 保留程式碼同步副本，不執行 workflows。
+
 ## 本機啟動（M1+M2）
 
 ```bash

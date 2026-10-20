@@ -5,24 +5,24 @@ Production runs on g2 (K3s) at `82.22.63.196`, in namespace `ebook-reader`, at `
 ## Prerequisites
 
 - Push access to the Forgejo repository `etklam/ebook-reader`, branch `main`.
-- Forgejo Actions runner labelled `hk` is online.
+- Forgejo Actions runner labelled `hk` is online, uses the Docker backend, and supports job containers and service containers. Its `[container].network` must be empty so each validation job can create an isolated network.
 - Repository Actions secrets exist: `REGISTRY_TOKEN` (Forgejo package read/write) and `G2_SSH_KEY` (deploy SSH key). Secret values must not be added to this repository or printed in logs.
 - g2 already has the `ebook-reader` database credentials and PostgreSQL TLS Secret provisioned. The database and app data use persistent volume claims.
 - DNS A record `book.7182818.xyz → 82.22.63.196` exists. ExternalDNS is not relied on to create this record; verify it manually if the hostname changes or stops resolving.
 
 ## Release
 
-1. Run the required project checks locally or in the CI validation workflow.
+1. Follow the [Development guide](development-guide.md) for local checks. Forgejo is the only CI/CD platform; GitHub stores a synchronized copy of the code and has no workflows.
 2. Commit application and deployment changes, then push to `main` on Forgejo (`origin`):
 
    ```bash
    git push origin main
    ```
 
-   `.forgejo/workflows/deploy.yml` runs on `main` pushes. Documentation-only changes are ignored (`docs/**`, Markdown files, and `.github/**`).
-3. The release job builds API and web images for `linux/amd64`, tags them with the full commit SHA, pushes them to the Forgejo Container Registry, and deploys those exact tags to g2.
+   `.forgejo/workflows/deploy.yml` runs validation on code pushes to any branch and on Forgejo pull requests. Pushes containing only `docs/**`, root Markdown files, or `.github/**` are ignored. The `release` job runs only for pushes to `main`, after `l1`, `l2-db`, and `l2-browser` all succeed. Pull requests and other branches never publish images or deploy.
+3. After all three validation jobs succeed, the release job builds API and web images for `linux/amd64`, tags them with the full commit SHA, pushes them to the Forgejo Container Registry, and deploys those exact tags to g2.
 4. The job applies the namespace, PVC and PostgreSQL manifests; waits for PostgreSQL; runs the migration Job; applies API, worker, web and Ingress resources; waits for the deployments and certificate; then checks the home page, public catalogue API, and unauthenticated protected API.
-5. Treat the release as successful only when the workflow prints `Release verified: <SHA>...` and finishes successfully. The protected API smoke test is expected to return HTTP 401 when no session is supplied.
+5. Production release jobs share a concurrency group and are not cancelled midway through migrations or rollout. Treat the release as successful only when the workflow prints `Release verified: <SHA>...` and finishes successfully. The protected API smoke test is expected to return HTTP 401 when no session is supplied.
 
 The workflow uses the static Docker CLI. As of `16bfa13`-equivalent changes
 in the diary-v3 runner setup, that CLI may be paired with a buildx plugin;
@@ -46,6 +46,8 @@ Expected: API, DB, web and worker deployments are ready; `ebook-migrate` complet
 
 ## Troubleshooting
 
+- **Validation jobs cannot resolve `db` or service databases fail to start:** verify the `hk` runner uses the Docker backend with `[container].network` empty. Tests connect to the service hostname `db:5432`; do not publish a fixed host port or point CI at the production database.
+- **Browser acceptance fails:** open the `l2-browser` log and download its `playwright-report` artifact from Forgejo Actions. It includes the HTML report, test results, and API/worker/web logs. Artifact upload uses the Forgejo-compatible v3 protocol.
 - **Build says BuildKit is enabled but buildx is missing:** the static CLI lacks buildx. Remove `DOCKER_BUILDKIT=1`; do not assume `docker buildx` exists.
 - **API pod CrashLoopBackOff with `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX: TypeScript parameter property is not supported in strip-only mode` (2026-10-16, fixed in `f4be148`):** the server runs TypeScript directly with Node's strip-only mode, which rejects constructor parameter properties (`constructor(readonly x: string)`). The web bundle (Vite) and the migrate job are unaffected, so a deploy can pass smoke while the API crashes at startup. Rule: inside `server/src`, declare fields explicitly instead of using `readonly`/`public`/`private` parameter properties; reproduce locally with `node --experimental-strip-types`.
 - **PostgreSQL cannot read `/tmp/pg-tls/server.crt`:** the DB startup command must make `/tmp/pg-tls` traversable by `postgres` and transfer ownership of the copied certificate files and directory. The production manifest uses mode `0755` and `chown -R postgres:postgres`.
