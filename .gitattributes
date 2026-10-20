@@ -1,0 +1,25 @@
+# Keep text files byte-identical on Windows, WSL and Linux CI. Without this,
+# Windows Git (core.autocrlf=true) checks files out as CRLF while WSL/Linux
+# see every file as modified, and CRLF endings can leak into commits.
+* text=auto eol=lf
+
+# Binary assets must never be normalised or diffed as text.
+*.bcmap binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tgz binary
+*.jar binary
+*.mp3 binary
+*.mp4 binary
+*.webm binary
+*.wasm binary
