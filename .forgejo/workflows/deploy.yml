@@ -1,16 +1,175 @@
-name: deploy
+# L1 (code pushes and pull requests): typecheck + unit tests + web build (dev-plan §22A).
+# L2 (stage gate): DB-01..03 + API E2E + browser acceptance against a real
+#                  PostgreSQL 18 service container.
+#
+# L3 (real device) is NOT here and cannot be: docs/adr/l3-device-checklist.md is
+# a manual gate on physical iOS Safari and Android Chrome. Playwright passing
+# this workflow is not L3 (§22A).
+name: ci-cd
 
 on:
   push:
-    branches: [main]
     paths-ignore:
       - "docs/**"
       - "*.md"
       - ".github/**"
+  pull_request:
+
+# Validation runs in fresh job containers on the existing Forgejo Docker runner.
+# Service databases are job-scoped and never bind the runner host's port 5432.
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  release:
+  l1:
     runs-on: hk
+    container:
+      image: node:26-bookworm-slim@sha256:3ffc19ea878019d9e9ae8971732ad4a03cda44f167107173174b60ed7c65bed3
+    timeout-minutes: 30
+    steps:
+      - name: Install CI tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git postgresql-client
+          npm install --global pnpm@10.32.1
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+
+  l2-db:
+    runs-on: hk
+    container:
+      image: node:26-bookworm-slim@sha256:3ffc19ea878019d9e9ae8971732ad4a03cda44f167107173174b60ed7c65bed3
+    timeout-minutes: 30
+    services:
+      db:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ebook_dev
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MIGRATOR_DATABASE_URL: postgres://ebook_migrator:ci-migrator@db:5432/ebook_dev
+      DATABASE_URL: postgres://ebook_api:ci-api@db:5432/ebook_dev
+      WORKER_DATABASE_URL: postgres://ebook_worker:ci-worker@db:5432/ebook_dev
+      DB_TLS: disable
+    steps:
+      - name: Install CI tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git postgresql-client
+          npm install --global pnpm@10.32.1
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - run: pnpm install --frozen-lockfile
+      - name: Bootstrap roles and schemas
+        working-directory: server
+        run: psql postgres://postgres:ci@db:5432/ebook_dev -f db/init-ci.sql
+      - name: Migrate + grants + verify (DB-01..03)
+        working-directory: server
+        run: |
+          pnpm db:migrate
+          pnpm db:verify
+      - name: M2 import E2E (IMP acceptance)
+        working-directory: server
+        # scripts use --env-file-if-exists=.env; job env supplies the URLs directly
+        run: pnpm test:e2e
+
+  # Browser acceptance (M5/M6). Previously this ran only when someone
+  # remembered to, so UI regressions could reach main unnoticed. It needs the
+  # live stack because the specs self-seed through the real import pipeline.
+  l2-browser:
+    runs-on: hk
+    container:
+      image: node:26-bookworm-slim@sha256:3ffc19ea878019d9e9ae8971732ad4a03cda44f167107173174b60ed7c65bed3
+    timeout-minutes: 30
+    services:
+      db:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ebook_dev
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MIGRATOR_DATABASE_URL: postgres://ebook_migrator:ci-migrator@db:5432/ebook_dev
+      DATABASE_URL: postgres://ebook_api:ci-api@db:5432/ebook_dev
+      WORKER_DATABASE_URL: postgres://ebook_worker:ci-worker@db:5432/ebook_dev
+      DB_TLS: disable
+      STORAGE_ROOT: ./storage
+      # the vite proxy rewrites Host, so the API cannot match host against
+      # origin and needs the dev origin allowlisted (see apps/web/vite.config.ts)
+      CSRF_ALLOWED_ORIGINS: http://localhost:5173
+      PLAYWRIGHT_HTML_OPEN: never
+    steps:
+      - name: Install CI tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git postgresql-client
+          npm install --global pnpm@10.32.1
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - run: pnpm install --frozen-lockfile
+      - name: Bootstrap roles and schemas
+        working-directory: server
+        run: psql postgres://postgres:ci@db:5432/ebook_dev -f db/init-ci.sql
+      - name: Migrate + grants
+        working-directory: server
+        run: pnpm db:migrate
+      - name: Install Playwright browser
+        # the config declares no projects, so only chromium is used
+        run: pnpm --filter web exec playwright install --with-deps chromium
+      - name: Start API, worker and web
+        run: |
+          mkdir -p /tmp/logs
+          pnpm dev:api    > /tmp/logs/api.log 2>&1 &
+          pnpm dev:worker > /tmp/logs/worker.log 2>&1 &
+          pnpm dev:web    > /tmp/logs/web.log 2>&1 &
+          # readiness, not a fixed sleep: a slow runner must not fail the job
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/readyz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/readyz || { echo '--- api ---'; cat /tmp/logs/api.log; exit 1; }
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:5173/ >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null http://localhost:5173/ || { echo '--- web ---'; cat /tmp/logs/web.log; exit 1; }
+      - name: Browser acceptance (READ/CAT/MEM UI)
+        run: pnpm --filter web exec playwright test --reporter=line,html
+      - name: Service logs on failure
+        if: failure()
+        run: |
+          echo '--- api ---';    tail -200 /tmp/logs/api.log    || true
+          echo '--- worker ---'; tail -200 /tmp/logs/worker.log || true
+          echo '--- web ---';    tail -200 /tmp/logs/web.log    || true
+      # Forgejo supports the v3 artifact protocol; GitHub's unpatched v4 does not.
+      - uses: https://code.forgejo.org/actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+            /tmp/logs
+          if-no-files-found: ignore
+
+  release:
+    # Only validated pushes to Forgejo main can publish images or deploy.
+    needs: [l1, l2-db, l2-browser]
+    if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
+    runs-on: hk
+    concurrency:
+      group: ebook-reader-production
+      cancel-in-progress: false
     timeout-minutes: 45
     env:
       REGISTRY: git.913555.xyz
@@ -20,7 +179,7 @@ jobs:
       G2_USER: root
       REGISTRY_USER: etklam
     steps:
-      - uses: actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@v4
 
       - name: Install Docker CLI
         run: |
@@ -38,7 +197,7 @@ jobs:
           FORGEJO_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
-          SHA="${GITHUB_SHA}"
+          SHA="${{ forgejo.sha }}"
           docker pull "$API_IMAGE:latest" || true
           docker pull "$WEB_IMAGE:latest" || true
           # static Docker CLI has no buildx: legacy builder, no DOCKER_BUILDKIT
@@ -69,7 +228,7 @@ jobs:
           FORGEJO_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
-          SHA="${GITHUB_SHA}"
+          SHA="${{ forgejo.sha }}"
           for image in "$API_IMAGE:$SHA" "$WEB_IMAGE:$SHA"; do
             printf '%s\n' "$FORGEJO_TOKEN" | ssh -i ~/.ssh/id_ed25519 "$G2_USER@$G2_HOST" \
               "IFS= read -r token; k3s ctr images pull --platform linux/amd64 --user '$REGISTRY_USER:'\$token '$image' >/dev/null"
