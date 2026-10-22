@@ -12,9 +12,11 @@
 
 ## 本機開發
 
-CI 使用與 production Dockerfile 相同、以 digest 固定的 Node.js 26 Bookworm image，以及 pnpm `10.32.1`。本機建議使用相同 Node.js major 及 pnpm 版本，依現有 lockfile 安裝：
+CI 使用與 production Dockerfile 相同、以 digest 固定的 Node.js `26.12.1` Bookworm image，以及 pnpm `10.32.1`。本機 Node.js 版本由根目錄 `.nvmrc` 固定，請使用相同版本及 pnpm 版本，依現有 lockfile 安裝：
 
 ```bash
+nvm install
+nvm use
 pnpm install --frozen-lockfile
 cp server/.env.example server/.env  # 首次設定；已有 .env 時不要覆寫
 pnpm db:up
