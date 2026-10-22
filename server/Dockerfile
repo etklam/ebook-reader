@@ -12,6 +12,9 @@ RUN pnpm install --frozen-lockfile --prod=false --filter server...
 
 COPY server ./server
 COPY m0/fixtures ./m0/fixtures
+COPY apps/web/src/lib/slug.ts ./apps/web/src/lib/slug.ts
+COPY ops/nginx/ebook.conf ./ops/nginx/ebook.conf
+COPY ops/k8s/production ./ops/k8s/production
 RUN pnpm --filter server typecheck && pnpm --filter server test
 WORKDIR /app/server
 EXPOSE 3000
