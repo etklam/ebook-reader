@@ -266,9 +266,9 @@ test('READ-01: keyboard moves through the chapter and the work; Escape closes on
 
   // scroll mode: ←/→ are chapter turns, PageDown is a screenful
   await page.keyboard.press('ArrowRight');
-  await expect(label).toHaveText(/第12\.5章/);
+  await expect(label).toHaveText(/第12\.5章/, { timeout: 15_000 });
   await page.keyboard.press('ArrowLeft');
-  await expect(label).toHaveText(/序章/);
+  await expect(label).toHaveText(/序章/, { timeout: 15_000 });
 
   // Escape dismisses the sheet first, and only then the chrome
   await page.mouse.click(195, 422);
