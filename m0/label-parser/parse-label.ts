@@ -33,6 +33,8 @@ function normalizeDigits(s: string): string {
 
 // Chinese numeral -> arabic string (handles up to 千; enough for chapter labels)
 const CN_DIGIT: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+// 廿/卅 are whole tens, not digit+unit: 廿一 is 21, never 20×1.
+const CN_TENS: Record<string, number> = { 廿: 20, 卅: 30 };
 
 function chineseNumeralToArabic(s: string): number | null {
   if (!s) return null;
@@ -42,6 +44,9 @@ function chineseNumeralToArabic(s: string): number | null {
   for (const ch of s) {
     if (ch in CN_DIGIT) {
       digit = CN_DIGIT[ch];
+    } else if (ch in CN_TENS) {
+      section += CN_TENS[ch];
+      digit = null;
     } else if (ch === '十') {
       section += (digit ?? 1) * 10;
       digit = null;
@@ -105,12 +110,20 @@ export function parseLabel(raw: string): ParsedLabel {
   // 第N章 family: 第12.5.1章, 第012章, 第十二章, 第1章 潛在標題, or bare "12.5"
   let numSrc: string | null = null;
   const withMarker = bare.match(/^(?:第|卷)(.+?)(?:章|回|幕|部|節|节|集|卷)(?:.+)?$/);
+  // Bracketed bare numbers. Full-width/half-width parentheses are accepted in
+  // either combination because mixing them is a common OCR/typing artifact;
+  // crossing bracket TYPES (（二】) is not a form anyone writes on purpose.
+  const bracketed = bare.match(/^(?:[（(]([^（）()]+)[）)]|【([^【】]+)】|〔([^〔〕]+)〕)$/);
   if (withMarker) {
     numSrc = withMarker[1];
-  } else if (/^(?:（[^（）]+）|\([^()]+\))$/.test(bare)) {
-    numSrc = bare.slice(1, -1);
+  } else if (bracketed) {
+    numSrc = bracketed[1] ?? bracketed[2] ?? bracketed[3];
   } else if (/^[\d.]+$/.test(bare)) {
     numSrc = bare; // bare number label
+  } else if (bare.endsWith('、')) {
+    numSrc = bare.slice(0, -1); // 一、 二、
+  } else if (bare.startsWith('其') && bare.length > 1) {
+    numSrc = bare.slice(1); // 其一 其二
   }
 
   if (numSrc !== null) {
@@ -127,7 +140,7 @@ function parseNumericParts(src: string): string[] | null {
   if (/^\d+(?:\.\d+)*$/.test(s) && s.length > 0 && !s.startsWith('.') && !s.endsWith('.')) {
     return s.split('.');
   }
-  if (/^[零〇一二两兩三四五六七八九十百千]+$/.test(s)) {
+  if (/^[零〇一二两兩三四五六七八九十廿卅百千]+$/.test(s)) {
     const n = chineseNumeralToArabic(s);
     if (n !== null) return [String(n)];
   }

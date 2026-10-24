@@ -24,6 +24,50 @@ test('parenthesized prose and nonnumeric parentheses are kept as content', () =>
   assert.ok(chapters[0].body.includes('（註）這是補充。'));
 });
 
+// A source numbering its chapters 【一】【二】【三】 used to parse as one
+// book-length chapter: nothing in HEADING_RE matched, and the bare-title
+// fallback only switches on after a marker heading has been seen.
+test('bare-number heading families split a document that uses no other marker', () => {
+  for (const [a, b, c] of [['【一】', '【二】', '【三】'], ['〔一〕', '〔二〕', '〔三〕'],
+    ['一、', '二、', '三、'], ['其一', '其二', '其三'], ['（ 一 ）', '（ 二 ）', '（ 三 ）'],
+    ['（一)', '（二)', '（三)'], ['(一）', '(二）', '(三）']]) {
+    const { chapters } = parseTxt(`${a}\n正文一。\n\n${b}\n正文二。\n\n${c}\n正文三。`);
+    assert.deepEqual(chapters.map((ch) => [ch.labelRaw, ch.body]),
+      [[a, '正文一。'], [b, '正文二。'], [c, '正文三。']], `${a} should split`);
+    // a numeric key is what lets a later re-import match these by number
+    assert.deepEqual(chapters.map((ch) => ch.parsed?.key), ['ch:1', 'ch:2', 'ch:3']);
+  }
+});
+
+test('a lone bare-number line in a 第N章 document stays prose', () => {
+  // one occurrence proves nothing: this is an enumeration, not a chapter, and
+  // it has no sentence-ending punctuation to give it away
+  const { chapters } = parseTxt('第一章 起\n前文\n（二）這是正文列舉\n後文');
+  assert.equal(chapters.length, 1);
+  assert.equal(chapters[0].labelRaw, '第一章');
+  assert.ok(chapters[0].body.includes('（二）這是正文列舉'));
+});
+
+test('bare-number headings must increase: a repeated number is not a new chapter', () => {
+  const { chapters } = parseTxt('（一）\n正文一。\n\n（二）\n正文二。\n\n（二）又說一次\n同章續寫。');
+  assert.deepEqual(chapters.map((ch) => ch.labelRaw), ['（一）', '（二）']);
+  assert.ok(chapters[1].body.includes('（二）又說一次'));
+});
+
+test('一、 needs to start a block; mid-paragraph it stays prose', () => {
+  const text = '一、\n正文一。\n他說三、四月間的事都忘了\n\n二、\n正文二。';
+  const { chapters } = parseTxt(text);
+  assert.deepEqual(chapters.map((ch) => ch.labelRaw), ['一、', '二、']);
+  assert.ok(chapters[0].body.includes('三、四月間的事'));
+});
+
+test('an explicit chapterPattern suppresses the bare-number guessing', () => {
+  const { chapters } = parseTxt('CHAPTER 1 Opening\n（一）這行不是章\n（二）這行也不是\nCHAPTER 2 Ending\n結尾。',
+    { chapterPattern: '^CHAPTER\\s+(\\d+)\\s*' });
+  assert.deepEqual(chapters.map((ch) => ch.labelRaw), ['1', '2']);
+  assert.ok(chapters[0].body.includes('（一）這行不是章'));
+});
+
 test('base-180: exactly 180 ordered chapters with raw labels', () => {
   const text = readFileSync(join(FIXTURES, 'base-180.txt'), 'utf8');
   const { chapters, warnings } = parseTxt(text);
