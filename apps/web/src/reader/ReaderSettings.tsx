@@ -8,6 +8,8 @@ import type { ConversionMode } from './conversion.ts';
 import { LanguageChips } from '../i18n/I18nRoot.tsx';
 import { t } from '../i18n/translate.ts';
 import type { AdvanceSpeed } from './auto-advance.ts';
+import { ZONE_LAYOUTS, zoneCount, type ZoneLayout } from './pagination.ts';
+import { DEFAULT_ACTIONS, TAP_ACTIONS, TAP_ACTION_LABEL, type TapAction } from './tap-actions.ts';
 
 // Chip labels stay in the source language in these tables and are translated
 // where they are rendered: a module-level constant runs once at import, so a
@@ -41,6 +43,12 @@ const AUTO_SPEEDS: Array<{ v: AdvanceSpeed; label: string }> = [
   { v: 3, label: '快' },
   { v: 4, label: '最快' },
 ];
+
+const TAP_LAYOUT_LABEL: Record<ZoneLayout, string> = {
+  '1x3': '三橫帶（預設）',
+  '2x2': '四格',
+  '3x3': '九宮格',
+};
 
 const CONVERSIONS: Array<{ id: ConversionMode; label: string }> = [
   { id: 'original', label: '原文' },
@@ -167,6 +175,53 @@ export function ReaderSettingsPanel({
         settings.autoContinue,
         (autoContinue) => onChange({ autoContinue }),
       ), t('捲到章末'))}
+
+      {/* Paginated only, like the zones themselves: in scroll mode a tap that
+          turns a page fights the scrolling, so there is nothing to bind. */}
+      {settings.mode === 'paginated' && (
+        <>
+          {row(t('觸控區域'), group(
+            (Object.keys(ZONE_LAYOUTS) as ZoneLayout[]).map((id) => ({ value: id, label: TAP_LAYOUT_LABEL[id] })),
+            settings.tapLayout,
+            // changing the grid re-bases the bindings on that grid's defaults;
+            // carrying nine actions onto four cells would silently drop five
+            (tapLayout) => onChange({ tapLayout, tapActions: DEFAULT_ACTIONS[tapLayout] }),
+          ), t('觸控區域'))}
+
+          <div className="setting-row zone-row">
+            <span className="setting-label">{t('各區動作')}</span>
+            <div className="setting-control zone-editor-wrap">
+              {/* The grid is the preview: each cell sits where it will be on
+                  the page and says what it does, so nobody has to tap the
+                  reader to find out — and tapping here never performs it. */}
+              <div className="zone-editor"
+                style={{ gridTemplateColumns: `repeat(${ZONE_LAYOUTS[settings.tapLayout].cols}, 1fr)` }}>
+                {Array.from({ length: zoneCount(settings.tapLayout) }, (_, cell) => (
+                  <label key={cell} className="zone-cell">
+                    <span className="zone-cell-no">{cell + 1}</span>
+                    <select className="input" aria-label={t('第 {n} 區的動作', { n: cell + 1 })}
+                      value={settings.tapActions[cell] ?? 'chrome'}
+                      onChange={(e) => {
+                        const next = [...settings.tapActions];
+                        next[cell] = e.target.value as TapAction;
+                        onChange({ tapActions: next });
+                      }}>
+                      {TAP_ACTIONS.map((action) => (
+                        <option key={action} value={action}>{t(TAP_ACTION_LABEL[action])}</option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
+              <button className="chip"
+                onClick={() => onChange({ tapActions: DEFAULT_ACTIONS[settings.tapLayout] })}>
+                {t('回復預設')}
+              </button>
+              <span className="hint">{t('這些區域只在分頁模式生效。鍵盤的方向鍵、空白鍵與 PageUp／PageDown 不受影響。')}</span>
+            </div>
+          </div>
+        </>
+      )}
 
       {row(t('暖色濾鏡'), group(
         WARMTHS.map((w) => ({ value: w.v, label: w.label })),

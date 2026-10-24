@@ -19,7 +19,8 @@ import {
   captureColumnParagraph, captureScrollIndex, columnCount,
   columnIndexForParagraph, fractionInParagraph, restoreScrollPosition, PARA_ATTR,
 } from './position.ts';
-import { clampPage, debounce, tapZone } from './pagination.ts';
+import { clampPage, debounce, zoneAt } from './pagination.ts';
+import type { TapAction } from './tap-actions.ts';
 import { ReaderContent } from './ReaderContent.tsx';
 import { ReaderToolbar } from './ReaderToolbar.tsx';
 import { BottomSheet } from './BottomSheet.tsx';
@@ -673,6 +674,41 @@ export function ReaderPage({ workRef, initialChapterRef, initialHash = '' }: { w
     };
   }, [auto.running, auto.paused]);
 
+  // Shared by the toolbar and by a tap zone bound to 書籤, so the two cannot
+  // drift into meaning different things — including the guards, which a second
+  // copy would be the obvious place to forget.
+  const addBookmark = useCallback(() => {
+    if (!work || !chapter) return;
+    if (!member?.isMember) { setSyncNotice(t('登入後可加入書籤')); return; }
+    if (bookmarkSaving) return;
+    const p = captureAnchor();
+    if (!p) return;
+    setBookmarkSaving(true);
+    void createBookmark({ workId: work.id, chapterId: p.chapterId, revisionId: p.revisionId, paragraphIndex: p.paragraphIndex })
+      .then(({ id }) => { setBookmarkId(id); setSheet('bookmark'); setSyncNotice(t('已加入書籤')); })
+      .catch(() => setSyncNotice(t('書籤加入失敗')))
+      .finally(() => setBookmarkSaving(false));
+  }, [work, chapter, member, bookmarkSaving, captureAnchor]);
+
+  // Run a zone's binding. Returns false for anything that should fall through
+  // to the chrome toggle, so 'none' and an unknown binding both behave like
+  // the untouched middle of the page rather than swallowing the tap.
+  const runTapAction = useCallback((action: TapAction): boolean => {
+    switch (action) {
+      case 'nextPage': stepPage(1); return true;
+      case 'prevPage': stepPage(-1); return true;
+      case 'nextChapter': goChapter(chapter?.nextChapterId ?? null); return true;
+      case 'prevChapter': goChapter(chapter?.previousChapterId ?? null); return true;
+      case 'toc': setSheet('toc'); return true;
+      case 'settings': setSheet('settings'); return true;
+      case 'bookmark': addBookmark(); return true;
+      case 'speech': if (speech.speaking) speech.stop(); else speech.speakCurrent(); return true;
+      case 'chrome':
+      case 'none':
+      default: return false;
+    }
+  }, [stepPage, goChapter, chapter, speech, addBookmark]);
+
   // --- tap zones (conservative, §9.2) ----------------------------------------------
   // The bands run across the page, not down its sides: the thumb holding a
   // phone rests at the bottom, so the common action — forward — gets the
@@ -688,15 +724,18 @@ export function ReaderPage({ workRef, initialChapterRef, initialHash = '' }: { w
     if (window.getSelection()?.toString()) return;
     if ((e.target as HTMLElement).closest('a, button')) return;
     if (settings.mode === 'paginated') {
-      // the viewport's own box, not the window: with the chrome open the bands
+      // the viewport's own box, not the window: with the chrome open the zones
       // still belong to the page the reader can see
       const box = e.currentTarget.getBoundingClientRect();
-      const zone = tapZone(e.clientY - box.top, box.height);
-      if (zone === 'next') { stepPage(1); return; }
-      if (zone === 'prev') { stepPage(-1); return; }
+      const zone = zoneAt(e.clientX - box.left, e.clientY - box.top,
+        box.width, box.height, settings.tapLayout);
+      // An unmeasurable box means the chapter has not laid itself out yet.
+      // Falling through to the chrome is the conservative answer: a page turn
+      // moves the saved position and a chrome toggle does not.
+      if (zone !== null && runTapAction(settings.tapActions[zone] ?? 'chrome')) return;
     }
     setChromeVisible((v) => !v);
-  }, [settings.mode, stepPage]);
+  }, [settings.mode, settings.tapLayout, settings.tapActions, runTapAction]);
 
   // --- swipe to turn the page (touch, paginated only, §9.2) ------------------------
   // Mouse pointers are excluded outright so a drag-select on desktop can never
@@ -899,17 +938,7 @@ export function ReaderPage({ workRef, initialChapterRef, initialHash = '' }: { w
         onSettings={() => setSheet('settings')}
         onBack={() => navigate(workPath(work))}
         onConversion={(conversion) => changeLayout({ conversion })}
-        onBookmark={() => {
-          if (!member?.isMember) { setSyncNotice(t('登入後可加入書籤')); return; }
-          if (bookmarkSaving) return;
-          const p = captureAnchor();
-          if (!p) return;
-          setBookmarkSaving(true);
-          void createBookmark({ workId: work.id, chapterId: p.chapterId, revisionId: p.revisionId, paragraphIndex: p.paragraphIndex })
-            .then(({ id }) => { setBookmarkId(id); setSheet('bookmark'); setSyncNotice(t('已加入書籤')); })
-            .catch(() => setSyncNotice(t('書籤加入失敗')))
-            .finally(() => setBookmarkSaving(false));
-        }}
+        onBookmark={addBookmark}
       />
 
       <BottomSheet open={sheet === 'toc'} title={t('目錄（{n} 章）', { n: count(work.chapterCount) })} onClose={() => setSheet(null)}>

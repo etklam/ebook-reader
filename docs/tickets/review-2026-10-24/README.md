@@ -35,7 +35,7 @@
 | RV-014 | [自動滾動與自動翻頁](RV-014-auto-scroll.md) | 功能 | 不適用 | P2 | 中 | AFK | **implemented-local** |
 | RV-015 | [劃線、筆記標籤與筆記匯出](RV-015-highlights-notes-export.md) | 功能 | 不適用 | P2 | 大 | HITL | open |
 | RV-016 | [藍光濾鏡與定時切換主題](RV-016-eye-comfort.md) | 功能 | 不適用 | P3 | 小至中 | AFK | **implemented-local** |
-| RV-017 | [可自訂的觸控區域](RV-017-custom-tap-zones.md) | 功能 | 不適用 | P3 | 中 | HITL | open |
+| RV-017 | [可自訂的觸控區域](RV-017-custom-tap-zones.md) | 功能 | 不適用 | P3 | 中 | HITL | **implemented-local** |
 | RV-018 | [PWA：可安裝、app shell 與 service worker](RV-018-pwa.md) | 平台 | 不適用 | P2 | 中 | AFK | **implemented-local** |
 
 ## 建議執行次序
