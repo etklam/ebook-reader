@@ -10,6 +10,13 @@ test('proxy trust defaults closed and production supplies a single sanitized IP 
   assert.throws(() => loadApiConfig({ ...env, TRUST_PROXY: 'ture' }));
   const api = readFileSync(new URL('../../../ops/k8s/production/03-api-worker.yaml', import.meta.url), 'utf8');
   assert.match(api, /name: TRUST_PROXY\s+value: "true"/);
+  // Without SITE_ORIGIN, robots.txt and every sitemap fall back to the request
+  // Host (sitemap.ts origin()). nginx passes the client's Host through and
+  // `server_name _` accepts any, so a forged Host would be reflected into a
+  // response cached for an hour. The fallback is wanted in dev; production
+  // supplying the real origin is what this line keeps from being removed.
+  assert.match(api, /name: SITE_ORIGIN\s+value: "?https:\/\/[^"\s]+"?/,
+    'production must pin SITE_ORIGIN to an absolute https origin');
   const nginx = readFileSync(new URL('../../../ops/nginx/ebook.conf', import.meta.url), 'utf8');
   assert.ok(!nginx.includes('$proxy_add_x_forwarded_for'));
   assert.match(nginx, /proxy_set_header X-Forwarded-For \$remote_addr;/);

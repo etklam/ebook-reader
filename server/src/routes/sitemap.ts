@@ -79,8 +79,11 @@ export function sitemapRoutes(deps: SitemapDeps): Hono {
     const body = [
       'User-agent: *',
       'Allow: /',
+      // Prefixes, deliberately without a trailing slash: `/me/` would leave
+      // `/me` itself crawlable, and robots.txt matching is longest-prefix,
+      // not path-segment, so one spelling for all of them is the honest one.
       'Disallow: /admin',
-      'Disallow: /me/',
+      'Disallow: /me',
       'Disallow: /login',
       'Disallow: /register',
       'Disallow: /api/',
@@ -105,8 +108,16 @@ export function sitemapRoutes(deps: SitemapDeps): Hono {
           join app.works w on w.id = r.work_id and w.active_release_id = ri.release_id
           where w.visibility = 'public') as chapters
     `)).rows as unknown as Array<{ works: number; chapters: number }>;
-    // No rows means no page: the schema requires a urlset to hold at least one
-    // <url>, so advertising an empty page would hand a crawler invalid XML.
+    // No rows means no page. An empty <urlset> is in fact schema-valid, and a
+    // direct request for a page past the end still answers 200 with one (a
+    // crawler holding a stale index should not get an error) — the reason not
+    // to ADVERTISE one is that it spends a crawler's request on nothing.
+    //
+    // These counts stay in step with the paged queries below without repeating
+    // their joins: release_items.chapter_id and .revision_id are both NOT NULL
+    // with `on delete no action` FKs (0004_m6.sql:131), so every counted row
+    // has exactly one chapter and one revision to join to. If those FKs ever
+    // relax, the counts and the pages can disagree and a tail page goes empty.
     const pages = (kind: string, total: number) => Array.from(
       { length: Math.ceil(total / PAGE_SIZE) },
       (_, i) => `  <sitemap><loc>${xmlEscape(`${base}/sitemap-${kind}-${i + 1}.xml`)}</loc></sitemap>`,
@@ -161,23 +172,32 @@ export function sitemapRoutes(deps: SitemapDeps): Hono {
   // Chapter URLs come from release_items — the snapshot the public is actually
   // reading. Taking them from app.chapters would advertise editorial head
   // chapters that have not been published yet.
+  //
+  // lastmod is the REVISION's timestamp, not the release's. Publishing writes a
+  // new work_release and re-snapshots every chapter into release_items
+  // (publish.ts), so release.published_at is "when this book was last
+  // published" and is identical for all of its chapters. Using it here meant
+  // adding one chapter to a 1000-chapter serial re-dated 1000 URLs and invited
+  // a full re-crawl; a sitemap whose lastmod is always fresh is a sitemap whose
+  // lastmod stops being read. The revision is the thing that actually changed.
   app.get(`/:file{sitemap-chapters-[0-9]+\\.xml}`, async (c) => {
     const base = origin(c, siteOrigin);
     const page = pageNumber(c.req.param('file'));
     const rows = (await db.execute(sql`
       select w.public_id as work_public_id, w.title as work_title,
              c.public_id as chapter_public_id, ri.label_raw, ri.title as chapter_title,
-             r.published_at
+             cr.created_at as revised_at
       from app.release_items ri
       join app.work_releases r on r.id = ri.release_id
       join app.works w on w.id = r.work_id and w.active_release_id = ri.release_id
       join app.chapters c on c.id = ri.chapter_id
+      join app.chapter_revisions cr on cr.id = ri.revision_id
       where w.visibility = 'public'
       order by w.created_at asc, w.id asc, ri.editorial_position asc
       limit ${PAGE_SIZE} offset ${(page - 1) * PAGE_SIZE}
     `)).rows as unknown as Array<{
       work_public_id: string; work_title: string; chapter_public_id: string;
-      label_raw: string; chapter_title: string; published_at: Date;
+      label_raw: string; chapter_title: string; revised_at: Date;
     }>;
     c.header('Content-Type', 'application/xml; charset=utf-8');
     c.header('Cache-Control', CACHE);
@@ -186,7 +206,7 @@ export function sitemapRoutes(deps: SitemapDeps): Hono {
         { title: r.work_title, publicId: r.work_public_id },
         { labelRaw: r.label_raw, title: r.chapter_title, publicId: r.chapter_public_id },
       )),
-      lastmod: new Date(r.published_at).toISOString(),
+      lastmod: new Date(r.revised_at).toISOString(),
     }))));
   });
 

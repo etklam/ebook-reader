@@ -61,4 +61,21 @@ test('the web copy of the slug rules is byte-identical', () => {
     extract('../../../apps/web/src/lib/slug.ts'),
     'server/src/lib/slug.ts and apps/web/src/lib/slug.ts have drifted',
   );
+
+  // The ref parsers return differently named keys, so their bodies are not
+  // compared — but what counts as a key must still agree. The server decides
+  // whether a sitemap URL resolves; the client decides whether it is a route at
+  // all. A public id that only one side accepts means an advertised URL that
+  // the app answers with the catalogue.
+  const refRules = (path: string) => {
+    const src = readFileSync(new URL(path, import.meta.url), 'utf8');
+    const lines = src.split('\n').filter((l) => /^const (PUBLIC_ID_RE|UUID_RE) = /.test(l));
+    assert.equal(lines.length, 2, `ref key rules not found in ${path}`);
+    return lines.join('\n');
+  };
+  assert.equal(
+    refRules('./slug.ts'),
+    refRules('../../../apps/web/src/lib/slug.ts'),
+    'the two copies disagree on what counts as a public id or a uuid',
+  );
 });

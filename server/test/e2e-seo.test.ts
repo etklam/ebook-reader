@@ -242,7 +242,7 @@ test('SEO-06: robots.txt keeps private routes out and advertises the sitemap', a
   const res = await app.request('/robots.txt');
   assert.equal(res.status, 200);
   const body = await res.text();
-  for (const line of ['User-agent: *', 'Allow: /', 'Disallow: /admin', 'Disallow: /me/', 'Disallow: /api/']) {
+  for (const line of ['User-agent: *', 'Allow: /', 'Disallow: /admin', 'Disallow: /me', 'Disallow: /api/']) {
     assert.ok(body.includes(line), `robots.txt should contain "${line}"`);
   }
   assert.match(body, /^Sitemap: https?:\/\/[^\s]+\/sitemap\.xml$/m);

@@ -27,10 +27,12 @@ test('robots.txt disallows the private routes and points at the sitemap', async 
   const res = await routes().request('/robots.txt');
   assert.equal(res.status, 200);
   const body = await res.text();
-  for (const line of ['User-agent: *', 'Allow: /', 'Disallow: /admin', 'Disallow: /me/',
+  for (const line of ['User-agent: *', 'Allow: /', 'Disallow: /admin', 'Disallow: /me',
     'Disallow: /login', 'Disallow: /register', 'Disallow: /api/']) {
     assert.ok(body.includes(line), `missing "${line}"`);
   }
+  // `/me/` would leave /me itself crawlable, and /me renders the catalogue
+  assert.ok(/^Disallow: \/me$/m.test(body), 'the /me prefix must not carry a trailing slash');
   assert.ok(body.includes(`Sitemap: ${ORIGIN}/sitemap.xml`));
   assert.match(res.headers.get('cache-control') ?? '', /max-age=3600/);
 });
@@ -89,12 +91,27 @@ test('a work URL is absolute, percent-encoded and carries lastmod', async () => 
 test('a chapter URL nests the chapter slug under the work slug', async () => {
   const res = await routes([{
     work_public_id: 'a1b2c3d4', work_title: '劍來', chapter_public_id: '7f3e9b21',
-    label_raw: '第一章', chapter_title: '落雨', published_at: '2026-10-16T00:00:00.000Z',
+    label_raw: '第一章', chapter_title: '落雨', revised_at: '2026-10-16T00:00:00.000Z',
   }]).request('/sitemap-chapters-1.xml');
   assert.equal(res.status, 200);
   const body = await res.text();
   const expected = `/read/${encodeURIComponent('劍來')}-a1b2c3d4/${encodeURIComponent('第一章-落雨')}-7f3e9b21`;
   assert.ok(body.includes(`<loc>${ORIGIN}${expected}</loc>`), body);
+});
+
+// Re-publishing re-snapshots every chapter, so the release timestamp is the
+// same for all of them and moves on every publish. The revision is what
+// actually changed, and an unchanged chapter keeps its revision.
+test('chapter lastmod tracks the revision, not the release', async () => {
+  const revised = '2026-03-04T05:06:07.000Z';
+  const res = await routes([{
+    work_public_id: 'a1b2c3d4', work_title: '劍來', chapter_public_id: '7f3e9b21',
+    label_raw: '第一章', chapter_title: '落雨',
+    revised_at: revised, published_at: '2026-10-16T00:00:00.000Z',
+  }]).request('/sitemap-chapters-1.xml');
+  const body = await res.text();
+  assert.ok(body.includes(`<lastmod>${revised}</lastmod>`), body);
+  assert.ok(!body.includes('2026-10-16'), 'the release timestamp must not leak in as lastmod');
 });
 
 // Titles are author-supplied. `&` cannot appear in a percent-encoded path, but
