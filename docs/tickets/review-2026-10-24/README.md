@@ -2,7 +2,7 @@
 
 建立日期：2026-10-24。來源：`e223d00` 為基線的唯讀檢視，重點為 SEO 面，另加兩項使用者回報（括號編號分段失敗、刪除／重新匯入的入口）。基線 `pnpm lint`、`pnpm typecheck`、`pnpm test`（server 137 項）通過。
 
-本批共 13 張 tickets。RV-001～RV-011 來自檢視與回報的缺陷，RV-012／RV-013 是使用者提出的功能需求。
+本批共 18 張 tickets。RV-001～RV-011 來自檢視與回報的缺陷，RV-012／RV-013 是使用者提出的功能需求。
 
 **2026-10-24 實作狀態**：RV-002、RV-004～RV-009 完成；RV-001、RV-003、RV-010 部分完成（各票「實作結果」列明未完成項）；RV-011 完成但有兩項驗收條件未達成；RV-012、RV-013 未開始（兩者都需要先確認票內的決策）。所有 Playwright e2e spec 已寫但**未執行** —— 需要 dev server 與 API。
 
@@ -32,6 +32,11 @@
 | RV-008 | [為兩份 slug.ts 加 drift guard](RV-008-slug-drift-guard.md) | SEO | 低 | P3 | 小 | AFK | **implemented-local** |
 | RV-012 | [詳細閱讀時間與數據統計](RV-012-detailed-reading-stats.md) | 功能 | 不適用 | P2 | 中至大 | HITL | open |
 | RV-013 | [閱讀時的人名替換與角色互換](RV-013-name-substitution.md) | 功能 | 不適用 | P3 | 中 | HITL | open |
+| RV-014 | [自動滾動與自動翻頁](RV-014-auto-scroll.md) | 功能 | 不適用 | P2 | 中 | AFK | open |
+| RV-015 | [劃線、筆記標籤與筆記匯出](RV-015-highlights-notes-export.md) | 功能 | 不適用 | P2 | 大 | HITL | open |
+| RV-016 | [藍光濾鏡與定時切換主題](RV-016-eye-comfort.md) | 功能 | 不適用 | P3 | 小至中 | AFK | open |
+| RV-017 | [可自訂的觸控區域](RV-017-custom-tap-zones.md) | 功能 | 不適用 | P3 | 中 | HITL | open |
+| RV-018 | [PWA：可安裝、app shell 與 service worker](RV-018-pwa.md) | 平台 | 不適用 | P2 | 中 | AFK | open（圖示已交付） |
 
 ## 建議執行次序
 
@@ -41,7 +46,18 @@
 4. **RV-004 + RV-005 + RV-003**：三票都動 `head.ts`，合併一次處理，避免反覆衝突。
 5. **RV-002**：lastmod 失準會令搜尋引擎逐步不再採信 sitemap。
 6. **RV-006 → RV-007 → RV-008**：一致性與 guard 的收尾工作。
-7. **RV-012、RV-013**：功能需求，兩者都需要先確認票內列出的決策才動工。RV-012 需要 schema 變更（時間歸屬到作品），RV-013 是純前端但邊界互動多（搜尋、朗讀、匯出、錯字回報）。
+7. **RV-018 → RV-014 → RV-016 → RV-017**：平台與閱讀體驗。RV-018 先做，因為它同時是 ER-007 離線章節的前置；RV-014 收益最明顯且範圍最乾淨。
+8. **RV-012、RV-013、RV-015**：三者都需要先確認票內列出的決策才動工。RV-012 需要 schema 變更（時間歸屬到作品）；RV-013 與 RV-015 共用同一個「顯示文字 ≠ canonical 文字」的偏移映射問題，建議同一輪處理。
+
+## 功能清單的查核結果（2026-10-24）
+
+使用者提出的閱讀器功能清單，逐項對照現狀：
+
+**已經有，不開票** —— 智能段落裁切（`admin/tidy-txt.ts`：去空白、合併空行、移除推廣行與裸 URL、接回硬斷行；但僅限「批量匯入」面板、僅 TXT、僅 admin 匯入時）、簡繁一鍵轉換（`reader/conversion.ts`，view-time、段數不變，搜尋亦支援繁簡互查）、TTS 朗讀（語速／聲音／自動下一章／逐段高亮）、日夜主題（light／sepia／dark／system）、書籤與批註（段落級、revision 凍結，ER-003 已交付）。
+
+**暫緩，待平台方向確認** —— 第三方字典連動（ColorDict／Mdict／GoldenDict 靠 Android intent IPC，瀏覽器無此機制；web 的替代是自建字典資料或長按開外部查詢 URL，不是同一回事）、音量／電源／相機鍵翻頁（瀏覽器收不到這些按鍵；**藍牙鍵盤與簡報器已經可用**，因為它們發的是普通 key event，而方向鍵／空白／PageUp/Down 已由 `use-reader-keyboard.ts` 支援）、筆記直接寄到電子信箱（需要伺服器寄信管道；`mailto:` 帶不動附件）。維護者已表示有機會包成 native／PWA，故記為暫緩而非永久不適用；PWA 本身是 RV-018，但 PWA 並不解決字典 IPC 與音量鍵。
+
+**做不到，已在相關票內寫明** —— 環境光自動切換主題（Ambient Light Sensor 因側信道風險已被各瀏覽器移除，見 RV-016）、系統亮度調整（見 RV-017）。
 
 ## 票與票之間的關係
 

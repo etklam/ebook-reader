@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="書庫">
+  <!-- Favicon build of the shelf mark, redrawn at 64 rather than scaled from
+       512. Three spines, one of them ink, on a rule — the spine bands and the
+       fourth spine turn to mud at 16px and are not here.
+
+       The mark fills far more of the field than the 512 art does, and the gaps
+       between spines are deliberately wider than the drawing wants: at 16px a
+       spine is ~2.5px and a gap under 1px closes up, which would leave one
+       amber lump instead of a row of books.
+
+       The amber field is kept because a favicon has to hold its own against
+       both a light and a dark browser chrome; a paper-coloured mark would
+       vanish into a light tab strip. -->
+  <rect width="64" height="64" rx="14" fill="#855b05"/>
+  <rect x="8" y="49" width="48" height="4" rx="2" fill="#fdf2e1" opacity="0.55"/>
+  <rect x="10" y="26" width="11" height="22" rx="2.5" fill="#faf8f6"/>
+  <rect x="26" y="17" width="12" height="31" rx="2.5" fill="#1f1b14"/>
+  <rect x="43" y="23" width="11" height="25" rx="2.5" fill="#faf8f6"/>
+</svg>

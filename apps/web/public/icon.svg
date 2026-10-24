@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="書庫">
+  <!-- 書庫 app mark: a shelf of spines, not an open book.
+       Every reader app is an open book; a depository is a shelf, and four bars
+       of different widths over a rule survives being 16px wide, which a page
+       with a curl in it does not.
+
+       Colours are the product tokens converted from oklch (tokens.css):
+       brand #855b05, ink #1f1b14, surface #faf8f6, brand-tint #fdf2e1.
+       The one ink spine is the book being read — a single accent is the only
+       thing still legible once the mark is a favicon.
+
+       This is the `purpose: any` art: the mark runs to the edge of a rounded
+       square, the way a home-screen icon is expected to. icon-maskable.svg is
+       the same mark pulled into the safe circle for platforms that crop. -->
+  <rect width="512" height="512" rx="114" fill="#855b05"/>
+  <g transform="translate(256 262) scale(1.12) translate(-256 -262)">
+    <!-- the shelf -->
+    <rect x="131" y="368" width="248" height="16" rx="8" fill="#fdf2e1" opacity="0.5"/>
+    <!-- spines: widths vary so the row reads as books rather than a bar chart -->
+    <g>
+      <rect x="143" y="216" width="46" height="148" rx="10" fill="#faf8f6"/>
+      <rect x="152" y="238" width="28" height="7" rx="3.5" fill="#855b05"/>
+      <rect x="152" y="254" width="28" height="7" rx="3.5" fill="#855b05"/>
+    </g>
+    <g>
+      <rect x="203" y="168" width="52" height="196" rx="10" fill="#1f1b14"/>
+      <rect x="213" y="190" width="32" height="7" rx="3.5" fill="#d4b382"/>
+      <rect x="213" y="206" width="32" height="7" rx="3.5" fill="#d4b382"/>
+    </g>
+    <g>
+      <rect x="269" y="194" width="44" height="170" rx="10" fill="#faf8f6"/>
+      <rect x="278" y="216" width="26" height="7" rx="3.5" fill="#855b05"/>
+      <rect x="278" y="232" width="26" height="7" rx="3.5" fill="#855b05"/>
+    </g>
+    <g>
+      <rect x="327" y="232" width="40" height="132" rx="10" fill="#faf8f6"/>
+      <rect x="335" y="254" width="24" height="7" rx="3.5" fill="#855b05"/>
+      <rect x="335" y="270" width="24" height="7" rx="3.5" fill="#855b05"/>
+    </g>
+  </g>
+</svg>

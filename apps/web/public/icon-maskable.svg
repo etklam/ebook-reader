@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="書庫">
+  <!-- Maskable variant of icon.svg: same mark, full-bleed square, and the art
+       pulled into the safe zone.
+       Android and friends crop a maskable icon to a shape of their choosing —
+       circle, squircle, teardrop — and only the central 80% circle (radius
+       204.8) is guaranteed to survive. The mark here sits inside radius ~171,
+       so the outermost spine keeps clear of every mask with room to spare.
+       The background must bleed to all four edges: a transparent corner would
+       be cropped into a visible notch. -->
+  <rect width="512" height="512" fill="#855b05"/>
+  <g transform="translate(256 262) scale(0.84) translate(-256 -262)">
+    <rect x="131" y="368" width="248" height="16" rx="8" fill="#fdf2e1" opacity="0.5"/>
+    <g>
+      <rect x="143" y="216" width="46" height="148" rx="10" fill="#faf8f6"/>
+      <rect x="152" y="238" width="28" height="7" rx="3.5" fill="#855b05"/>
+      <rect x="152" y="254" width="28" height="7" rx="3.5" fill="#855b05"/>
+    </g>
+    <g>
+      <rect x="203" y="168" width="52" height="196" rx="10" fill="#1f1b14"/>
+      <rect x="213" y="190" width="32" height="7" rx="3.5" fill="#d4b382"/>
+      <rect x="213" y="206" width="32" height="7" rx="3.5" fill="#d4b382"/>
+    </g>
+    <g>
+      <rect x="269" y="194" width="44" height="170" rx="10" fill="#faf8f6"/>
+      <rect x="278" y="216" width="26" height="7" rx="3.5" fill="#855b05"/>
+      <rect x="278" y="232" width="26" height="7" rx="3.5" fill="#855b05"/>
+    </g>
+    <g>
+      <rect x="327" y="232" width="40" height="132" rx="10" fill="#faf8f6"/>
+      <rect x="335" y="254" width="24" height="7" rx="3.5" fill="#855b05"/>
+      <rect x="335" y="270" width="24" height="7" rx="3.5" fill="#855b05"/>
+    </g>
+  </g>
+</svg>
