@@ -16,6 +16,8 @@ async function setup(page: Page, stale = false) {
     let json: unknown = {};
     if (path.startsWith('/api/admin/taxonomy/')) json = { items: [] };
     else if (path === '/api/me') json = { user: { id: 'admin', role: 'admin', isMember: true } };
+    // the import panel now reaches the target work through the shared picker
+    else if (path === '/api/admin/works') json = { works: [{ id: work, title: '重新匯入測試作品', author: '測試作者', visibility: 'public', activeReleaseId: 'release' }] };
     else if (path === '/api/admin/imports' && route.request().method() === 'POST') return route.fulfill({ status: 201, json: { importId: id, sourceFileId: 'source-file' } });
     else if (path === `/api/admin/imports/${id}`) json = { id, workId: work, status: applied ? 'applied' : 'ready', detectedEncoding: 'utf-8', chapterCount: 4, encodingResult: { confidence: 'high', reason: 'UTF-8', warnings: [] }, stagedChapters: 4, stagedNeedsReview: 0, committedWorkId: null, sourceFile: null };
     else if (path.endsWith('/chapters')) json = { total: 0, page: 1, limit: 50, chapters: [] };
@@ -44,10 +46,12 @@ async function setup(page: Page, stale = false) {
     await route.fulfill({ json });
   });
   await page.goto('/admin');
-  await page.getByText('進階匯入設定（更新既有作品／指定編碼）', { exact: true }).click();
-  await page.getByLabel('目標作品 ID').fill(work);
+  // "update an existing work" is a first-class choice on the form now, not a
+  // hand-typed UUID inside a collapsed advanced section
+  await page.getByRole('radio', { name: '更新既有作品' }).click();
+  await page.getByLabel('目標作品', { exact: true }).selectOption(work);
   await page.getByLabel('或貼上 TXT 內容').fill('第1章\n\n來源文字');
-  await page.getByRole('button', { name: '提交並解析', exact: true }).click();
+  await page.getByRole('button', { name: '提交並比對差異', exact: true }).click();
   const review = page.getByRole('region', { name: '逐章匯入比對' });
   await expect(review.getByText(/尚有 1 項待決/)).toBeVisible();
   return { review, submissions, details, advanceVersion: () => { editVersion++; } };

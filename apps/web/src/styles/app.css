@@ -40,6 +40,15 @@
 .btn.primary:active:not(:disabled) { background: var(--brand-hover); }
 .btn.primary:disabled { background: var(--rule); border-color: var(--rule); color: var(--ink-3); }
 
+/* danger: an action that removes something. Outlined rather than filled — it
+   must read as different from its neighbours without competing with .primary
+   for the eye, since the primary action in the same row is the safe one. The
+   label still says what it does; colour is never the only signal. */
+.btn.danger { color: var(--danger); border-color: var(--danger); }
+.btn.danger:hover:not(:disabled) { color: var(--danger); background: var(--danger-tint); border-color: var(--danger); }
+.btn.danger:active:not(:disabled) { background: var(--danger-tint); }
+.btn.danger:disabled { color: var(--ink-faint); border-color: var(--rule); background: none; }
+
 /* quiet: the third choice in a group, present but not competing for the eye */
 .btn.quiet { color: var(--ink-2); background: none; border-color: transparent; }
 .btn.quiet:hover:not(:disabled) { color: var(--ink); background: var(--press); border-color: transparent; }
@@ -937,7 +946,8 @@ h2.sec-head, .sec-head h2 {
 }
 .draft-categories { border: 1px solid var(--rule); padding: var(--sp-3); }
 .draft-categories legend { padding: 0 var(--sp-2); }
-.draft-categories .check-line { display: flex; align-items: center; gap: var(--sp-2); min-height: var(--tap); }
+.draft-categories .check-line,
+.admin-publish .check-line { display: flex; align-items: center; gap: var(--sp-2); min-height: var(--tap); }
 
 /* --- taxonomy picker: category/tag assignment, shared by import, publish and
    the taxonomy tab. Suggestions sit above the browse lists because acting on

@@ -15,6 +15,7 @@ import { api as request, ApiRequestError, getMe, login, logout } from '../api/cl
 import type { Me } from '../api/types.ts';
 import type { ImportJob, ImportQuality, ImportChapterPage } from '../api/import-types.ts';
 import { ImportReview } from './ImportReview.tsx';
+import { WorkPicker } from './WorkPicker.tsx';
 import { useImportMonitor } from './useImportMonitor.ts';
 import { TaxonomyPicker, type TaxonomySelection } from './TaxonomyPicker.tsx';
 import { AppFooter } from '../components/AppFooter.tsx';
@@ -138,6 +139,10 @@ function AdminHome({ email, onLogout }: { email: string; onLogout(): void }) {
   const [targetChapter, setTargetChapter] = useState(params.get('chapter') ?? '');
   const [targetParagraph, setTargetParagraph] = useState(Number(params.get('paragraph') ?? 0));
   const [batchMode, setBatchMode] = useState(false);
+  // The work the import panel should open on, when the admin arrived there via
+  // "重新匯入此作品" rather than through the import tab. Keyed so the panel
+  // remounts and starts a fresh job instead of inheriting the previous one.
+  const [reimport, setReimport] = useState<{ workId: string; key: number } | null>(null);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [exportRevision, setExportRevision] = useState(0);
   const [logoutError, setLogoutError] = useState('');
@@ -180,10 +185,16 @@ function AdminHome({ email, onLogout }: { email: string; onLogout(): void }) {
       {logoutError && <p className="form-error" role="alert">{logoutError}</p>}
       <div hidden={tab !== 'import'}>{batchMode
         ? <BatchImportPanel onBack={() => setBatchMode(false)} onOpenWork={(id) => { setBatchMode(false); continueToPublish(id); }} />
-        : <ImportPanel onContinue={continueToPublish} onBatch={() => setBatchMode(true)} />}</div>
+        : <ImportPanel key={reimport?.key ?? 'new'} initialWorkId={reimport?.workId ?? ''}
+            onContinue={continueToPublish} onBatch={() => setBatchMode(true)} />}</div>
       {tab === 'publish' && <>
         <PublishPanel workId={selectedWorkId} onWorkChange={(id) => { setSelectedWorkId(id); setTargetChapter(''); }} refreshVersion={workspaceRevision}
-          onPublished={() => setExportRevision((value) => value + 1)} />
+          onPublished={() => setExportRevision((value) => value + 1)}
+          onReimport={(id) => {
+            setReimport({ workId: id, key: Date.now() });
+            setBatchMode(false);
+            setTab('import');
+          }} />
         <ChapterEditor workId={selectedWorkId} initialChapterId={targetChapter} initialParagraphIndex={targetParagraph} onChanged={() => setWorkspaceRevision((value) => value + 1)} />
         <ExportPanel workId={selectedWorkId} refresh={exportRevision} />
       </>}
@@ -206,7 +217,11 @@ const ENCODINGS = [
   { v: 'gb18030', label: 'GB18030' },
 ];
 
-function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; onBatch(): void }) {
+function ImportPanel({ onContinue, onBatch, initialWorkId = '' }: {
+  onContinue(id: string): void; onBatch(): void;
+  /** handed over by "重新匯入此作品" in the publish panel */
+  initialWorkId?: string;
+}) {
   const [file, setFile] = useState<File | null>(null);
   const [pastedText, setPastedText] = useState('');
   const [jobUsesPastedText, setJobUsesPastedText] = useState(false);
@@ -217,7 +232,9 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
   const [serialStatus, setSerialStatus] = useState('');
   const [taxonomy, setTaxonomy] = useState<TaxonomySelection>({ categoryIds: [], tagIds: [] });
   const [encoding, setEncoding] = useState('');
-  const [workId, setWorkId] = useState('');
+  const [workId, setWorkId] = useState(initialWorkId);
+  const [mode, setMode] = useState<'new' | 'update'>(initialWorkId ? 'update' : 'new');
+  const updating = mode === 'update';
   const [job, setJob] = useState<ImportJob | null>(null);
   const [quality, setQuality] = useState<ImportQuality | null>(null);
   const [diff, setDiff] = useState<any>(null);
@@ -269,7 +286,13 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
     form.append('file', source);
     if (title) form.append('title', title); // display hint only; real title goes to commit
     if (encoding && !isPastedText) form.append('encoding', encoding);
-    if (workId) form.append('workId', workId);
+    // Only ever in update mode, and only with a target: without this guard an
+    // "update" with nothing selected would quietly create a duplicate work,
+    // which is the exact outcome this flow exists to avoid.
+    if (updating) {
+      if (!workId) { setError(t('請先選擇要更新的作品。')); return; }
+      form.append('workId', workId);
+    }
     const { status, body } = await api('/api/admin/imports', { method: 'POST', body: form });
     if (status !== 200) { setError(body.error ?? t('提交失敗')); return; }
     setJobUsesPastedText(isPastedText);
@@ -340,11 +363,30 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
     <>
       <section className="admin-panel">
         <div className="head-line"><h2>{t('匯入作品')}</h2><button className="linkish" onClick={onBatch}>{t('批量匯入多本')}</button></div>
-        <p className="hint">{t('流程：匯入 → 快速確認 → 發布')}</p>
+        <p className="hint">{updating ? t('流程：重新匯入 → 覆核差異 → 套用 → 發布') : t('流程：匯入 → 快速確認 → 發布')}</p>
         <p className="muted">
-          {t('上傳 TXT／EPUB 檔案或貼上 TXT 文字建立新作品，也可指定既有作品做增量／覆蓋。提交只會產生草稿——公開內容在「發布」頁才會變動。')}
+          {t('上傳 TXT／EPUB 檔案或貼上 TXT 文字。提交只會產生草稿——公開內容在「發布」頁才會變動。')}
         </p>
 
+        {/* The target was the single most buried control in the admin UI: a
+            hand-typed UUID inside a collapsed "advanced settings". It decides
+            which of two quite different flows runs, so it is the first choice
+            on the form, not the last. */}
+        <div className="field">
+          <span className="field-label" id="imp-mode-label">{t('這次匯入要')}</span>
+          <div className="seg" role="radiogroup" aria-labelledby="imp-mode-label">
+            {([['new', '建立新作品'], ['update', '更新既有作品']] as const).map(([value, label]) => (
+              <button key={value} type="button" role="radio" aria-checked={mode === value} className="seg-item"
+                disabled={busy} onClick={() => { setMode(value); if (value === 'new') setWorkId(''); }}>
+                {t(label)}
+              </button>
+            ))}
+          </div>
+          <span className="hint">{updating
+            ? t('來源會與既有章節比對，再由你逐項覆核後套用；站方既有內容不會被自動覆寫。')
+            : t('建立一部新草稿。要更新已經匯入過的作品，請改選「更新既有作品」，不要重新建立一部。')}</span>
+        </div>
+        {updating && <WorkPicker idPrefix="imp" value={workId} onChange={setWorkId} disabled={busy} />}
 
 
         <form className="form-grid import-form" onSubmit={submit}>
@@ -377,7 +419,10 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
             <span className="hint" id="imp-text-hint">{t('TXT 上限 30 MiB；貼上內容以 UTF-8 匯入，請與來源檔案擇一。')}</span>
           </div>
           </div>
-          <div className="import-metadata">
+          {/* new-work metadata only: commit writes these, apply ignores them.
+              Showing them while updating is what made the two flows look like
+              one form with an obscure switch. */}
+          <div className="import-metadata" hidden={updating}>
           <div className="field">
             <label htmlFor="imp-title">{t('作品名稱')}</label>
             <input className="input" id="imp-title" value={title} placeholder={t('例如：長夜將盡')}
@@ -421,13 +466,7 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
           </div>
           </div>
           <div className="import-actions">
-          <details><summary>{t('進階匯入設定（更新既有作品／指定編碼）')}</summary>
-          <div className="field">
-            <label htmlFor="imp-work">{t('目標作品 ID')}</label>
-            <input className="input input-mono" id="imp-work" value={workId} placeholder="work UUID"
-              aria-describedby="imp-work-hint" onChange={(e) => setWorkId(e.target.value)} />
-            <span className="hint" id="imp-work-hint">{t('留空＝建立新作品。填入才會進入增量／覆蓋流程。')}</span>
-          </div>
+          <details><summary>{t('進階匯入設定（指定編碼）')}</summary>
           <div className="field">
             <label htmlFor="imp-enc">{t('文字編碼')}</label>
             <select className="input" id="imp-enc" value={encoding} disabled={jobUsesPastedText || pastedText.trim().length > 0}
@@ -437,9 +476,11 @@ function ImportPanel({ onContinue, onBatch }: { onContinue(id: string): void; on
             <span className="hint">{jobUsesPastedText ? t('貼上內容以 UTF-8 儲存。') : t('偵測結果不對時再指定，然後重新解析。')}</span>
           </div>
           </details>
-          <button className="btn primary" type="submit" disabled={busy || (!file && !pastedText.trim())} aria-busy={busy || undefined}>
-            {busy ? t('處理中…') : t('提交並解析')}
+          <button className="btn primary" type="submit"
+            disabled={busy || (!file && !pastedText.trim()) || (updating && !workId)} aria-busy={busy || undefined}>
+            {busy ? t('處理中…') : updating ? t('提交並比對差異') : t('提交並解析')}
           </button>
+          {updating && !workId && <span className="hint">{t('請先選擇要更新的作品。')}</span>}
           </div>
         </form>
 

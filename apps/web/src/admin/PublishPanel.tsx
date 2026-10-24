@@ -7,15 +7,18 @@ import { navigate } from '../App.tsx';
 import { TaxonomyPicker, type TaxonomySelection } from './TaxonomyPicker.tsx';
 import { t } from '../i18n/translate.ts';
 
-type WorkOption = { id: string; title: string; author: string; activeReleaseId: string | null };
+type WorkOption = { id: string; title: string; author: string; activeReleaseId: string | null; visibility: string };
 type Draft = {
   work: { title: string; author: string; description: string; serialStatus: string | null; workType: string };
   chapters: { id: string; labelRaw: string; title: string | null }[];
 };
 type Chapter = { chapterId: string; labelRaw: string; title: string; body: string };
 
-export function PublishPanel({ workId, onWorkChange, refreshVersion = 0, onPublished }: {
+export function PublishPanel({ workId, onWorkChange, refreshVersion = 0, onPublished, onReimport }: {
   workId: string; onWorkChange(id: string): void; refreshVersion?: number; onPublished?(): void;
+  /** hand this work to the import panel — the admin is looking at the book
+   *  they want to update, which is where they think to ask for it */
+  onReimport?(id: string): void;
 }) {
   const [works, setWorks] = useState<WorkOption[]>([]);
   const [query, setQuery] = useState('');
@@ -34,16 +37,20 @@ export function PublishPanel({ workId, onWorkChange, refreshVersion = 0, onPubli
   const [busy, setBusy] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [removedTitle, setRemovedTitle] = useState('');
+  // Deleted works are hidden from the normal list, which is what made deletion
+  // irreversible from the UI: once gone, the work could never be selected
+  // again. This is the window back.
+  const [showRemoved, setShowRemoved] = useState(false);
 
   useEffect(() => {
     let active = true;
     setListBusy(true); setListError('');
-    api<{ works: WorkOption[] }>(`/api/admin/works?q=${encodeURIComponent(query)}`)
+    api<{ works: WorkOption[] }>(`/api/admin/works?q=${encodeURIComponent(query)}${showRemoved ? '&removed=1' : ''}`)
       .then((data) => { if (active) setWorks(data.works); })
       .catch(() => { if (active) setListError(t('無法載入作品。請重新整理頁面再試。')); })
       .finally(() => { if (active) setListBusy(false); });
     return () => { active = false; };
-  }, [query, refresh, refreshVersion]);
+  }, [query, refresh, refreshVersion, showRemoved]);
 
   useEffect(() => {
     let active = true;
@@ -107,7 +114,10 @@ export function PublishPanel({ workId, onWorkChange, refreshVersion = 0, onPubli
   const removeWork = async () => {
     if (busy || !draft) return;
     const title = draft.work.title;
-    if (!confirm(t('刪除《{title}》？作品會從書庫及管理清單移除，讀者將無法開啟。系統會保留內容及閱讀紀錄。', { title }))) return;
+    // The old wording ("系統會保留內容及閱讀紀錄") was true but read as
+    // reversible while nothing in the UI could reverse it. Now it can, so the
+    // text says exactly where.
+    if (!confirm(t('刪除《{title}》？讀者將無法開啟，作品也會從書庫與管理清單消失。內容與閱讀紀錄都會保留，之後可在「顯示已刪除作品」中復原為草稿。', { title }))) return;
     setBusy(true); setMsg(''); setOk(false);
     try {
       await api(`/api/admin/works/${workId}`, { method: 'DELETE' });
@@ -117,6 +127,23 @@ export function PublishPanel({ workId, onWorkChange, refreshVersion = 0, onPubli
       setRefresh((value) => value + 1);
     } catch {
       setMsg(t('刪除失敗。請重新載入作品後再試。'));
+    } finally { setBusy(false); }
+  };
+
+  const restoreWork = async (id: string, title: string) => {
+    if (busy) return;
+    if (!confirm(t('復原《{title}》？作品會回到草稿狀態，必須重新發布讀者才看得到。', { title }))) return;
+    setBusy(true); setMsg(''); setOk(false);
+    try {
+      await api(`/api/admin/works/${id}/restore`, { method: 'POST' });
+      setShowRemoved(false);
+      setRemovedTitle('');
+      onWorkChange(id);
+      setRefresh((value) => value + 1);
+      setOk(true);
+      setMsg(t('已復原《{title}》。它現在是草稿——讀者仍看不到，請確認內容後再發布。', { title }));
+    } catch {
+      setMsg(t('復原失敗。請重新載入清單後再試。'));
     } finally { setBusy(false); }
   };
 
@@ -140,22 +167,40 @@ export function PublishPanel({ workId, onWorkChange, refreshVersion = 0, onPubli
       </div>
       {listError && <p className="form-error" role="alert">{listError}</p>}
       <div className="field">
-        <label htmlFor="publish-work">{t('選擇作品')}</label>
-        <select className="input" id="publish-work" value={workId} disabled={busy}
-          onChange={(e) => onWorkChange(e.target.value)}>
-          <option value="">{t('請選擇作品')}</option>
-          {workId && !works.some((w) => w.id === workId) && <option value={workId}>{draft?.work.title ?? t('指定作品')}</option>}
+        <label htmlFor="publish-work">{showRemoved ? t('已刪除的作品') : t('選擇作品')}</label>
+        <select className="input" id="publish-work" value={showRemoved ? '' : workId} disabled={busy}
+          onChange={(e) => {
+            const id = e.target.value;
+            if (!id) return;
+            const removedWork = showRemoved ? works.find((w) => w.id === id) : null;
+            if (removedWork) void restoreWork(removedWork.id, removedWork.title);
+            else onWorkChange(id);
+          }}>
+          <option value="">{showRemoved ? t('選一部以復原') : t('請選擇作品')}</option>
+          {!showRemoved && workId && !works.some((w) => w.id === workId) && <option value={workId}>{draft?.work.title ?? t('指定作品')}</option>}
           {works.map((work) => <option key={work.id} value={work.id}>
-            {work.title}{work.author ? `／${work.author}` : ''} · {work.activeReleaseId ? t('已有發布版本') : t('尚未發布')}
+            {work.title}{work.author ? `／${work.author}` : ''} · {showRemoved ? t('已刪除')
+              : work.activeReleaseId ? t('已有發布版本') : t('尚未發布')}
           </option>)}
         </select>
+        <label className="check-line">
+          <input type="checkbox" checked={showRemoved} disabled={busy}
+            onChange={(e) => setShowRemoved(e.target.checked)} />
+          {t('顯示已刪除作品（可復原）')}
+        </label>
+        {showRemoved && <span className="hint">{t('選一部即可復原為草稿。復原後仍需重新發布，讀者才看得到。')}</span>}
       </div>
       </details>
       {listBusy && <p className="hint" role="status">{t('載入作品中…')}</p>}
       {!listBusy && !listError && !works.length && <p className="hint">{query ? t('沒有符合搜尋的作品。請修改關鍵字。') : t('尚未有作品。請先在「匯入」建立草稿。')}</p>}
       <div className="row-actions">
         <button className="btn" onClick={() => setRefresh((value) => value + 1)} disabled={busy}>{t('重新載入')}</button>
-        {draft && <button className="btn" onClick={() => void removeWork()} disabled={busy}>{t('刪除作品')}</button>}
+        {draft && onReimport && <button className="btn" onClick={() => onReimport(workId)} disabled={busy}>
+          {t('重新匯入此作品')}
+        </button>}
+        {/* .danger because this sat in the same row as 重新載入 wearing the same
+            style: nothing told the eye that one of them removes a book. */}
+        {draft && <button className="btn danger" onClick={() => void removeWork()} disabled={busy}>{t('刪除作品')}</button>}
       </div>
       {busy && <p className="hint" role="status">{draft ? t('發布中…') : t('載入草稿及發布檢查…')}</p>}
       {msg && <p className={ok ? 'form-ok' : 'form-error'} role="status">{msg}</p>}

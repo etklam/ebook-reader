@@ -100,3 +100,46 @@ test('publication detects a deletion-only draft from immutable snapshots', () =>
     newChapterIds: [], updatedChapterIds: [], reorderedChapterIds: [], removedChapterIds: ['a'],
   });
 });
+
+// Deletion was one-way: the admin list filters removed works out, PATCH does
+// not touch visibility, and publishPreview refuses a removed work — so a
+// mis-click could only be undone in the database.
+test('restore returns a removed work to draft, never straight back to public', async () => {
+  const { app, updates, predicates } = setup();
+  const res = await app.request(`/api/admin/works/${WORK}/restore`, { method: 'POST' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, workId: WORK, visibility: 'draft' });
+  // draft, not the visibility it had before: re-publishing is a separate act
+  assert.equal(updates[0].visibility, 'draft');
+  assert.ok(updates[0].updatedAt instanceof Date);
+  assert.ok(new PgDialect().sqlToQuery(updates[0].editVersion as SQL).sql.includes(' + 1'));
+  // scoped to rows that are actually removed, so it cannot rewrite a live work
+  assert.match(predicates[0].sql, /visibility.*=/);
+  assert.deepEqual(predicates[0].params, [WORK, 'removed']);
+});
+
+test('restore distinguishes a work that was never deleted from one that does not exist', async () => {
+  const live = setup([[{ id: WORK }]], 'admin', []);
+  assert.equal((await live.app.request(`/api/admin/works/${WORK}/restore`, { method: 'POST' })).status, 409);
+  assert.deepEqual(live.updates.map((u) => u.visibility), ['draft'], 'the guarded UPDATE still matched nothing');
+
+  const absent = setup([[]], 'admin', []);
+  assert.equal((await absent.app.request(`/api/admin/works/${WORK}/restore`, { method: 'POST' })).status, 404);
+  assert.equal((await absent.app.request('/api/admin/works/invalid/restore', { method: 'POST' })).status, 404);
+});
+
+test('restore requires admin privileges', async () => {
+  const { app, updates } = setup([], 'member');
+  assert.equal((await app.request(`/api/admin/works/${WORK}/restore`, { method: 'POST' })).status, 403);
+  assert.deepEqual(updates, []);
+});
+
+test('the admin list can window onto removed works for the restore path', async () => {
+  const { app, predicates } = setup();
+  assert.equal((await app.request('/api/admin/works?removed=1')).status, 200);
+  assert.match(predicates[0].sql, /visibility.*=/);
+  assert.deepEqual(predicates[0].params, ['removed']);
+  // and the default list still excludes them
+  assert.equal((await app.request('/api/admin/works')).status, 200);
+  assert.match(predicates[1].sql, /visibility.*<> 'removed'/);
+});

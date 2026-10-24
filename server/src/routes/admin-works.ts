@@ -30,15 +30,41 @@ export function adminWorkRoutes(deps: AdminWorksDeps): Hono<{ Variables: { userI
   const { db, storage } = deps;
   const app = new Hono<{ Variables: { userId: string; role: string } }>();
 
+  // `removed=1` lists ONLY deleted works rather than mixing them in: deletion
+  // used to be one-way purely because this list hid them, so the restore path
+  // needs its own window on them, not a flag buried in 50 live rows.
   app.get('/api/admin/works', async (c) => {
     const query = (c.req.query('q') ?? '').trim().slice(0, 100);
     const literal = query.replace(/[\\%_]/g, '\\$&');
+    const removed = c.req.query('removed') === '1';
     const rows = await db.select({ id: works.id, title: works.title, author: works.author,
       visibility: works.visibility, activeReleaseId: works.activeReleaseId })
-      .from(works).where(and(sql`${works.visibility} <> 'removed'`,
+      .from(works).where(and(
+        removed ? eq(works.visibility, 'removed') : sql`${works.visibility} <> 'removed'`,
         query ? or(ilike(works.title, `%${literal}%`), ilike(works.author, `%${literal}%`)) : undefined))
-      .orderBy(desc(works.createdAt), desc(works.id)).limit(50);
+      .orderBy(desc(works.updatedAt), desc(works.id)).limit(50);
     return c.json({ works: rows });
+  });
+
+  // Undo for the delete above. Restores to `draft`, never to the visibility the
+  // work had before: a mis-click must not put a book straight back in front of
+  // readers. Publishing it again is a separate, deliberate act (and publish.ts
+  // promotes a draft to public), so the admin re-states the intent.
+  // Same row lock as delete and publish, so a concurrent publish cannot
+  // interleave with the visibility change.
+  app.post('/api/admin/works/:workId/restore', async (c) => {
+    const workId = routeId(c);
+    if (!UUID_RE.test(workId)) return c.json({ error: 'work_not_found' }, 404);
+    const [restored] = await db.update(works).set({ visibility: 'draft', updatedAt: new Date(),
+      editVersion: sql`${works.editVersion} + 1`,
+    }).where(and(eq(works.id, workId), eq(works.visibility, 'removed'))).returning({ id: works.id });
+    if (!restored) {
+      const [existing] = await db.select({ id: works.id }).from(works).where(eq(works.id, workId)).limit(1);
+      // a work that was never deleted is not an error worth a 404: say so
+      if (existing) return c.json({ error: 'work_not_removed' }, 409);
+      return c.json({ error: 'work_not_found' }, 404);
+    }
+    return c.json({ ok: true, workId, visibility: 'draft' });
   });
 
   // Keep revisions and reader references intact; existing public routes hide removed works.

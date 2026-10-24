@@ -9,6 +9,7 @@ const work = { id: workId, title: '刪除測試作品', author: '測試作者', 
 async function setup(page: Page) {
   let removedWork = false; let removedChapter = false; let failWork = false;
   const deletes: { path: string; body: string | null }[] = [];
+  const posts: string[] = [];
   await page.route('**/api/**', async (route) => {
     const req = route.request(); const path = new URL(req.url()).pathname;
     if (!path.startsWith('/api/')) return route.continue();
@@ -24,8 +25,17 @@ async function setup(page: Page) {
       } else removedChapter = true;
       return route.fulfill({ json: { ok: true } });
     }
+    if (req.method() === 'POST' && path === `/api/admin/works/${workId}/restore`) {
+      posts.push(path);
+      removedWork = false;
+      return route.fulfill({ json: { ok: true, workId, visibility: 'draft' } });
+    }
     if (path === '/api/me') json = { user: { id: 'admin', role: 'admin' } };
-    else if (path === '/api/admin/works') json = { works: removedWork ? [] : [work] };
+    else if (path === '/api/admin/works') {
+      // the restore window lists only removed works; the default list hides them
+      const removedView = new URL(req.url()).searchParams.get('removed') === '1';
+      json = { works: removedView ? (removedWork ? [{ ...work, visibility: 'removed' }] : []) : (removedWork ? [] : [work]) };
+    }
     else if (path.includes('/taxonomy/')) json = { items: [], total: 0 };
     else if (path.endsWith('/taxonomy')) json = { categoryIds: [], tagIds: [], categories: [], tags: [] };
     else if (path.endsWith('/export-versions')) json = { work, versions: [] };
@@ -44,7 +54,7 @@ async function setup(page: Page) {
   await page.goto(`/admin?tab=publish&work=${workId}`);
   await expect(page.getByRole('button', { name: '刪除作品', exact: true })).toBeEnabled();
   await expect(page.getByRole('button', { name: '刪除本章', exact: true })).toBeEnabled();
-  return { deletes, failWork: () => { failWork = true; }, retryWork: () => { failWork = false; } };
+  return { deletes, posts, failWork: () => { failWork = true; }, retryWork: () => { failWork = false; } };
 }
 
 test('work deletion supports cancellation, failure and retry, then clears the selected workspace', async ({ page }) => {
@@ -87,4 +97,42 @@ test('chapter deletion retains the work, selects the remaining chapter and enabl
     path: `/api/admin/chapter-editor/works/${workId}/chapters/${chapterId}`,
     body: JSON.stringify({ expectedRevisionId: revisionId }),
   }]);
+});
+
+// Deletion used to be terminal from the UI: the admin list filters removed
+// works out, so a mis-click could only be undone in the database.
+test('a deleted work can be found again and restored to draft', async ({ page }) => {
+  const state = await setup(page);
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: '刪除作品', exact: true }).click();
+  await expect(page.getByText('已刪除《刪除測試作品》，讀者已無法開啟。')).toBeVisible();
+
+  // it is gone from the normal list...
+  const picker = page.getByLabel('選擇作品', { exact: true });
+  await expect(picker).toHaveValue('');
+  await expect(picker.locator('option')).toHaveCount(1);
+
+  // ...and findable in the restore window
+  await page.getByLabel('顯示已刪除作品（可復原）').check();
+  const removedPicker = page.getByLabel('已刪除的作品', { exact: true });
+  await expect(removedPicker.locator(`option[value="${workId}"]`)).toHaveCount(1);
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await removedPicker.selectOption(workId);
+  await expect(page.getByText(/已復原《刪除測試作品》/)).toBeVisible();
+  expect(state.posts).toEqual([`/api/admin/works/${workId}/restore`]);
+  // restored as a draft, so the work is selected again and editable
+  await expect(page.getByRole('button', { name: '刪除作品', exact: true })).toBeEnabled();
+});
+
+test('the publish panel hands a work to the import panel for a re-import', async ({ page }) => {
+  await setup(page);
+  await page.getByRole('button', { name: '重新匯入此作品', exact: true }).click();
+  // the import form opens already in update mode, on this work, with no UUID typing
+  await expect(page.getByRole('radio', { name: '更新既有作品' })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByLabel('目標作品', { exact: true })).toHaveValue(workId);
+  await expect(page.getByText('流程：重新匯入 → 覆核差異 → 套用 → 發布')).toBeVisible();
+  // new-work metadata is irrelevant to an update and is not shown
+  await expect(page.getByLabel('作品名稱')).toBeHidden();
+  await expect(page.getByRole('button', { name: '提交並比對差異', exact: true })).toBeDisabled();
 });
