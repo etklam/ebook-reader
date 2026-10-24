@@ -1,0 +1,20 @@
+{
+  "name": "書庫",
+  "short_name": "書庫",
+  "description": "管理員維護內容的中文小說閱讀站：長篇連載與短篇，支援繁簡檢視、三種閱讀主題與跨裝置進度同步。",
+  "lang": "zh-Hant",
+  "dir": "ltr",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "id": "/",
+  "display": "standalone",
+  "theme_color": "#faf8f6",
+  "background_color": "#faf8f6",
+  "categories": ["books", "education", "entertainment"],
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

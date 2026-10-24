@@ -7,6 +7,19 @@
   <meta name="theme-color" content="#faf8f6" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#151515" media="(prefers-color-scheme: dark)">
   <meta name="description" content="管理員維護內容的中文小說閱讀站：長篇連載與短篇，支援繁簡檢視、三種閱讀主題與跨裝置進度同步。">
+  <!-- Site-level Open Graph floor. lib/head.ts overwrites these per route, but
+       only for crawlers that execute JavaScript; everything else (most social
+       card scrapers) sees exactly this. -->
+  <meta property="og:site_name" content="書庫">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="/icon-512.png">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <!-- Safari ignores most of the manifest; these are its equivalents. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="書庫">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>書庫</title>
 </head>
 <body>

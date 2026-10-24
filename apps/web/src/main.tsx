@@ -3,6 +3,7 @@ import { App } from './App.tsx';
 import { I18nRoot } from './i18n/I18nRoot.tsx';
 import { applyDocumentLocale, loadLocale } from './i18n/locale.ts';
 import { setTranslationLocale } from './i18n/translate.ts';
+import { installServiceWorkerEscapeHatch, registerServiceWorker } from './pwa.ts';
 import './styles/tokens.css';
 import './styles/app.css';
 import './styles/reader.css';
@@ -17,3 +18,6 @@ void setTranslationLocale(locale).then(() => {
     <I18nRoot><App /></I18nRoot>,
   );
 });
+
+installServiceWorkerEscapeHatch();
+registerServiceWorker();
