@@ -1,5 +1,5 @@
 // Per-route document head (SEO §03B): title, description, canonical, Open
-// Graph, robots.
+// Graph, structured data, robots.
 //
 // index.html ships one static <title>書庫 and one description for every route,
 // so until now a crawler saw the same two lines on the catalogue, on every work
@@ -20,18 +20,25 @@
 import { currentLocale, t } from '../i18n/translate.ts';
 
 export interface HeadInfo {
-  /** full <title>; callers add the site suffix via `title()` */
-  title: string;
+  /** bare page name; the site suffix is added here. Omit for the catalogue.
+   *  Kept un-suffixed because og:title wants it without the suffix and
+   *  reconstructing it by stripping the suffix back off mangles any title that
+   *  happens to contain the site name. */
+  page?: string;
   description?: string;
   /** path, not URL — the origin is taken from the browser so staging and
    *  production each canonicalize to themselves */
   canonicalPath?: string;
-  /** keep the page out of the index: personalized or private routes */
+  /** keep the page out of the index: personalized, private or not-found */
   noindex?: boolean;
   ogType?: 'website' | 'article' | 'book';
+  /** schema.org graph for this page. Serialized into one <script> tag and
+   *  managed like every other tag here, so a Book never outlives its page. */
+  jsonLd?: Record<string, unknown>;
 }
 
 const MARK = 'data-head';
+const JSON_LD_SELECTOR = `script[type="application/ld+json"]`;
 
 /** The site name follows the UI language: the tab title and the share card are
  *  part of the interface, not part of an author's text. */
@@ -43,13 +50,21 @@ export function title(page?: string): string {
   return trimmed ? `${trimmed} · ${site()}` : site();
 }
 
+/** index.html's own description, read once before anything overwrites it.
+ *  A route that sets no description restores this rather than leaving the page
+ *  with none: the static line is the site-level floor, not another page's
+ *  value, so restoring it does not breach the no-inheritance rule above. */
+const staticDescription = typeof document === 'undefined' ? null
+  : document.head.querySelector('meta[name="description"]')?.getAttribute('content') ?? null;
+
 export function applyHead(info: HeadInfo): void {
   if (typeof document === 'undefined') return;
-  document.title = info.title;
+  document.title = title(info.page);
 
   const canonical = info.canonicalPath
     ? new URL(info.canonicalPath, location.origin).href
     : null;
+  const description = info.description || staticDescription;
 
   const tags: Array<{ selector: string; el: () => Element }> = [];
   const metaTag = (attr: 'name' | 'property', key: string, content: string) => {
@@ -64,7 +79,7 @@ export function applyHead(info: HeadInfo): void {
     });
   };
 
-  if (info.description) metaTag('name', 'description', info.description);
+  if (description) metaTag('name', 'description', description);
   // 'noindex' alone would still let a crawler follow the links out of a
   // member page, which is wanted: those links point at public works.
   if (info.noindex) metaTag('name', 'robots', 'noindex, follow');
@@ -84,11 +99,25 @@ export function applyHead(info: HeadInfo): void {
   // deliberately drops the site suffix: the card already shows og:site_name.
   metaTag('property', 'og:site_name', site());
   metaTag('property', 'og:type', info.ogType ?? 'website');
-  metaTag('property', 'og:title', info.title.replace(` · ${site()}`, ''));
-  if (info.description) metaTag('property', 'og:description', info.description);
+  metaTag('property', 'og:title', info.page?.trim() || site());
+  if (description) metaTag('property', 'og:description', description);
   if (canonical) metaTag('property', 'og:url', canonical);
   metaTag('property', 'og:locale', currentLocale().replace('-', '_'));
   metaTag('name', 'twitter:card', 'summary');
+
+  if (info.jsonLd) {
+    tags.push({
+      selector: JSON_LD_SELECTOR,
+      el: () => {
+        const el = document.createElement('script');
+        el.setAttribute('type', 'application/ld+json');
+        // textContent is not re-parsed as HTML, but the escape keeps the graph
+        // intact for anything that later serializes this document back to text.
+        el.textContent = JSON.stringify(info.jsonLd).replace(/</g, '\\u003c');
+        return el;
+      },
+    });
+  }
 
   // Drop anything this module wrote for the previous route that the new one
   // does not set, so no page can inherit another page's description.
@@ -118,3 +147,9 @@ export function describe(...parts: Array<string | null | undefined>): string {
   return text.length > 150 ? `${text.slice(0, 149)}…` : text;
 }
 
+/** Absolute URL for a path, for the `url`/`@id` fields inside a JSON-LD graph.
+ *  Same origin rule as `canonicalPath`: whatever host the reader is on. */
+export function absoluteUrl(path: string): string {
+  if (typeof location === 'undefined') return path;
+  return new URL(path, location.origin).href;
+}

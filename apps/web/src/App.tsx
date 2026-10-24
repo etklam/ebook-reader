@@ -14,10 +14,10 @@ import { CatalogPage } from './catalog/CatalogPage.tsx';
 import { BottomNav } from './components/BottomNav.tsx';
 import { SkeletonLines } from './components/Skeleton.tsx';
 import { parseRef } from './lib/slug.ts';
-import { applyHead, title, type HeadInfo } from './lib/head.ts';
+import { applyHead, type HeadInfo } from './lib/head.ts';
 import { AppFooter } from './components/AppFooter.tsx';
 import { useLocale } from './i18n/I18nRoot.tsx';
-import { t } from './i18n/translate.ts';
+import { currentLocale, t } from './i18n/translate.ts';
 
 const AdminApp = lazy(() => import('./admin/AdminApp.tsx').then((module) => ({ default: module.AdminApp })));
 const ReaderPage = lazy(() => import('./reader/ReaderPage.tsx').then((module) => ({ default: module.ReaderPage })));
@@ -69,7 +69,8 @@ export function parsePath(path: string):
   | { page: 'library' }
   | { page: 'bookmarks' }
   | { page: 'reading-stats' }
-  | { page: 'admin' } {
+  | { page: 'admin' }
+  | { page: 'notFound' } {
   let m: RegExpMatchArray | null;
   if ((m = path.match(new RegExp(`^/read/${SEG}(?:/${SEG})?$`))) && parseRef(m[1])) {
     // a chapter segment that carries no key is dropped, not treated as a
@@ -86,7 +87,12 @@ export function parsePath(path: string):
   if (path === '/me/bookmarks') return { page: 'bookmarks' };
   if (path === '/me/reading-stats') return { page: 'reading-stats' };
   if (path.startsWith('/admin')) return { page: 'admin' };
-  return { page: 'catalog' };
+  if (path === '/') return { page: 'catalog' };
+  // Anything else renders the catalogue rather than a dead end (see SEG above),
+  // but it is NOT the catalogue's URL. Keeping it a distinct route is what lets
+  // staticHead refuse it a canonical and mark it noindex; otherwise every typo
+  // becomes another indexable, self-canonical copy of the catalogue.
+  return { page: 'notFound' };
 }
 
 // Titles and descriptions for the routes that do not depend on fetched data.
@@ -96,21 +102,38 @@ export function parsePath(path: string):
 // Built per call rather than once at import, so the tab title and the share
 // card follow a language switch like the rest of the UI does.
 function staticHead(): Partial<Record<ReturnType<typeof parsePath>['page'], HeadInfo>> {
+  const origin = typeof location === 'undefined' ? '' : location.origin;
   return {
     catalog: {
-      title: title(),
       description: t('中文小說閱讀站：長篇連載與短篇，支援繁簡檢視、三種閱讀主題與跨裝置進度同步。'),
+      // the catalogue is the site: one WebSite node with the search entry point
+      jsonLd: {
+        '@context': 'https://schema.org',
+        '@type': 'WebSite',
+        name: t('書庫'),
+        url: `${origin}/`,
+        inLanguage: currentLocale(),
+        potentialAction: {
+          '@type': 'SearchAction',
+          target: { '@type': 'EntryPoint', urlTemplate: `${origin}/?q={search_term_string}` },
+          'query-input': 'required name=search_term_string',
+        },
+      },
     },
     rankings: {
-      title: title(t('排行榜')),
+      page: t('排行榜'),
       description: t('依點閱與收藏統計的中文小說排行榜，可按連載狀態與分類篩選，提供週、月、年與總榜。'),
     },
-    login: { title: title(t('登入')), noindex: true },
-    register: { title: title(t('註冊')), noindex: true },
-    library: { title: title(t('我的書庫')), noindex: true },
-    bookmarks: { title: title(t('我的書籤')), noindex: true },
-    'reading-stats': { title: title(t('閱讀統計')), noindex: true },
-    admin: { title: title(t('管理')), noindex: true },
+    login: { page: t('登入'), noindex: true },
+    register: { page: t('註冊'), noindex: true },
+    library: { page: t('我的書庫'), noindex: true },
+    bookmarks: { page: t('我的書籤'), noindex: true },
+    'reading-stats': { page: t('閱讀統計'), noindex: true },
+    admin: { page: t('管理'), noindex: true },
+    // A path this app never issued. It renders the catalogue so a reader is not
+    // stranded (see parsePath), but it must not be indexed as another copy of
+    // the catalogue under a URL of its own: no canonical, explicit noindex.
+    notFound: { page: t('找不到頁面'), noindex: true },
   };
 }
 

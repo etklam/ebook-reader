@@ -12,7 +12,7 @@ import {
 import type { ServerProgress, TocEntry, WorkDetail } from '../api/types.ts';
 import { navigate } from '../App.tsx';
 import { readPath, samePath, workPath } from '../lib/slug.ts';
-import { applyHead, describe, title } from '../lib/head.ts';
+import { absoluteUrl, applyHead, describe } from '../lib/head.ts';
 import { useMe } from '../account/useMe.ts';
 import { refreshUpdates } from '../account/useUpdates.ts';
 import { BottomSheet } from '../reader/BottomSheet.tsx';
@@ -23,6 +23,7 @@ import { SkeletonDetail, SkeletonLines } from '../components/Skeleton.tsx';
 import { statusLabel, typeLabelLong, count, relativeDay } from '../lib/format.ts';
 import { t } from '../i18n/translate.ts';
 import { useLocale } from '../i18n/I18nRoot.tsx';
+import { currentLocale } from '../i18n/translate.ts';
 
 /** chapters shown inline; the rest stay one tap away in the TOC sheet */
 const LATEST = 5;
@@ -63,20 +64,42 @@ export function WorkDetailPage({ workRef }: { workRef: string }) {
   // Canonical URL + head, once the title is known. The address bar is
   // rewritten rather than pushed: arriving from a stale slug or a legacy uuid
   // link should not cost the reader a back-button press to leave the page.
+  // A work that did not load has no title to canonicalize and must not keep
+  // the previous route's head: without this, a dead link renders "找不到這部
+  // 作品" under another book's title, description and canonical URL.
+  useEffect(() => {
+    if (!error) return;
+    applyHead({ page: t('找不到這部作品'), noindex: true });
+  }, [error, locale]);
+
   useEffect(() => {
     if (!work) return;
     const canonical = workPath(work);
     if (!samePath(location.pathname, canonical)) {
       history.replaceState(null, '', encodeURI(canonical) + location.search);
     }
+    const description = describe(work.description, t('{type}，已發布 {n} 章', { type: typeLabelLong(work.workType), n: work.chapterCount }));
+    const indexable = work.visibility === 'public';
     applyHead({
-      title: title(`${work.title}${work.author ? ` - ${work.author}` : ''}`),
-      description: describe(work.description, t('{type}，已發布 {n} 章', { type: typeLabelLong(work.workType), n: work.chapterCount })),
+      page: `${work.title}${work.author ? ` - ${work.author}` : ''}`,
+      description,
       canonicalPath: canonical,
       ogType: 'book',
       // unlisted means reachable by direct URL but never listed; indexing it
       // would be the listing it was promised to be exempt from
-      noindex: work.visibility !== 'public',
+      noindex: !indexable,
+      // No structured data for a work that must not be listed: a Book node is
+      // an invitation to index it.
+      jsonLd: indexable ? {
+        '@context': 'https://schema.org',
+        '@type': 'Book',
+        name: work.title,
+        url: absoluteUrl(canonical),
+        inLanguage: currentLocale(),
+        ...(work.author ? { author: { '@type': 'Person', name: work.author } } : {}),
+        ...(work.description ? { description: work.description } : {}),
+        numberOfPages: work.chapterCount,
+      } : undefined,
     });
     // `locale` is a real dependency: the title and description are translated
   }, [work, locale]);

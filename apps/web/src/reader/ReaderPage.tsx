@@ -24,7 +24,7 @@ import { TableOfContents } from './TableOfContents.tsx';
 import { ReaderSettingsPanel } from './ReaderSettings.tsx';
 import { navigate } from '../App.tsx';
 import { readPath, samePath, workPath } from '../lib/slug.ts';
-import { applyHead, describe, title } from '../lib/head.ts';
+import { absoluteUrl, applyHead, describe } from '../lib/head.ts';
 import {
   createProgressSync, pushPreferences,
   scheduleReadMarking, type MemberEntry,
@@ -42,7 +42,8 @@ import { useReaderKeyboard } from './use-reader-keyboard.ts';
 import { useReaderEntry } from './use-reader-entry.ts';
 import { useMemberProgress } from './use-member-progress.ts';
 import { BookmarkNoteEditor } from '../account/BookmarkNoteEditor.tsx';
-import { t } from '../i18n/translate.ts';
+import { currentLocale, t } from '../i18n/translate.ts';
+import { useLocale } from '../i18n/I18nRoot.tsx';
 
 type LoadState =
   | { phase: 'loading' }
@@ -115,6 +116,7 @@ export function ReaderPage({ workRef, initialChapterRef, initialHash = '' }: { w
   }), [workAddress]);
   const [chapter, setChapter] = useState<ReaderChapter | null>(null);
   const [state, setState] = useState<LoadState>({ phase: 'loading' });
+  const { locale } = useLocale();
   const [settings, setSettings] = useState<ReaderSettings>(() => loadSettings());
   // 'system' follows the OS and flips live; the other three are literal
   const theme = resolveTheme(settings.theme, useSystemDark());
@@ -305,17 +307,39 @@ export function ReaderPage({ workRef, initialChapterRef, initialHash = '' }: { w
       labelRaw: chapter.labelRaw, title: chapter.title });
     if (!samePath(location.pathname, canonical)) history.replaceState(history.state, '', encodeURI(canonical));
     const label = [chapter.labelRaw, chapter.title].filter(Boolean).join(' ');
+    const indexable = work.visibility === 'public';
     applyHead({
-      title: title(`${label} - ${work.title}`),
+      page: `${label} - ${work.title}`,
       description: describe(`${work.title}${work.author ? `（${work.author}）` : ''}${label}`,
         firstLines(chapter.body)),
       canonicalPath: canonical,
       ogType: 'article',
       // a draft is Admin-only and unlisted is readable-but-never-listed;
       // neither belongs in an index
-      noindex: work.visibility !== 'public',
+      noindex: !indexable,
+      // the chapter is a part of the book, so the graph says so: isPartOf
+      // points a crawler at the work page rather than leaving 500 sibling
+      // chapters looking like 500 unrelated articles
+      jsonLd: indexable ? {
+        '@context': 'https://schema.org',
+        '@type': 'Article',
+        headline: label || work.title,
+        url: absoluteUrl(canonical),
+        inLanguage: currentLocale(),
+        ...(work.author ? { author: { '@type': 'Person', name: work.author } } : {}),
+        isPartOf: { '@type': 'Book', name: work.title, url: absoluteUrl(workPath(work)) },
+      } : undefined,
     });
-  }, [work, chapter]);
+    // `locale` is a real dependency: title() and og:locale both follow the UI
+    // language, and neither is visible to exhaustive-deps from in here.
+  }, [work, chapter, locale]);
+
+  // An unreadable chapter must not keep the previous chapter's head: the
+  // error states below are real pages a crawler can land on.
+  useEffect(() => {
+    if (state.phase !== 'error') return;
+    applyHead({ page: t(ERROR_TEXT[state.code] ?? '載入失敗'), noindex: true });
+  }, [state, locale]);
 
   // --- conversion (view-time only, paragraph count invariant, §07) -----------------
   const original = useMemo(() => (chapter ? splitParagraphs(chapter.body) : []), [chapter]);
