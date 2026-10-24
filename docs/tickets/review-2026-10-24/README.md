@@ -32,7 +32,7 @@
 | RV-008 | [為兩份 slug.ts 加 drift guard](RV-008-slug-drift-guard.md) | SEO | 低 | P3 | 小 | AFK | **implemented-local** |
 | RV-012 | [詳細閱讀時間與數據統計](RV-012-detailed-reading-stats.md) | 功能 | 不適用 | P2 | 中至大 | HITL | open |
 | RV-013 | [閱讀時的人名替換與角色互換](RV-013-name-substitution.md) | 功能 | 不適用 | P3 | 中 | HITL | open |
-| RV-014 | [自動滾動與自動翻頁](RV-014-auto-scroll.md) | 功能 | 不適用 | P2 | 中 | AFK | open |
+| RV-014 | [自動滾動與自動翻頁](RV-014-auto-scroll.md) | 功能 | 不適用 | P2 | 中 | AFK | **implemented-local** |
 | RV-015 | [劃線、筆記標籤與筆記匯出](RV-015-highlights-notes-export.md) | 功能 | 不適用 | P2 | 大 | HITL | open |
 | RV-016 | [藍光濾鏡與定時切換主題](RV-016-eye-comfort.md) | 功能 | 不適用 | P3 | 小至中 | AFK | **implemented-local** |
 | RV-017 | [可自訂的觸控區域](RV-017-custom-tap-zones.md) | 功能 | 不適用 | P3 | 中 | HITL | open |

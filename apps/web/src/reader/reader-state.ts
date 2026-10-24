@@ -2,6 +2,7 @@
 // sync is M6). Position contract: chapter_id + revision_id + paragraph_index;
 // page numbers are never persisted (§06).
 import type { ConversionMode } from './conversion.ts';
+import type { AdvanceSpeed } from './auto-advance.ts';
 
 export type ReadingMode = 'scroll' | 'paginated';
 /** A theme that can actually be painted. */
@@ -26,6 +27,12 @@ export interface ReaderSettings {
   conversion: ConversionMode;
   /** blue-light overlay; 0 is off */
   warmth: Warmth;
+  /** hands-free advance speed. A speed, not an on/off: whether it is running
+   *  is session state, because a book that starts scrolling by itself the next
+   *  time it is opened is a surprise, not a preference. */
+  autoSpeed: AdvanceSpeed;
+  /** at the end of a chapter, carry on into the next one */
+  autoContinue: boolean;
   /** hour (0-23, device local) the 'schedule' theme turns dark */
   nightFrom: number;
   /** hour (0-23, device local) it turns light again */
@@ -43,6 +50,8 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   mode: 'scroll',
   conversion: 'original',
   warmth: 0,
+  autoSpeed: 2,
+  autoContinue: false,
   nightFrom: 19,
   nightTo: 7,
 };
@@ -138,6 +147,9 @@ export function normalizeSettings(raw: unknown): ReaderSettings {
       ? r.warmth as Warmth : DEFAULT_SETTINGS.warmth,
     nightFrom: hour(r.nightFrom, DEFAULT_SETTINGS.nightFrom),
     nightTo: hour(r.nightTo, DEFAULT_SETTINGS.nightTo),
+    autoSpeed: ([0, 1, 2, 3, 4] as const).includes(r.autoSpeed as AdvanceSpeed)
+      ? r.autoSpeed as AdvanceSpeed : DEFAULT_SETTINGS.autoSpeed,
+    autoContinue: r.autoContinue === true,
   };
 }
 

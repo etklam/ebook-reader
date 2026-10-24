@@ -21,6 +21,29 @@
 }
 .reader[data-mode='paginated'] { --chrome-bottom: 152px; }
 
+/* --- auto-advance control --------------------------------------------------
+   Visible whether or not the chrome is, because an automatically moving page
+   needs a stop that is always within reach — hunting for it by tapping (which
+   pauses, and toggles the chrome) is not a stop. Top-centre keeps it clear of
+   the bottom tap band, which turns pages. */
+.auto-pill {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + var(--sp-3));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: 999px;
+  background: var(--chrome);
+  border: 1px solid var(--rule);
+  box-shadow: 0 2px 10px oklch(0 0 0 / 0.12);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
 /* --- warm overlay (blue-light filter) --------------------------------------
    A multiply layer, NOT `filter: sepia()`. sepia is a fixed matrix that
    collapses hue: --danger red and --ok green both drift to the same brown, so

@@ -7,6 +7,7 @@ import { FONT_SIZE_MAX, FONT_SIZE_MIN, type ReaderSettings } from './reader-stat
 import type { ConversionMode } from './conversion.ts';
 import { LanguageChips } from '../i18n/I18nRoot.tsx';
 import { t } from '../i18n/translate.ts';
+import type { AdvanceSpeed } from './auto-advance.ts';
 
 // Chip labels stay in the source language in these tables and are translated
 // where they are rendered: a module-level constant runs once at import, so a
@@ -31,6 +32,16 @@ const WARMTHS: Array<{ v: ReaderSettings['warmth']; label: string }> = [
   { v: 3, label: '高' },
 ];
 
+// The speed chips double as the on/off: picking a speed starts it, 關 stops.
+// A separate toggle would mean two controls for one decision.
+const AUTO_SPEEDS: Array<{ v: AdvanceSpeed; label: string }> = [
+  { v: 0, label: '最慢' },
+  { v: 1, label: '慢' },
+  { v: 2, label: '中' },
+  { v: 3, label: '快' },
+  { v: 4, label: '最快' },
+];
+
 const CONVERSIONS: Array<{ id: ConversionMode; label: string }> = [
   { id: 'original', label: '原文' },
   { id: 't', label: '繁體' },
@@ -51,10 +62,15 @@ const PARA_SPACING = [
 
 export function ReaderSettingsPanel({
   settings, onChange, onLayoutChange,
+  autoRunning, onAutoStart, onAutoStop, autoWakeLock,
 }: {
   settings: ReaderSettings;
   onChange(patch: Partial<ReaderSettings>): void;
   onLayoutChange(patch: Partial<ReaderSettings>): void;
+  autoRunning: boolean;
+  onAutoStart(speed: AdvanceSpeed): void;
+  onAutoStop(): void;
+  autoWakeLock: boolean;
 }) {
   const row = (label: string, control: React.ReactNode, groupLabel?: string) => (
     <div className="setting-row" key={label}>
@@ -122,6 +138,35 @@ export function ReaderSettingsPanel({
           {hourStepper(t('天亮'), settings.nightTo, (nightTo) => onChange({ nightTo }))}
         </>
       ), t('入夜時間'))}
+
+      {row(t('自動捲動'), (
+        <>
+          <button className={`chip${!autoRunning ? ' selected' : ''}`} aria-pressed={!autoRunning}
+            onClick={onAutoStop}>{!autoRunning ? '✓ ' : ''}{t('關')}</button>
+          {AUTO_SPEEDS.map((speed) => {
+            const selected = autoRunning && settings.autoSpeed === speed.v;
+            return (
+              <button key={speed.v} className={`chip${selected ? ' selected' : ''}`}
+                aria-pressed={selected} onClick={() => onAutoStart(speed.v)}>
+                {selected ? '✓ ' : ''}{t(speed.label)}
+              </button>
+            );
+          })}
+        </>
+      ), t('自動捲動'))}
+
+      {/* The feature's whole promise is that nobody has to touch the phone,
+          which is also what makes the screen sleep. Say so rather than letting
+          the reader discover it a minute in. */}
+      {autoRunning && !autoWakeLock && (
+        <p className="hint">{t('這個瀏覽器不支援在自動捲動時保持螢幕常亮，螢幕可能會自動熄滅。')}</p>
+      )}
+
+      {row(t('捲到章末'), group(
+        [{ value: false, label: '停止' }, { value: true, label: '續讀下一章' }],
+        settings.autoContinue,
+        (autoContinue) => onChange({ autoContinue }),
+      ), t('捲到章末'))}
 
       {row(t('暖色濾鏡'), group(
         WARMTHS.map((w) => ({ value: w.v, label: w.label })),

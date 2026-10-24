@@ -14,6 +14,7 @@ import {
 } from './reader-state.ts';
 import { useSystemDark } from './use-system-dark.ts';
 import { useLocalHour } from './use-local-hour.ts';
+import { useAutoAdvance } from './use-auto-advance.ts';
 import {
   captureColumnParagraph, captureScrollIndex, columnCount,
   columnIndexForParagraph, fractionInParagraph, restoreScrollPosition, PARA_ATTR,
@@ -619,6 +620,59 @@ export function ReaderPage({ workRef, initialChapterRef, initialHash = '' }: { w
     goChapter(dir === 1 ? chapter?.nextChapterId ?? null : chapter?.previousChapterId ?? null);
   }, [turnPage, goChapter, chapter, displaceAnchor]);
 
+  // --- hands-free advance (RV-014) -------------------------------------------------
+  // Unlike stepPage, this never falls through to a chapter turn: reaching the
+  // end of a chapter is a decision (settings.autoContinue), not something a
+  // page turn should make on the reader's behalf while they are not looking.
+  const autoStepPage = useCallback((dir: 1) => {
+    displaceAnchor();
+    return turnPage(dir) === 'moved';
+  }, [turnPage, displaceAnchor]);
+
+  const onAutoEnd = useCallback(() => {
+    if (!settings.autoContinue) return;
+    const next = chapter?.nextChapterId;
+    if (next) goChapter(next);
+  }, [settings.autoContinue, chapter, goChapter]);
+
+  const auto = useAutoAdvance({
+    speed: settings.autoSpeed,
+    mode: settings.mode,
+    viewportRef,
+    stepPage: autoStepPage,
+    onChapterEnd: onAutoEnd,
+    // speech already moves the page to follow what it is reading; two things
+    // advancing at different rates is not a feature
+    suspended: speech.speaking,
+  });
+
+  // Carry on into the chapter the reader just asked for. The scroller attaches
+  // to the viewport it finds, so restarting here is safe even though the next
+  // chapter has not loaded yet.
+  const autoRef = useRef(auto);
+  autoRef.current = auto;
+  useEffect(() => {
+    if (settings.autoContinue && autoRef.current.running) autoRef.current.start();
+  }, [chapter?.chapterId, settings.autoContinue]);
+
+  // Any deliberate input pauses rather than stops: a reader who looks up and
+  // taps the screen wants to carry on from here, not to lose the session and
+  // have to arm it again. The scroller's own writes to scrollTop are not
+  // listened for, so it cannot pause itself.
+  useEffect(() => {
+    if (!auto.running || auto.paused) return;
+    const pause = () => autoRef.current.pause();
+    const root = document;
+    root.addEventListener('pointerdown', pause);
+    root.addEventListener('wheel', pause, { passive: true });
+    root.addEventListener('keydown', pause);
+    return () => {
+      root.removeEventListener('pointerdown', pause);
+      root.removeEventListener('wheel', pause);
+      root.removeEventListener('keydown', pause);
+    };
+  }, [auto.running, auto.paused]);
+
   // --- tap zones (conservative, §9.2) ----------------------------------------------
   // The bands run across the page, not down its sides: the thumb holding a
   // phone rests at the bottom, so the common action — forward — gets the
@@ -748,6 +802,16 @@ export function ReaderPage({ workRef, initialChapterRef, initialHash = '' }: { w
         '--reader-warmth': warmth ?? undefined,
       } as React.CSSProperties}
     >
+      {auto.running && (
+        <div className="auto-pill" role="status">
+          <span>{auto.paused ? t('自動捲動已暫停') : t('自動捲動中')}</span>
+          <button className="chip" onClick={() => (auto.paused ? auto.resume() : auto.pause())}>
+            {auto.paused ? t('繼續') : t('暫停')}
+          </button>
+          <button className="chip" onClick={auto.stop}>{t('停止')}</button>
+        </div>
+      )}
+
       {/* running head: where you are, in the book and in the chapter. 返回 lives
           in the bottom toolbar where the thumb is (§04), not up here. */}
       <header className="reader-top" data-visible={chromeVisible || undefined}>
@@ -866,7 +930,11 @@ export function ReaderPage({ workRef, initialChapterRef, initialHash = '' }: { w
       <BottomSheet open={sheet === 'settings'} title={t('閱讀設定')} onClose={() => setSheet(null)}>
         <button className="btn" onClick={openReport}>{t('回報錯字')}</button>
         <SpeechControls controller={speech} />
-        <ReaderSettingsPanel settings={settings} onChange={updateSettings} onLayoutChange={changeLayout} />
+        <ReaderSettingsPanel
+              autoRunning={auto.running}
+              onAutoStart={(autoSpeed) => { updateSettings({ autoSpeed }); auto.start(); setSheet(null); }}
+              onAutoStop={auto.stop}
+              autoWakeLock={auto.wakeLockSupported} settings={settings} onChange={updateSettings} onLayoutChange={changeLayout} />
       </BottomSheet>
     </div>
   );
