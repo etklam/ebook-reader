@@ -179,12 +179,17 @@ export interface BookmarksResponse {
 }
 
 export interface ReaderPreferencesDto {
-  theme: 'light' | 'sepia' | 'dark' | 'system';
+  theme: 'light' | 'sepia' | 'dark' | 'system' | 'schedule';
   fontSize: number;
   lineHeight: number;
   paragraphSpacing: number;
   conversion: 'original' | 't' | 'cn';
   mode: 'scroll' | 'paginated';
+  /** blue-light overlay strength, 0-3 */
+  warmth: number;
+  /** device-local hours bounding the 'schedule' theme's night window */
+  nightFrom: number;
+  nightTo: number;
   updatedAt: string;
 }
 

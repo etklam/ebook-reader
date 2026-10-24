@@ -113,6 +113,13 @@
       "when": 1792400000015,
       "tag": "0015_remove_duplicate_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792824062892,
+      "tag": "0016_reader_eye_comfort",
+      "breakpoints": true
     }
   ]
 }

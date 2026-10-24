@@ -14,9 +14,21 @@ import { t } from '../i18n/translate.ts';
 const THEMES: Array<{ id: ReaderSettings['theme']; label: string }> = [
   // first, and the default: the reader opens in whatever the OS is already set to
   { id: 'system', label: '跟隨系統' },
+  // a theme in its own right, not a switch layered over the others: whatever
+  // paints the reader, exactly one thing decides it
+  { id: 'schedule', label: '定時' },
   { id: 'light', label: '亮色' },
   { id: 'sepia', label: '護眼' },
   { id: 'dark', label: '深色' },
+];
+
+// Named steps rather than a slider: a reader who finds the right amount of
+// warmth wants to get back to it, and "中" is findable where 37% is not.
+const WARMTHS: Array<{ v: ReaderSettings['warmth']; label: string }> = [
+  { v: 0, label: '關' },
+  { v: 1, label: '低' },
+  { v: 2, label: '中' },
+  { v: 3, label: '高' },
 ];
 
 const CONVERSIONS: Array<{ id: ConversionMode; label: string }> = [
@@ -53,6 +65,21 @@ export function ReaderSettingsPanel({
     </div>
   );
 
+  // Same stepper idiom as the font size control. Hours wrap rather than clamp:
+  // a night window that starts at 23:00 and one that starts at 00:00 are both
+  // ordinary, so there is no end of the range to stop at.
+  const hourStepper = (name: string, value: number, apply: (hour: number) => void) => (
+    <span className="hour-stepper" key={name}>
+      <button className="chip" aria-label={t('{name}提早一小時', { name })}
+        onClick={() => apply((value + 23) % 24)}>−</button>
+      <span className="setting-value" aria-live="polite">
+        {name} {String(value).padStart(2, '0')}:00
+      </span>
+      <button className="chip" aria-label={t('{name}延後一小時', { name })}
+        onClick={() => apply((value + 1) % 24)}>＋</button>
+    </span>
+  );
+
   // the ✓ is part of the chip's selected state everywhere else on the site
   // (§21: never colour alone) — this panel used to signal it with colour and
   // weight only
@@ -85,6 +112,22 @@ export function ReaderSettingsPanel({
         settings.theme,
         (theme) => onChange({ theme }),
       ), t('主題'))}
+
+      {/* only meaningful under the 定時 theme, so it appears with it rather
+          than sitting inert in the panel the rest of the time */}
+      {settings.theme === 'schedule' && row(t('入夜時間'), (
+        <>
+          {hourStepper(t('入夜'), settings.nightFrom, (nightFrom) => onChange({ nightFrom }))}
+          <span className="setting-value" aria-hidden="true">–</span>
+          {hourStepper(t('天亮'), settings.nightTo, (nightTo) => onChange({ nightTo }))}
+        </>
+      ), t('入夜時間'))}
+
+      {row(t('暖色濾鏡'), group(
+        WARMTHS.map((w) => ({ value: w.v, label: w.label })),
+        settings.warmth,
+        (warmth) => onChange({ warmth }),
+      ), t('暖色濾鏡'))}
 
       {row(t('字號'), (
         <>

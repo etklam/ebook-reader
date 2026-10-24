@@ -502,17 +502,29 @@ export const bookmarks = app.table('bookmarks', {
 
 export const readerPreferences = app.table('reader_preferences', {
   userId: uuid('user_id').primaryKey().references(() => users.id),
-  theme: text('theme', { enum: ['light', 'sepia', 'dark', 'system'] }).notNull(),
+  // 'schedule' follows the device clock; like 'system' it is a theme source in
+  // its own right, never a switch layered over another choice.
+  theme: text('theme', { enum: ['light', 'sepia', 'dark', 'system', 'schedule'] }).notNull(),
   fontSize: integer('font_size').notNull(),
   lineHeight: real('line_height').notNull(),
   paragraphSpacing: real('paragraph_spacing').notNull(),
   conversionMode: text('conversion_mode', { enum: ['original', 't', 'cn'] }).notNull(),
   readingMode: text('reading_mode', { enum: ['scroll', 'paginated'] }).notNull(),
+  /** blue-light overlay strength, 0 = off */
+  warmth: integer('warmth').notNull().default(0),
+  /** hours, device-local, for the 'schedule' theme. Stored as plain integers
+   *  rather than a time: the window is whole hours and carries no zone of its
+   *  own — it means "the reader's evening", wherever they are tonight. */
+  nightFrom: integer('night_from').notNull().default(19),
+  nightTo: integer('night_to').notNull().default(7),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   check('reader_preferences_font_ck', sql`${t.fontSize} between 14 and 28`),
   check('reader_preferences_line_height_ck', sql`${t.lineHeight} between 1.4 and 2.6`),
   check('reader_preferences_spacing_ck', sql`${t.paragraphSpacing} between 0 and 3`),
+  check('reader_preferences_warmth_ck', sql`${t.warmth} between 0 and 3`),
+  check('reader_preferences_night_ck',
+    sql`${t.nightFrom} between 0 and 23 and ${t.nightTo} between 0 and 23`),
 ]);
 
 // Reader reports retain the exact published revision and paragraph snapshot.

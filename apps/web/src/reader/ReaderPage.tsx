@@ -9,9 +9,11 @@ import { splitParagraphs } from './paragraphs.ts';
 import { convertParagraphs } from './conversion.ts';
 import {
   loadSettings, remapPosition,
-  resolveTheme, savePosition, saveSettings, type ReaderSettings, type ReadingPosition,
+  resolveTheme, savePosition, saveSettings, WARMTH_FILTERS,
+  type ReaderSettings, type ReadingPosition,
 } from './reader-state.ts';
 import { useSystemDark } from './use-system-dark.ts';
+import { useLocalHour } from './use-local-hour.ts';
 import {
   captureColumnParagraph, captureScrollIndex, columnCount,
   columnIndexForParagraph, fractionInParagraph, restoreScrollPosition, PARA_ATTR,
@@ -118,8 +120,12 @@ export function ReaderPage({ workRef, initialChapterRef, initialHash = '' }: { w
   const [state, setState] = useState<LoadState>({ phase: 'loading' });
   const { locale } = useLocale();
   const [settings, setSettings] = useState<ReaderSettings>(() => loadSettings());
-  // 'system' follows the OS and flips live; the other three are literal
-  const theme = resolveTheme(settings.theme, useSystemDark());
+  // 'system' follows the OS and 'schedule' follows the clock, both live; the
+  // other three are literal
+  const theme = resolveTheme(settings.theme, useSystemDark(), {
+    hour: useLocalHour(), nightFrom: settings.nightFrom, nightTo: settings.nightTo,
+  });
+  const warmth = WARMTH_FILTERS[settings.warmth];
   const [converted, setConverted] = useState<string[] | null>(null);
   const [chromeVisible, setChromeVisible] = useState(false);
   const [sheet, setSheet] = useState<null | 'toc' | 'settings' | 'report' | 'bookmark'>(null);
@@ -671,7 +677,8 @@ export function ReaderPage({ workRef, initialChapterRef, initialHash = '' }: { w
   // loading placeholder forever with nothing to act on
   if (state.phase === 'error') {
     return (
-      <div className={`reader theme-${theme}`}>
+      <div className={`reader theme-${theme}`} data-warmth={warmth ? settings.warmth : undefined}
+        style={{ '--reader-warmth': warmth ?? undefined } as React.CSSProperties}>
         <div className="reader-msg" data-testid="reader-error">
           <h2>{t(ERROR_TEXT[state.code] ?? '發生錯誤')}</h2>
           <p>{t(ERROR_HINT[state.code] ?? '請稍後再試，或回書庫換一本。')}</p>
@@ -707,7 +714,9 @@ export function ReaderPage({ workRef, initialChapterRef, initialHash = '' }: { w
   // paragraph lands where the eye is already looking
   if (!chapter || !work || state.phase === 'loading') {
     return (
-      <div className={`reader theme-${theme}`} data-testid="reader-loading">
+      <div className={`reader theme-${theme}`} data-testid="reader-loading"
+        data-warmth={warmth ? settings.warmth : undefined}
+        style={{ '--reader-warmth': warmth ?? undefined } as React.CSSProperties}>
         <SkeletonChapter />
       </div>
     );
@@ -731,10 +740,12 @@ export function ReaderPage({ workRef, initialChapterRef, initialHash = '' }: { w
       className={`reader theme-${theme}`}
       data-mode={settings.mode}
       data-chrome-visible={chromeVisible || undefined}
+      data-warmth={warmth ? settings.warmth : undefined}
       style={{
         '--reader-font-size': `${settings.fontSize}px`,
         '--reader-line-height': settings.lineHeight,
         '--reader-para-spacing': `${settings.paragraphSpacing}em`,
+        '--reader-warmth': warmth ?? undefined,
       } as React.CSSProperties}
     >
       {/* running head: where you are, in the book and in the chapter. 返回 lives

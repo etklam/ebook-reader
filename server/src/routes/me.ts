@@ -530,6 +530,9 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
         paragraphSpacing: row.paragraphSpacing,
         conversion: row.conversionMode,
         mode: row.readingMode,
+        warmth: row.warmth,
+        nightFrom: row.nightFrom,
+        nightTo: row.nightTo,
         updatedAt: row.updatedAt.toISOString(),
       },
     });
@@ -538,27 +541,36 @@ export function meRoutes(deps: MeDeps): Hono<{ Variables: { userId: string; role
   app.put('/api/me/reader-preferences', async (c) => {
     const userId = userIdOf(c);
     const body = await c.req.json().catch(() => ({}));
-    const theme = ['light', 'sepia', 'dark', 'system'].includes(body?.theme) ? body.theme : null;
+    const theme = ['light', 'sepia', 'dark', 'system', 'schedule'].includes(body?.theme) ? body.theme : null;
     const conversion = ['original', 't', 'cn'].includes(body?.conversion) ? body.conversion : null;
     const mode = ['scroll', 'paginated'].includes(body?.mode) ? body.mode : null;
     const fontSize = Number(body?.fontSize);
     const lineHeight = Number(body?.lineHeight);
     const paragraphSpacing = Number(body?.paragraphSpacing);
+    // Mirrors the CHECK constraints: rejecting here gives the client a 400 it
+    // can act on, rather than a constraint violation surfacing as a 500.
+    const warmth = Number(body?.warmth ?? 0);
+    const nightFrom = Number(body?.nightFrom ?? 19);
+    const nightTo = Number(body?.nightTo ?? 7);
+    const isHour = (n: number) => Number.isInteger(n) && n >= 0 && n <= 23;
     if (!theme || !conversion || !mode
       || !Number.isInteger(fontSize) || fontSize < 14 || fontSize > 28
       || !(lineHeight >= 1.4 && lineHeight <= 2.6)
-      || !(paragraphSpacing >= 0 && paragraphSpacing <= 3)) {
+      || !(paragraphSpacing >= 0 && paragraphSpacing <= 3)
+      || !Number.isInteger(warmth) || warmth < 0 || warmth > 3
+      || !isHour(nightFrom) || !isHour(nightTo)) {
       return c.json({ error: 'invalid_request' }, 400);
     }
     await db.insert(readerPreferences).values({
       userId,
       theme, conversionMode: conversion, readingMode: mode,
-      fontSize, lineHeight, paragraphSpacing,
+      fontSize, lineHeight, paragraphSpacing, warmth, nightFrom, nightTo,
     }).onConflictDoUpdate({
       target: readerPreferences.userId,
       set: {
         theme, conversionMode: conversion, readingMode: mode,
-        fontSize, lineHeight, paragraphSpacing, updatedAt: new Date(),
+        fontSize, lineHeight, paragraphSpacing, warmth, nightFrom, nightTo,
+        updatedAt: new Date(),
       },
     });
     return c.json({ ok: true });

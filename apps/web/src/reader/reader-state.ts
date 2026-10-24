@@ -6,8 +6,16 @@ import type { ConversionMode } from './conversion.ts';
 export type ReadingMode = 'scroll' | 'paginated';
 /** A theme that can actually be painted. */
 export type Theme = 'light' | 'sepia' | 'dark';
-/** What the reader picked. 'system' resolves to light or dark at render time. */
-export type ThemeChoice = Theme | 'system';
+/**
+ * What the reader picked. 'system' follows the OS; 'schedule' follows the
+ * clock. Both are *choices of theme*, not switches layered on top of one —
+ * a theme has exactly one source, or two of them fight over every repaint.
+ */
+export type ThemeChoice = Theme | 'system' | 'schedule';
+
+/** Warm overlay strength. A level rather than a free number: the panel is
+ *  chips, and four named steps are easier to return to than a slider. */
+export type Warmth = 0 | 1 | 2 | 3;
 
 export interface ReaderSettings {
   theme: ThemeChoice;
@@ -16,6 +24,12 @@ export interface ReaderSettings {
   paragraphSpacing: number; // em
   mode: ReadingMode;
   conversion: ConversionMode;
+  /** blue-light overlay; 0 is off */
+  warmth: Warmth;
+  /** hour (0-23, device local) the 'schedule' theme turns dark */
+  nightFrom: number;
+  /** hour (0-23, device local) it turns light again */
+  nightTo: number;
 }
 
 export const FONT_SIZE_MIN = 14;
@@ -28,6 +42,9 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   paragraphSpacing: 0.9,
   mode: 'scroll',
   conversion: 'original',
+  warmth: 0,
+  nightFrom: 19,
+  nightTo: 7,
 };
 
 const SETTINGS_KEY = 'ebook:reader-settings';
@@ -57,16 +74,48 @@ function normalizeTheme(r: Partial<ReaderSettings> & { v?: unknown }): ThemeChoi
   const stored = r.theme;
   const version = Number(r.v) || 1;
   if (version < SETTINGS_VERSION && (stored === 'light' || stored === undefined)) return 'system';
-  return stored === 'light' || stored === 'sepia' || stored === 'dark' || stored === 'system'
+  return stored === 'light' || stored === 'sepia' || stored === 'dark'
+    || stored === 'system' || stored === 'schedule'
     ? stored
     : DEFAULT_SETTINGS.theme;
 }
 
-/** Pure: what to actually paint, given the choice and the current OS setting. */
-export function resolveTheme(choice: ThemeChoice, prefersDark: boolean): Theme {
+/**
+ * Is `hour` inside the night window? The window wraps midnight in the normal
+ * case (19→7), so this cannot be a plain range test. A window whose ends are
+ * equal means "never", not "always": a reader who sets both to the same hour
+ * has not asked to be in the dark permanently.
+ */
+export function isNightHour(hour: number, from: number, to: number): boolean {
+  if (from === to) return false;
+  return from < to ? hour >= from && hour < to : hour >= from || hour < to;
+}
+
+/** Pure: what to actually paint, given the choice, the OS setting and the
+ *  clock. `hour` is the device's local hour; the caller owns the clock so this
+ *  stays testable. */
+export function resolveTheme(choice: ThemeChoice, prefersDark: boolean,
+  clock?: { hour: number; nightFrom: number; nightTo: number }): Theme {
   if (choice === 'system') return prefersDark ? 'dark' : 'light';
+  if (choice === 'schedule') {
+    // Without a clock there is nothing to schedule against; fall back to the
+    // OS rather than guessing, so a caller that forgets degrades to 'system'
+    // instead of pinning every reader to light.
+    if (!clock) return prefersDark ? 'dark' : 'light';
+    return isNightHour(clock.hour, clock.nightFrom, clock.nightTo) ? 'dark' : 'light';
+  }
   return choice;
 }
+
+/** Multiply filters for the warm overlay, indexed by `Warmth`.
+ *  Level 0 paints nothing at all — an overlay at rgb(255,255,255) is a no-op
+ *  that still costs a compositing layer over the whole reader. */
+export const WARMTH_FILTERS: Record<Warmth, string | null> = {
+  0: null,
+  1: 'rgb(255, 247, 232)',
+  2: 'rgb(255, 238, 210)',
+  3: 'rgb(255, 226, 184)',
+};
 
 export function normalizeSettings(raw: unknown): ReaderSettings {
   const r = (raw ?? {}) as Partial<ReaderSettings> & { v?: unknown };
@@ -82,7 +131,21 @@ export function normalizeSettings(raw: unknown): ReaderSettings {
     paragraphSpacing: clamp(num(r.paragraphSpacing, DEFAULT_SETTINGS.paragraphSpacing), 0, 3),
     mode: r.mode === 'paginated' ? 'paginated' : 'scroll',
     conversion: r.conversion === 't' || r.conversion === 'cn' ? r.conversion : 'original',
+    // Settings arrive from localStorage and from the account sync, so every
+    // one of these is untrusted input: a stored warmth of 9 or a nightFrom of
+    // -3 must land on something paintable rather than on a blank screen.
+    warmth: ([0, 1, 2, 3] as const).includes(r.warmth as Warmth)
+      ? r.warmth as Warmth : DEFAULT_SETTINGS.warmth,
+    nightFrom: hour(r.nightFrom, DEFAULT_SETTINGS.nightFrom),
+    nightTo: hour(r.nightTo, DEFAULT_SETTINGS.nightTo),
   };
+}
+
+/** Whole hours only, 0-23. A fractional or out-of-range value is not clamped
+ *  into something adjacent — it is not a time, so it falls back to the default. */
+function hour(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0 && n <= 23 ? n : fallback;
 }
 
 export function loadSettings(): ReaderSettings {

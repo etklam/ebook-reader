@@ -21,6 +21,37 @@
 }
 .reader[data-mode='paginated'] { --chrome-bottom: 152px; }
 
+/* --- warm overlay (blue-light filter) --------------------------------------
+   A multiply layer, NOT `filter: sepia()`. sepia is a fixed matrix that
+   collapses hue: --danger red and --ok green both drift to the same brown, so
+   a colour-coded state stops being colour-coded. Multiplying by a warm white
+   scales each channel instead, which takes blue out while leaving red and
+   green telling each other apart. It is also the transform eye-comfort.test.ts
+   can reproduce exactly, so the contrast of every theme × warmth pair is
+   checked rather than assumed.
+
+   Worth knowing before moving this: a non-`none` filter makes its element the
+   containing block for `position: fixed` descendants. It would be harmless
+   HERE, because .reader is already `position: fixed; inset: 0` and so already
+   coextensive with the viewport — but it is exactly why neither this overlay
+   nor a filter may be moved down onto .reader-scroll, which is not.
+
+   `isolation` on .reader keeps the blend inside the reader instead of reaching
+   whatever an ancestor paints. z-index 70 puts it over --z-tooltip because it
+   is the one layer that must tint everything, and `pointer-events: none` is
+   what stops it eating every tap on the way. */
+.reader { isolation: isolate; }
+
+.reader[data-warmth]::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  background: var(--reader-warmth);
+}
+
 /* --- reading themes -------------------------------------------------------- */
 .reader.theme-light {
   color-scheme: light;

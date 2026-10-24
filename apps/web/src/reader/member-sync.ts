@@ -8,7 +8,7 @@ import {
   ApiRequestError, getMe, getProgress, getReaderPreferences, markRead, saveProgress,
   saveReaderPreferences,
 } from '../api/client.ts';
-import type { ReaderChapter } from '../api/types.ts';
+import type { ReaderChapter, ReaderPreferencesDto } from '../api/types.ts';
 import {
   loadPosition, loadSettings, normalizeSettings, saveSettings,
   type ReaderSettings, type ReadingPosition,
@@ -18,7 +18,10 @@ export interface MemberEntry {
   isMember: boolean;
   position: ReadingPosition | null;
   serverVersion: number;
-  settings: Partial<ReaderSettings> | null;
+  /** Server preferences as received, NOT as validated. The DTO's ranges are
+   *  the server's promise, not a guarantee this client can rely on, so this
+   *  stays the wire shape until normalizeSettings has had it. */
+  settings: ReaderPreferencesDto | null;
 }
 
 // guest→member merge policy (§31): server progress wins when present (the
@@ -138,7 +141,7 @@ export function scheduleReadMarking(chapter: ReaderChapter, isMember: boolean): 
 
 // preference two-way sync: apply server prefs when present, push local edits
 export async function mergeServerPreferences(
-  server: Partial<ReaderSettings> | null,
+  server: ReaderPreferencesDto | null,
   apply: (s: ReaderSettings) => void,
 ): Promise<void> {
   if (server) {
@@ -157,5 +160,8 @@ export async function pushPreferences(settings: ReaderSettings, isMember: boolea
     paragraphSpacing: settings.paragraphSpacing,
     conversion: settings.conversion,
     mode: settings.mode,
+    warmth: settings.warmth,
+    nightFrom: settings.nightFrom,
+    nightTo: settings.nightTo,
   }).catch(() => undefined);
 }

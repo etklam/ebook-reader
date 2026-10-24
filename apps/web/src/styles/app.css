@@ -463,6 +463,9 @@ input[type='file'].input { padding: 10px var(--sp-3); font-size: var(--text-sm);
 .setting-label { flex: 0 0 4em; font-size: var(--text-sm); color: var(--ink-3); }
 .setting-control { flex: 1; display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .setting-value { font-size: var(--text-sm); color: var(--ink-2); min-width: 46px; text-align: center; }
+/* a stepper is one control; its parts must not be split across a wrap */
+.hour-stepper { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.hour-stepper .setting-value { min-width: 84px; }
 /* the closing note under a sheet's controls — what the settings above mean */
 .sheet-hint { padding-top: var(--sp-4); }
 
